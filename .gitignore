@@ -1,0 +1,13 @@
+# Secretos: la API key de YouTube
+.env
+
+# Datos generados con nombres y mensajes reales (políticas de YouTube: no salen de esta PC)
+datos.jsonl
+datos.*.json
+informes/
+
+# Binarios compilados
+yt-monitor
+yt-monitor.exe
+*.test
+*.out

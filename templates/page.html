@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Monitor YouTube{{if .Channel}} · {{.Channel}}{{end}}</title>
+<script src="/static/htmx.min.js"></script>
+<style>
+:root {
+  color-scheme: light;
+  --surface-0: #f4f4f2;
+  --surface-1: #fcfcfb;
+  --border: #e2e1dc;
+  --text-primary: #0b0b0b;
+  --text-secondary: #52514e;
+  --text-muted: #7a7974;
+  --series-1: #2a78d6;
+  --grid: #e9e8e4;
+  --live: #c62828;
+  --warn-bg: #fff4e0;
+  --warn-text: #7a4a00;
+  --crit-bg: #fde8e8;
+  --crit-text: #9b1c1c;
+  --ok-bg: #e6f4ea;
+  --ok-text: #1e5b2e;
+  --on-live: #ffffff;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --surface-0: #111110;
+    --surface-1: #1a1a19;
+    --border: #2e2e2c;
+    --text-primary: #f0efec;
+    --text-secondary: #c3c2b7;
+    --text-muted: #8e8d86;
+    --series-1: #3987e5;
+    --grid: #2a2a28;
+    --live: #ef5350;
+    --warn-bg: #3a2c10;
+    --warn-text: #f4c56b;
+    --crit-bg: #3d1717;
+    --crit-text: #f19c9c;
+    --ok-bg: #16301e;
+    --ok-text: #8fd3a2;
+    --on-live: #1a0505;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--surface-0); color: var(--text-primary);
+  font: 15px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+main { max-width: 1200px; margin: 0 auto; padding: 20px 16px 48px; }
+h1 { font-size: 22px; margin: 0; }
+h2 { font-size: 15px; margin: 0 0 12px; color: var(--text-secondary); font-weight: 600; }
+a { color: var(--series-1); }
+.card { background: var(--surface-1); border: 1px solid var(--border); border-radius: 10px; padding: 16px; }
+.head { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; margin-bottom: 16px; }
+.muted { color: var(--text-muted); font-size: 13px; }
+.live { display: inline-flex; gap: 6px; align-items: center; font-weight: 600; color: var(--live); }
+.live::before { content: ""; width: 9px; height: 9px; border-radius: 50%; background: var(--live); }
+.lives { list-style: none; margin: 0 0 12px; padding: 0; display: grid; gap: 8px; }
+.lives li { display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: center; padding-bottom: 8px; border-bottom: 1px solid var(--border); }
+.lives .note { flex-basis: 100%; margin: 0; }
+.cartel { display: grid; gap: 2px; padding: 8px 12px; border-radius: 8px; font-size: 13px; margin-bottom: 12px; }
+.cartel strong { font-weight: 600; }
+.cartel.ok { background: var(--ok-bg); color: var(--ok-text); }
+.cartel.warn { background: var(--warn-bg); color: var(--warn-text); }
+.cartel.crit { background: var(--crit-bg); color: var(--crit-text); }
+.note { padding: 8px 12px; border-radius: 8px; font-size: 13px; margin-bottom: 12px; background: var(--warn-bg); color: var(--warn-text); }
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin-bottom: 16px; }
+.tile .v { font-size: 26px; font-weight: 650; font-variant-numeric: tabular-nums; }
+.tile .l { font-size: 13px; color: var(--text-secondary); }
+.grid2 { display: grid; grid-template-columns: 2fr 1fr; gap: 16px; margin-bottom: 16px; }
+@media (max-width: 800px) { .grid2 { grid-template-columns: 1fr; } }
+svg text { fill: var(--text-muted); font-size: 11px; }
+.bar { fill: var(--series-1); }
+.hit { fill: transparent; }
+.hit:hover + .bar, .bar:hover { opacity: .75; }
+.catrow { display: grid; grid-template-columns: 90px 1fr 44px; gap: 8px; align-items: center; margin: 6px 0; font-size: 13px; }
+.track { background: var(--grid); border-radius: 4px; height: 12px; overflow: hidden; }
+.fill { background: var(--series-1); height: 100%; border-radius: 0 4px 4px 0; }
+.num { text-align: right; font-variant-numeric: tabular-nums; color: var(--text-secondary); }
+.filters { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+select, input[type=search] { font: inherit; padding: 6px 8px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface-1); color: var(--text-primary); }
+input[type=search] { flex: 1; min-width: 160px; }
+.feed { list-style: none; margin: 0; padding: 0; max-height: 560px; overflow-y: auto; }
+.feed li { padding: 8px 0; border-bottom: 1px solid var(--border); }
+.feed .meta { font-size: 12px; color: var(--text-muted); display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.badge { font-size: 11px; padding: 1px 7px; border-radius: 99px; border: 1px solid var(--border); color: var(--text-secondary); }
+.badge.spam, .badge.insulto { background: var(--crit-bg); color: var(--crit-text); border-color: transparent; }
+.badge.pregunta { background: var(--ok-bg); color: var(--ok-text); border-color: transparent; }
+.badge.queja { background: var(--warn-bg); color: var(--warn-text); border-color: transparent; }
+.words { display: flex; flex-wrap: wrap; gap: 6px; }
+.words span { font-size: 13px; padding: 2px 8px; border-radius: 6px; background: var(--grid); }
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+td, th { text-align: left; padding: 6px 4px; border-bottom: 1px solid var(--border); }
+td.n, th.n { text-align: right; font-variant-numeric: tabular-nums; }
+.scroll { overflow-x: auto; }
+.vivo { margin-bottom: 16px; }
+.vhead { margin-bottom: 8px; }
+.vhead h2 { margin: 0; }
+.vbtns { display: flex; flex-wrap: wrap; gap: 8px; }
+.vbtn { font: inherit; font-size: 14px; font-weight: 600; padding: 6px 14px; border-radius: 99px; cursor: pointer;
+  border: 1px solid var(--border); background: var(--surface-0); color: var(--text-secondary); }
+.vbtn:hover { border-color: var(--text-muted); }
+.vbtn:focus-visible { outline: 2px solid var(--series-1); outline-offset: 2px; }
+.vbtn[aria-pressed="true"] { background: var(--live); border-color: var(--live); color: var(--on-live); }
+.vfeed { max-height: 360px; margin-bottom: 16px; }
+.vtitle { margin-top: 8px; }
+.vgrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 12px; }
+.vgrid .card { background: var(--surface-0); }
+.catrow.wide { grid-template-columns: minmax(0, 40%) 1fr 44px; }
+.catrow.wide span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fill.warn { background: var(--warn-text); }
+.fill.crit { background: var(--crit-text); }
+.sub { display: block; margin: -2px 0 6px; }
+.qlist { list-style: none; margin: 0 0 8px; padding: 0; font-size: 14px; }
+.qlist li { padding: 6px 0; border-bottom: 1px solid var(--border); }
+.qlist .meta { font-size: 12px; color: var(--text-muted); }
+.copy { width: 100%; font: 13px/1.4 ui-monospace, monospace; padding: 6px 8px; border-radius: 6px; resize: vertical;
+  border: 1px solid var(--border); background: var(--surface-1); color: var(--text-primary); margin-bottom: 8px; }
+</style>
+</head>
+<body>
+<main>
+  <div class="head">
+    <h1>Monitor de YouTube</h1>
+    <a href="/export.csv">Descargar CSV para Claude</a>
+  </div>
+
+  <div id="resumen" hx-get="/parcial/resumen" hx-trigger="load, every 5s">
+    <p class="muted">Cargando…</p>
+  </div>
+
+  <div id="vivo" hx-get="/parcial/vivo?video={{.Vivo}}" hx-trigger="load" hx-swap="outerHTML"></div>
+
+  <div class="grid2">
+    <section class="card">
+      <h2>Últimos mensajes</h2>
+      <form class="filters" hx-get="/parcial/feed" hx-target="#feed" hx-trigger="change, keyup changed delay:400ms from:input">
+        <select name="fuente" aria-label="Fuente">
+          <option value="">Chat y comentarios</option>
+          <option value="chat">Solo chat</option>
+          <option value="comentario">Solo comentarios</option>
+        </select>
+        <select name="cat" aria-label="Categoría">
+          <option value="">Todas las categorías</option>
+          {{range .Cats}}<option value="{{.Key}}">{{.Label}}</option>{{end}}
+        </select>
+        <input type="search" name="q" placeholder="Buscar texto o autor" aria-label="Buscar">
+      </form>
+      <div id="feed" hx-get="/parcial/feed" hx-trigger="load, every 5s" hx-include=".filters"></div>
+    </section>
+    <div id="extra" hx-get="/parcial/extra" hx-trigger="load, every 30s"></div>
+  </div>
+</main>
+</body>
+</html>

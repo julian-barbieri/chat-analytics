@@ -1,0 +1,192 @@
+{{define "resumen"}}
+<div class="head">
+  <strong>{{if .Channel}}{{.Channel}}{{else}}Conectando con YouTube…{{end}}</strong>
+  {{if not .Lives}}<span class="muted">Sin vivo en este momento</span>{{end}}
+  {{if .Started}}<span class="muted">Actualizado {{hora .Updated}}</span>{{end}}
+</div>
+{{if .Lives}}<ul class="lives" aria-label="Vivos en curso">
+  {{range .Lives}}<li>
+    <span class="live">EN VIVO</span>
+    <a href="https://youtu.be/{{.ID}}" target="_blank" rel="noopener">{{.Title}}</a>
+    <span class="muted">{{if and .Channel (ne .Channel $.Channel)}}{{.Channel}} · {{end}}{{miles .Concurrent}} mirando</span>
+    {{if .Note}}<div class="note">{{.Note}}</div>{{end}}
+  </li>{{end}}
+</ul>{{end}}
+{{if .LastErr}}<div class="note">Error al consultar YouTube: {{.LastErr}}</div>{{end}}
+{{if .ChatNote}}<p class="muted">{{.ChatNote}}</p>{{end}}
+
+<div class="tiles">
+  {{range .Tiles}}<div class="card tile">
+    <div class="l">{{.Label}}</div>
+    <div class="v">{{.Value}}</div>
+    {{if .Note}}<div class="muted">{{.Note}}</div>{{end}}
+  </div>{{end}}
+</div>
+
+<div class="grid2">
+  <section class="card">
+    <h2>Mensajes cada 5 minutos (últimas 3 horas) · {{miles .Activity.Total}} en total</h2>
+    {{with .Activity}}
+    <svg viewBox="0 -8 {{.W}} {{.H}}" width="100%" role="img" aria-label="Mensajes cada 5 minutos en las últimas 3 horas; pico de {{.Peak}}" style="overflow:visible;height:auto">
+      <line x1="0" x2="{{.W}}" y1="{{.H}}" y2="{{.H}}" stroke="var(--grid)"></line>
+      <text x="0" y="0">máx. {{.Peak}}</text>
+      {{range .Bars}}<g>
+        <title>{{.Label}}</title>
+        <rect class="hit" x="{{.X}}" y="0" width="{{.W}}" height="140"></rect>
+        <rect class="bar" x="{{.X}}" y="{{.Y}}" width="{{.W}}" height="{{.H}}" rx="2"></rect>
+      </g>{{end}}
+    </svg>
+    <svg viewBox="0 0 {{.W}} 16" width="100%" aria-hidden="true" style="overflow:visible;height:auto">
+      {{range .Ticks}}<text x="{{.X}}" y="12">{{.Label}}</text>{{end}}
+    </svg>
+    {{end}}
+  </section>
+  <section class="card">
+    <h2>Categorías de hoy</h2>
+    {{range .Cats}}<div class="catrow" title="{{.Label}}: {{.N}}">
+      <span>{{.Label}}</span>
+      <div class="track"><div class="fill" style="width: {{printf "%.1f" .Pct}}%"></div></div>
+      <span class="num">{{miles .N}}</span>
+    </div>{{end}}
+    <p class="muted">Clasificación automática por reglas simples; el detalle fino hacelo con Claude sobre el CSV.</p>
+  </section>
+</div>
+{{end}}
+
+{{define "feed"}}
+{{if not .Rows}}<p class="muted">Todavía no hay mensajes con estos filtros.</p>{{end}}
+<ul class="feed">
+  {{range .Rows}}<li>
+    <div class="meta">
+      <span class="badge {{.Cat}}">{{.CatLabel}}</span>
+      <span>{{if eq .Source "chat"}}Chat{{else}}Comentario{{end}}</span>
+      <strong>{{.Author}}</strong>
+      <span>{{fecha .At}}</span>
+      {{if .Likes}}<span>{{.Likes}} likes</span>{{end}}
+      {{if .Video}}<span>· {{.Video}}</span>{{end}}
+    </div>
+    <div>{{.Text}}</div>
+  </li>{{end}}
+</ul>
+{{end}}
+
+{{define "extra"}}
+<section class="card" style="margin-bottom:16px">
+  <h2>Palabras más repetidas (24 h)</h2>
+  <div class="words">{{range .Words}}<span>{{.Key}} · {{.N}}</span>{{else}}<span class="muted">Sin datos todavía</span>{{end}}</div>
+</section>
+<section class="card" style="margin-bottom:16px">
+  <h2>Chat por programa (24 h)</h2>
+  <table>{{range .Programs}}<tr><td>{{.Key}}</td><td class="n">{{miles .N}}</td></tr>{{else}}<tr><td class="muted">Sin datos todavía</td></tr>{{end}}</table>
+</section>
+<section class="card" style="margin-bottom:16px">
+  <h2>Quiénes más escriben (24 h)</h2>
+  <table>{{range .Authors}}<tr><td>{{.Key}}</td><td class="n">{{.N}}</td></tr>{{else}}<tr><td class="muted">Sin datos todavía</td></tr>{{end}}</table>
+</section>
+<section class="card">
+  <h2>Videos recientes</h2>
+  <div class="scroll"><table>
+    <tr><th>Video</th><th class="n">Vistas</th><th class="n">Coment.</th></tr>
+    {{range .Videos}}<tr>
+      <td>{{if eq .LiveStatus "live"}}<span class="live">VIVO</span> {{end}}<a href="https://youtu.be/{{.ID}}" target="_blank" rel="noopener">{{.Title}}</a>{{if and .Channel (ne .Channel $.Channel)}} <span class="muted">· {{.Channel}}</span>{{end}}</td>
+      <td class="n">{{miles .Views}}</td><td class="n">{{miles .Comments}}</td>
+    </tr>{{end}}
+  </table></div>
+</section>
+{{end}}
+
+{{define "vivo"}}
+<section id="vivo" class="card vivo" aria-label="Chat en vivo por programa">
+  <div id="vivo-chat" hx-get="/parcial/vivo/chat?video={{.Video}}" hx-trigger="load, every 2s"><p class="muted">Cargando…</p></div>
+  {{if .Video}}<div id="vivo-analisis" hx-get="/parcial/vivo/analisis?video={{.Video}}" hx-trigger="load, every 30s"></div>{{end}}
+</section>
+{{end}}
+
+{{define "vivo-chat"}}
+<div class="head vhead">
+  <h2>Chat en vivo</h2>
+  {{if .Buttons}}<div class="vbtns" role="group" aria-label="Elegí qué vivo ver">
+    {{range .Buttons}}<button type="button" class="vbtn" aria-pressed="{{.Active}}"
+      hx-get="/parcial/vivo?video={{.ID}}" hx-target="#vivo" hx-swap="outerHTML" hx-push-url="/?vivo={{.ID}}">{{.Label}}</button>{{end}}
+  </div>{{end}}
+</div>
+{{if .Buttons}}
+<p class="muted"><span class="live">Mostrando {{.Label}}</span>{{if .Paused}} · En pausa: {{.Paused}} (se sigue guardando; elegilo para verlo){{end}}</p>
+{{with .Banner}}<div class="cartel {{.Class}}"><strong>{{.Title}}</strong>{{range .Lines}}<span>{{.}}</span>{{end}}</div>{{end}}
+{{if .Note}}<div class="note">{{.Note}}</div>{{else if and .ChatNote (not .Banner)}}<p class="muted">{{.ChatNote}}</p>{{end}}
+{{if not .Rows}}<p class="muted">Todavía no llegaron mensajes de este chat.</p>{{end}}
+<ul class="feed vfeed" aria-live="off">
+  {{range .Rows}}<li>
+    <div class="meta">
+      <span class="badge {{.Cat}}">{{.CatLabel}}</span>
+      <strong>{{.Author}}</strong>
+      <span>{{hora .At}}</span>
+      {{if .Program}}<span>· {{.Program}}</span>{{end}}
+    </div>
+    <div>{{.Text}}</div>
+  </li>{{end}}
+</ul>
+{{else}}<p class="muted">No hay vivos en este momento. Cuando empiece uno, aparece acá solo.</p>{{end}}
+{{end}}
+
+{{define "vivo-analisis"}}
+{{with .}}
+<h2 class="vtitle">Análisis de {{.Label}} · últimas 24 h · {{miles .A.Total}} mensajes</h2>
+<div class="vgrid">
+  <section class="card">
+    <h2>1. Temas de los que más se habla</h2>
+    {{range .Topics}}<div class="catrow wide" title="{{.Label}}: {{.N}} mensajes">
+      <span>{{.Label}}</span>
+      <div class="track"><div class="fill" style="width: {{printf "%.1f" .Pct}}%"></div></div>
+      <span class="num">{{miles .N}}</span>
+    </div>{{else}}<p class="muted">Sin datos todavía.</p>{{end}}
+    <p class="muted">Palabras o pares de palabras, contadas en cuántos mensajes aparecen.</p>
+  </section>
+
+  <section class="card">
+    <h2>2. Preguntas para responder</h2>
+    <ul class="qlist">{{range .A.Questions}}<li>
+      <div class="meta"><strong>{{.Author}}</strong> · {{fecha .At}}{{if .Likes}} · {{.Likes}} likes{{end}}</div>
+      <div>{{.Text}}</div>
+    </li>{{else}}<li class="muted">Sin preguntas todavía.</li>{{end}}</ul>
+    <p class="muted">Sin borradores: para que Claude los escriba, descargá el CSV y usá el pedido del README.</p>
+  </section>
+
+  <section class="card">
+    <h2>3. Quejas técnicas (audio, cortes)</h2>
+    {{range .Tech}}<div class="catrow wide" title="{{.Label}}: {{.N}} mensajes">
+      <span>{{.Label}}</span>
+      <div class="track"><div class="fill warn" style="width: {{printf "%.1f" .Pct}}%"></div></div>
+      <span class="num">{{miles .N}}</span>
+    </div>{{else}}<p class="muted">Sin quejas técnicas.</p>{{end}}
+    {{if .A.TechMsgs}}<ul class="qlist">{{range .A.TechMsgs}}<li>
+      <div class="meta"><strong>{{.Author}}</strong> · {{fecha .At}}</div><div>{{.Text}}</div>
+    </li>{{end}}</ul>{{end}}
+  </section>
+
+  <section class="card">
+    <h2>4. Spam e insultos repetidos</h2>
+    {{range .Offenders}}<div class="catrow wide" title="{{.Label}}: {{.Key}}">
+      <span>{{.Label}}</span>
+      <div class="track"><div class="fill crit" style="width: {{printf "%.1f" .Pct}}%"></div></div>
+      <span class="num">{{.N}}</span>
+    </div>
+    <div class="muted sub">{{.Key}}</div>{{else}}<p class="muted">Nadie repitió spam ni insultos.</p>{{end}}
+  </section>
+
+  <section class="card">
+    <h2>5. Filtros para YouTube Studio</h2>
+    {{if .A.Filters}}
+    <div class="words">{{range .A.Filters}}<span>{{.Key}} · {{.N}}</span>{{end}}</div>
+    <label class="muted sub" for="filtros">Para copiar en Configuración › Comunidad › Palabras bloqueadas:</label>
+    <textarea id="filtros" class="copy" readonly rows="2">{{.FilterLine}}</textarea>
+    {{else}}<p class="muted">Ninguna palabra de las listas apareció.</p>{{end}}
+    {{if .A.Candidates}}
+    <p class="muted sub">Para revisar (casi solo aparecen en spam e insultos):</p>
+    <div class="words">{{range .A.Candidates}}<span>{{.Key}} · {{.N}}</span>{{end}}</div>
+    {{end}}
+    {{if .A.Links}}<p class="muted sub">{{.A.Links}} mensajes con links: conviene activar «Bloquear vínculos» en la misma pantalla.</p>{{end}}
+  </section>
+</div>
+{{else}}<p class="muted">Este vivo ya no está en la lista de videos.</p>{{end}}
+{{end}}
