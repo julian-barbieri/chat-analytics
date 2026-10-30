@@ -260,7 +260,16 @@ del vivo.
     API falsa (sin cuota): 36 barras de ~25 px a 1.164 px de ancho, el top se distingue en
     claro y oscuro, los botones cambian `aria-pressed` y la ventana, y el foco vuelve al
     botón después del cambio. Falta el ancho de celular (la ventana del navegador no se
-    pudo achicar): queda en CA11.
+    pudo achicar): queda en CA11. Después, en un iframe de 360 px: sin scroll horizontal,
+    los botones en una fila, barras de ~5 px (antes ~1 px) y los números del top sin pisarse.
+  - Revisión del agente `reviewer`: aprobado sin bloqueantes. Se corrigieron los menores: el
+    rótulo de hora solo se alinea a la derecha si cae en el borde (`Tick.End`, antes
+    `:last-child`), "verlo"/"verlos" según cuántos momentos quedan afuera, el lugar del
+    análisis en `/parcial/vivo` vuelve a reintentar cada 30 s si falla la primera carga
+    (cubierto en `TestParticipationWindowView`), el aviso tolera el cambio de franja en el
+    test y se sacaron claves sin uso. Queda sin cambiar una carrera de milisegundos: si el
+    refresco de 30 s llega mientras está en curso el pedido de un botón, ese click se
+    descarta y hay que tocar de nuevo.
 - [x] Gates de `CLAUDE.md` → "Definición de terminado" en verde: `gofmt -l .` vacío,
   `go vet ./...`, `staticcheck` limpio, `go build ./...` y
   `GOOS=windows GOARCH=amd64 go build ./...` OK, `go test -race -count=1 ./...` y

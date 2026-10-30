@@ -2449,7 +2449,7 @@ func TestParticipationChartWindow(t *testing.T) {
 	near := func(a, b float64) bool { return math.Abs(a-b) < 1e-9 }
 	for _, c := range []struct {
 		n, step int
-	}{{36, 6}, {48, 6}, {72, 12}, {96, 12}, {188, 24}, {288, 36}} {
+	}{{36, 6}, {38, 6}, {48, 6}, {72, 12}, {96, 12}, {188, 24}, {288, 36}} {
 		slots := make([]Slot, c.n)
 		for i := range slots {
 			slots[i].Start = start.Add(time.Duration(i) * slotStep)
@@ -2459,6 +2459,15 @@ func TestParticipationChartWindow(t *testing.T) {
 		ticks := ch["Ticks"].([]Tick)
 		if len(ticks) != c.n/c.step+1 || len(ticks) > 9 || ticks[1].Label != hm(c.step) || !near(ticks[1].Left, float64(c.step)/float64(c.n)*100) {
 			t.Errorf("%d franjas: ticks = %+v, quería uno cada %d", c.n, ticks, c.step)
+		}
+		// Solo el rótulo que cae en el borde derecho se alinea a la derecha.
+		for _, k := range ticks {
+			if k.End != near(k.Left, 100) {
+				t.Errorf("%d franjas: tick %+v con End mal puesto", c.n, k)
+			}
+		}
+		if last := ticks[len(ticks)-1]; last.End != (c.n%c.step == 0) {
+			t.Errorf("%d franjas: último tick %+v", c.n, last)
 		}
 		if ch["W"] != c.n || len(ch["Bars"].([]Bar)) != c.n {
 			t.Errorf("%d franjas: W = %v", c.n, ch["W"])
@@ -2506,16 +2515,29 @@ func TestParticipationWindowView(t *testing.T) {
 	pressed := func(hours int, on bool) string {
 		return fmt.Sprintf(`id="pwin-%d" class="vbtn" aria-pressed="%v"`, hours, on)
 	}
-	note := "fuera de este gráfico: N.º 1 del top. Tocá «Últimas 24 h» para verlos."
+	note := "fuera de este gráfico: N.º 1 del top. Tocá «Últimas 24 h» para verlo."
+	// La hora del aviso es el inicio de la ventana: puede correrse una franja si
+	// entre el test y el handler se pasó a la siguiente.
+	cut := now.Truncate(slotStep).Add(slotStep - 6*time.Hour)
+	before := func(body string) bool {
+		for _, at := range []time.Time{cut, cut.Add(slotStep)} {
+			if strings.Contains(body, "Antes de las "+at.Local().Format("15:04")+", "+note) {
+				return true
+			}
+		}
+		return false
+	}
 
 	for _, q := range []string{"", "&horas=6", "&horas=12", "&horas=x"} {
 		body := get("/parcial/vivo/analisis?video=w1" + q)
 		for _, want := range []string{`<div id="vivo-analisis" hx-get="/parcial/vivo/analisis?video=w1&horas=6" hx-trigger="every 30s" hx-swap="outerHTML">`,
-			pressed(6, true), pressed(24, false), `hx-get="/parcial/vivo/analisis?video=w1&horas=24" hx-target="#vivo-analisis" hx-swap="outerHTML"`,
-			"Antes de las " + now.Truncate(slotStep).Add(slotStep-6*time.Hour).Local().Format("15:04") + ", " + note} {
+			pressed(6, true), pressed(24, false), `hx-get="/parcial/vivo/analisis?video=w1&horas=24" hx-target="#vivo-analisis" hx-swap="outerHTML"`} {
 			if !strings.Contains(body, want) {
 				t.Errorf("%q: falta %q", q, want)
 			}
+		}
+		if !before(body) {
+			t.Errorf("%q: falta el aviso %q", q, note)
 		}
 		if n := strings.Count(section6(t, body), "<g><title>"); n != 72 {
 			t.Errorf("%q: %d franjas, quería 72 (6 h)", q, n)
@@ -2535,6 +2557,13 @@ func TestParticipationWindowView(t *testing.T) {
 	// si entre el test y el handler se pasó a la franja siguiente.
 	if n := strings.Count(section6(t, body), "<g><title>"); n != 121 && n != 122 {
 		t.Errorf("24 h: %d franjas, quería 121", n)
+	}
+
+	// La sección del vivo pide el análisis con un lugar que se reemplaza entero
+	// (si fuera innerHTML quedarían dos #vivo-analisis anidados) y que reintenta
+	// si falla la primera carga.
+	if body := get("/parcial/vivo?video=w1"); !strings.Contains(body, `<div id="vivo-analisis" hx-get="/parcial/vivo/analisis?video=w1" hx-trigger="load, every 30s" hx-swap="outerHTML"></div>`) {
+		t.Errorf("/parcial/vivo sin el lugar del análisis: %q", body)
 	}
 
 	// Un vivo que ya no está sigue con su wrapper para volver a pedirse.

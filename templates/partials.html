@@ -98,7 +98,7 @@
 {{define "vivo"}}
 <section id="vivo" class="card vivo" aria-label="Chat en vivo por programa">
   <div id="vivo-chat" hx-get="/parcial/vivo/chat?video={{.Video}}" hx-trigger="load, every 2s"><p class="muted">Cargando…</p></div>
-  {{if .Video}}<div id="vivo-analisis" hx-get="/parcial/vivo/analisis?video={{.Video}}" hx-trigger="load" hx-swap="outerHTML"></div>{{end}}
+  {{if .Video}}<div id="vivo-analisis" hx-get="/parcial/vivo/analisis?video={{.Video}}" hx-trigger="load, every 30s" hx-swap="outerHTML"></div>{{end}}
 </section>
 {{end}}
 
@@ -209,7 +209,7 @@
         <line x1="0" x2="{{.W}}" y1="100" y2="100" stroke="var(--grid)" vector-effect="non-scaling-stroke"></line>
       </svg>
     </div>
-    <div class="pticks" aria-hidden="true">{{range .Ticks}}<span style="left: {{printf "%.2f" .Left}}%">{{.Label}}</span>{{end}}</div>
+    <div class="pticks" aria-hidden="true">{{range .Ticks}}<span{{if .End}} class="end"{{end}} style="left: {{printf "%.2f" .Left}}%">{{.Label}}</span>{{end}}</div>
     {{end}}
     {{if .Outside}}<p class="muted">{{.Outside}}</p>{{end}}
     {{if .Moments}}<table class="tops">

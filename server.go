@@ -455,8 +455,12 @@ func participationView(v Video, msgs []Message, viewers []ViewerSample, titles m
 	}
 	var outsideNote string
 	if len(outside) > 0 {
-		outsideNote = fmt.Sprintf("Antes de las %s, fuera de este gráfico: %s del top. Tocá «Últimas 24 h» para verlos.",
-			shown[0].Start.Local().Format("15:04"), strings.Join(outside, ", "))
+		them := "verlos"
+		if len(outside) == 1 {
+			them = "verlo"
+		}
+		outsideNote = fmt.Sprintf("Antes de las %s, fuera de este gráfico: %s del top. Tocá «Últimas 24 h» para %s.",
+			shown[0].Start.Local().Format("15:04"), strings.Join(outside, ", "), them)
 	}
 	var rows []MomentRow
 	for _, m := range moments {
@@ -488,7 +492,7 @@ func participationView(v Video, msgs []Message, viewers []ViewerSample, titles m
 	}
 	return map[string]any{
 		"Chart": participationChart(shown, moments, typical, ok, titles), "Moments": rows, "Why": why,
-		"Video": v.ID, "Hours": hours, "Windows": []int{chartHours, 24}, "Outside": outsideNote,
+		"Windows": []int{chartHours, 24}, "Outside": outsideNote,
 		"ByPct": ok, "Typical": pct(typical), "Concurrent": v.Concurrent, "Missing": v.Concurrent > 0 && missing,
 	}
 }
@@ -504,6 +508,7 @@ type Mark struct {
 type Tick struct {
 	Left  float64
 	Label string
+	End   bool // está en el borde derecho: se alinea a la derecha para no desbordar
 }
 
 // participationChart arma las barras del % de participación cada 5 minutos,
@@ -570,7 +575,7 @@ func participationChart(slots []Slot, moments []Moment, typical float64, ok bool
 	}
 	var ticks []Tick
 	for i := 0; i <= len(slots) && len(slots) > 0; i += step {
-		ticks = append(ticks, Tick{Left: float64(i) / float64(w) * 100, Label: slots[0].Start.Add(time.Duration(i) * slotStep).Local().Format("15:04")})
+		ticks = append(ticks, Tick{Left: float64(i) / float64(w) * 100, Label: slots[0].Start.Add(time.Duration(i) * slotStep).Local().Format("15:04"), End: i == len(slots)})
 	}
 	out := map[string]any{"Bars": bars, "W": w, "Marks": marks, "Ticks": ticks, "ByPct": ok}
 	if !ok {
