@@ -1,0 +1,56 @@
+# Quality gates de yt-monitor. Mismos comandos que la tabla de CLAUDE.md.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  calidad:
+    name: Formato, vet, lint, build y tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      # Versión mínima de go.mod: asegura que el código sigue compilando con ella.
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - name: Formato (gofmt -l)
+        run: |
+          out=$(gofmt -l .)
+          if [ -n "$out" ]; then echo "Archivos sin formatear:"; echo "$out"; exit 1; fi
+      - name: Vet
+        run: go vet ./...
+      - name: Build Linux
+        run: go build ./...
+      - name: Build Windows
+        run: GOOS=windows GOARCH=amd64 go build -o /dev/null .
+      - name: Tests con detector de carreras
+        run: go test -race -count=1 ./...
+      - name: Tests repetidos (intermitencias)
+        run: go test -count=5 ./...
+
+  analisis:
+    name: Staticcheck y vulnerabilidades
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      # Go estable: govulncheck evalúa la stdlib del Go con el que corre, que es con el
+      # que se compila el binario que se distribuye. Cuando sale una versión nueva de Go,
+      # staticcheck y govulncheck pueden necesitar subir de versión (govulncheck v1.1.4
+      # entraba en pánico con Go 1.27: "unexpected expr: *ast.KeyValueExpr").
+      - uses: actions/setup-go@v6
+        with:
+          go-version: stable
+      - name: Staticcheck
+        run: go run honnef.co/go/tools/cmd/staticcheck@2026.2.2 ./...
+      - name: Escaneo de dependencias y stdlib (govulncheck)
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...

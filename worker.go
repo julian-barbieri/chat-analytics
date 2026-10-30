@@ -125,8 +125,11 @@ func nextChat(lives []Video, chats map[string]*chatState, now time.Time) (next *
 	return next, active
 }
 
-// RunWorker corre para siempre en una sola goroutine, así el cliente no se comparte.
-func RunWorker(yt *YouTube, st *Store, cfg WorkerConfig) {
+// RunWorker corre en una sola goroutine, así el cliente no se comparte, hasta
+// que se cancela ctx (con context.Background(), para siempre). Al cancelarlo
+// corta sus streaming y no vuelve hasta que terminan, para que nadie siga
+// escribiendo en el Store (los tests borran su directorio al terminar).
+func RunWorker(ctx context.Context, yt *YouTube, st *Store, cfg WorkerConfig) {
 	var (
 		uploads       []string // lista de subidas de cada canal, en el orden de cfg.Channels
 		nextVideos    time.Time
@@ -138,6 +141,7 @@ func RunWorker(yt *YouTube, st *Store, cfg WorkerConfig) {
 		chats         = map[string]*chatState{} // por ID de vivo; el token es de cada chat
 		events        = make(chan chatEvent, 256)
 		tick          = time.NewTicker(time.Second)
+		streams       int // goroutines de streaming que todavía no mandaron su done
 	)
 	spend := func(f func() error) error {
 		before := yt.Units
@@ -207,10 +211,12 @@ func RunWorker(yt *YouTube, st *Store, cfg WorkerConfig) {
 		if c.recent = append(c.recent, now); len(c.recent) > 10 {
 			c.recent = c.recent[1:]
 		}
-		ctx, cancel := context.WithCancel(context.Background())
+		// Derivado de ctx: cancelar el worker corta también las conexiones abiertas.
+		sctx, cancel := context.WithCancel(ctx)
 		c.open, c.cancel, c.opened = true, cancel, now
+		streams++
 		go func(id, chatID, token string) {
-			err := yt.StreamChat(ctx, id, chatID, token, func(b ChatBatch) { events <- chatEvent{c: c, b: b} })
+			err := yt.StreamChat(sctx, id, chatID, token, func(b ChatBatch) { events <- chatEvent{c: c, b: b} })
 			events <- chatEvent{c: c, done: true, err: err}
 		}(v.ID, c.chatID, c.token)
 	}
@@ -391,8 +397,28 @@ func RunWorker(yt *YouTube, st *Store, cfg WorkerConfig) {
 
 		select {
 		case ev := <-events:
+			if ev.done {
+				streams-- // antes de handle: el done de un vivo olvidado no llega al final de handle
+			}
 			handle(ev)
 		case <-tick.C:
+		case <-ctx.Done():
+			tick.Stop()
+			for _, c := range chats {
+				if c.cancel != nil {
+					c.cancel()
+				}
+			}
+			// Se sigue leyendo events hasta el último done: así ninguna goroutine
+			// queda trabada en el envío y la cuota que ya respondió YouTube se suma.
+			for streams > 0 {
+				ev := <-events
+				if ev.done {
+					streams--
+				}
+				handle(ev)
+			}
+			return
 		}
 	}
 }
