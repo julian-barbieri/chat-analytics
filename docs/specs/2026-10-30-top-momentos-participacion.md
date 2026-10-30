@@ -235,6 +235,41 @@ del vivo.
   `TestLiveParticipationView(Edges)?` fallaron antes del arreglo (salida en el PR) y pasan
   después. — se verifica con
   `go test -count=1 -run '^(TestReelLink|TestReelLinkBorders|TestLiveParticipationView|TestLiveParticipationViewEdges)$' ./...`.
+- [x] CA13 (ajuste por lo que se vio a mano en CA11): Julian Barbieri vio que con las 24 h
+  cada barra medía ~5 px y "casi no se distingue cual es cual" (sobre todo con datos de
+  solo las últimas 2 h, que quedaban apretados contra el borde derecho). Eligió "recorte +
+  6 h / 24 h". El ranking, la participación típica y los mensajes E0–E2 siguen usando las
+  24 h; solo cambia lo que se grafica:
+  - `chartWindow(slots, hours)` devuelve las últimas `hours` horas, sin las franjas de
+    antes del primer dato (chat o espectadores) y nunca menos de `minChartSlots` (36,
+    3 h). Un hueco sin chat después del primer dato se sigue mostrando. Cubierto por
+    `TestChartWindow`.
+  - `participationChart` grafica la ventana: rótulos de hora cada 30 min, 1 h, 2 h o 3 h
+    según el ancho (a lo sumo 9) y el `aria-label` dice "desde las HH:MM" si la ventana
+    es de menos de 24 h ("en las últimas 24 horas" si es entera). Cubierto por
+    `TestParticipationChartWindow`.
+  - La tarjeta 6 tiene dos botones (`.vbtn`, `aria-pressed`) "Últimas 6 h" (por defecto) y
+    "Últimas 24 h" que piden `GET /parcial/vivo/analisis?video=<ID>&horas=6|24`; otro valor
+    de `horas` es 6. Para que el refresco de 30 s conserve la ventana, el parcial devuelve
+    el `<div id="vivo-analisis">` entero con `horas` en su `hx-get` y se cambia con
+    `hx-swap="outerHTML"`. Si algún momento del top queda antes de la ventana se avisa:
+    "Antes de las HH:MM, fuera de este gráfico: N.º X del top. Tocá «Últimas 24 h» para
+    verlos." Cubierto por `TestParticipationWindowView` (y `TestLiveParticipationView`,
+    que ahora espera 36 franjas).
+  - Verificado en el navegador con una copia de los datos locales en el scratchpad y una
+    API falsa (sin cuota): 36 barras de ~25 px a 1.164 px de ancho, el top se distingue en
+    claro y oscuro, los botones cambian `aria-pressed` y la ventana, y el foco vuelve al
+    botón después del cambio. Falta el ancho de celular (la ventana del navegador no se
+    pudo achicar): queda en CA11. Después, en un iframe de 360 px: sin scroll horizontal,
+    los botones en una fila, barras de ~5 px (antes ~1 px) y los números del top sin pisarse.
+  - Revisión del agente `reviewer`: aprobado sin bloqueantes. Se corrigieron los menores: el
+    rótulo de hora solo se alinea a la derecha si cae en el borde (`Tick.End`, antes
+    `:last-child`), "verlo"/"verlos" según cuántos momentos quedan afuera, el lugar del
+    análisis en `/parcial/vivo` vuelve a reintentar cada 30 s si falla la primera carga
+    (cubierto en `TestParticipationWindowView`), el aviso tolera el cambio de franja en el
+    test y se sacaron claves sin uso. Queda sin cambiar una carrera de milisegundos: si el
+    refresco de 30 s llega mientras está en curso el pedido de un botón, ese click se
+    descarta y hay que tocar de nuevo.
 - [x] Gates de `CLAUDE.md` → "Definición de terminado" en verde: `gofmt -l .` vacío,
   `go vet ./...`, `staticcheck` limpio, `go build ./...` y
   `GOOS=windows GOARCH=amd64 go build ./...` OK, `go test -race -count=1 ./...` y
@@ -403,7 +438,7 @@ curva; las marcas numeradas ubican el top). Letras de 12 px: entre el `.muted` (
 
 ## Preguntas abiertas (decisiones de producto)
 
-**Resueltas (Julian Barbieri, 2026-10-30):** se aprobaron las cinco recomendaciones tal cual: mínimo 3 personas, 15 minutos de separación, ventana de 24 h, gráfico de % (personas si no hay dato) y 240 px / 180 px de alto.
+**Resueltas (Julian Barbieri, 2026-10-30):** se aprobaron las cinco recomendaciones tal cual: mínimo 3 personas, 15 minutos de separación, ventana de 24 h, gráfico de % (personas si no hay dato) y 240 px / 180 px de alto. Después de probarlo (CA13), el gráfico pasó a mostrar las últimas 6 h por defecto con botón para ver las 24 h; el ranking sigue siendo de 24 h.
 
 1. **Mínimo de personas:** recomiendo 3 (`minPersonasTop`), lo que ya venía usando la
    tarjeta. Con 2, las franjas de madrugada con poca gente mirando ganarían el ranking; con
