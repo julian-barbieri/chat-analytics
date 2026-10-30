@@ -20,7 +20,7 @@ YouTube ni necesita API key.
 | Para qué | Comando |
 |---|---|
 | Build | `go build ./...` |
-| Build Windows | `GOOS=windows GOARCH=amd64 go build -o /dev/null .` |
+| Build Windows (incluye el tablero) | `GOOS=windows GOARCH=amd64 go build ./...` |
 | Formato (debe no listar nada) | `gofmt -l .` |
 | Typecheck + análisis estático | `go vet ./...` |
 | Lint | `go run honnef.co/go/tools/cmd/staticcheck@2026.2.2 ./...` |
@@ -46,8 +46,10 @@ templates/, static/  embebidos con //go:embed (htmx vendorizado: no editarlo)
 docs/specs/          una spec por tarea (plantilla: SPEC_TEMPLATE.md)
 docs/decisions/      ADRs numerados (plantilla: ADR_TEMPLATE.md)
 .claude/agents/      agentes especializados: triage, implementer, tester, reviewer
-.claude/skills/      procedimientos repetibles (/fix-bug)
+.claude/skills/      procedimientos repetibles (/factory, /fix-bug)
 .github/workflows/   CI: quality gates en cada PR
+tools/factory-board/ tablero de la factory (package main aparte, no va en el binario)
+factory/             estado (jobs/) y actividad (events/) de la factory; en .gitignore
 ```
 
 ## Convenciones
@@ -104,10 +106,20 @@ Una tarea está terminada solo si se cumple **todo**:
   `git push` forzado o a `main`, `git commit` en `main`, `git reset --hard`,
   `git clean -f` y cualquier mención de `.env`; Read/Edit/Write de `.env` también.
   Si un hook te bloquea, no lo esquives: cambiá el enfoque o preguntá.
+- `log-activity.sh` (async, no bloquea) registra cada herramienta y cada subagente en
+  `factory/events/AAAA-MM-DD.jsonl`, solo con resúmenes cortos; borra lo de más de 30
+  días.
 
 ## Flujo de la software factory
 
-- Bugs con stack trace o test que falla: `/fix-bug <descripción o traza>`
-  (triage → spec aprobada por una persona → implementer → tester → reviewer → PR).
+- Cualquier tarea: `/factory <tarea>` (triage → spec aprobada por una persona →
+  implementer → tester → reviewer → gates → PR). Bugs con stack trace o test que
+  falla: `/fix-bug <descripción o traza>`, que es lo mismo con tipo `fix`. Retomar:
+  `/factory aprobar <id>`, `/factory rehacer <id> <nota>`; ver todo: `/factory estado`.
+- Estado de cada tarea en `factory/jobs/<id>/job.json` (lo escribe solo el
+  orquestador) y actividad de los agentes en `factory/events/` (hook async
+  `log-activity.sh`). Ver ADR 0002.
+- Tablero: `go run ./tools/factory-board` y abrir `http://localhost:8090`. Lo levanta
+  una persona; los agentes no lo dejan corriendo.
 - Decisiones de diseño que no son obvias desde el código: un ADR en `docs/decisions/`.
 - Si un agente no puede verificar un comando, pregunta; no inventa.

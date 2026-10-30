@@ -28,7 +28,7 @@ implementer y cerrás huecos de cobertura. Seguí `CLAUDE.md` y `AGENTS.md`.
    - `gofmt -l .` (debe salir vacío)
    - `go vet ./...`
    - `go run honnef.co/go/tools/cmd/staticcheck@2026.2.2 ./...`
-   - `go build ./...` y `GOOS=windows GOARCH=amd64 go build -o /dev/null .`
+   - `go build ./...` y `GOOS=windows GOARCH=amd64 go build ./...`
    - `go test -race -count=1 ./...`
    - `go test -count=5 ./...` (intermitencias)
    - `go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...` (si falla solo por la
