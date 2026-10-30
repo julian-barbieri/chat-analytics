@@ -1089,22 +1089,33 @@ func TestParticipation(t *testing.T) {
 func TestReelLink(t *testing.T) {
 	now := time.Date(2026, 10, 30, 15, 2, 0, 0, time.UTC)
 	const far = "Fuera de lo que se puede retroceder en YouTube: usá la grabación propia"
+	const live = "https://www.youtube.com/watch?v=abc"
 	cases := []struct {
 		name      string
+		status    string
 		started   time.Time
 		slot      time.Time
 		href, has string
 	}{
-		{"vivo corto", now.Add(-3 * time.Hour), now.Add(-62 * time.Minute), "https://www.youtube.com/watch?v=abc&t=7080s", ""},
-		{"vivo de 12 h justas", now.Add(-12 * time.Hour), now.Add(-12 * time.Hour), "https://www.youtube.com/watch?v=abc&t=0s", ""},
-		{"franja antes del inicio", now.Add(-3 * time.Hour), now.Add(-3*time.Hour - 2*time.Minute), "", "Retrocedé ~3 h 2 min en el reproductor del vivo"},
-		{"vivo de días, franja reciente", now.Add(-5 * 24 * time.Hour), now.Add(-127 * time.Minute), "", "Retrocedé ~2 h 7 min en el reproductor del vivo"},
-		{"vivo de días, franja vieja", now.Add(-5 * 24 * time.Hour), now.Add(-13 * time.Hour), "", far},
-		{"sin inicio, franja reciente", time.Time{}, now.Add(-62 * time.Minute), "", "Retrocedé ~1 h 2 min en el reproductor del vivo"},
-		{"sin inicio, franja vieja", time.Time{}, now.Add(-13 * time.Hour), "", far},
+		{"vivo corto", "none", now.Add(-3 * time.Hour), now.Add(-62 * time.Minute), "https://www.youtube.com/watch?v=abc&t=7080s", ""},
+		{"vivo de 12 h justas", "none", now.Add(-12 * time.Hour), now.Add(-12 * time.Hour), "https://www.youtube.com/watch?v=abc&t=0s", ""},
+		{"franja antes del inicio", "none", now.Add(-3 * time.Hour), now.Add(-3*time.Hour - 2*time.Minute), "", "Retrocedé ~3 h 2 min en el reproductor del vivo"},
+		{"vivo de días, franja reciente", "none", now.Add(-5 * 24 * time.Hour), now.Add(-127 * time.Minute), "", "Retrocedé ~2 h 7 min en el reproductor del vivo"},
+		{"vivo de días, franja vieja", "none", now.Add(-5 * 24 * time.Hour), now.Add(-13 * time.Hour), "", far},
+		{"sin inicio, franja reciente", "none", time.Time{}, now.Add(-62 * time.Minute), "", "Retrocedé ~1 h 2 min en el reproductor del vivo"},
+		{"sin inicio, franja vieja", "none", time.Time{}, now.Add(-13 * time.Hour), "", far},
+		// En un vivo en curso YouTube ignora t= y abre en el directo: se linkea
+		// el vivo y se dice cuánto retroceder.
+		{"en curso, vivo corto", "live", now.Add(-3 * time.Hour), now.Add(-62 * time.Minute), live, "Abrí el vivo y retrocedé ~1 h 2 min en el reproductor"},
+		{"en curso, vivo de 12 h justas", "live", now.Add(-12 * time.Hour), now.Add(-12 * time.Hour), live, "Abrí el vivo y retrocedé ~12 h 0 min en el reproductor"},
+		{"en curso, vivo de días", "live", now.Add(-5 * 24 * time.Hour), now.Add(-127 * time.Minute), live, "Abrí el vivo y retrocedé ~2 h 7 min en el reproductor"},
+		{"en curso, sin inicio", "live", time.Time{}, now.Add(-62 * time.Minute), live, "Abrí el vivo y retrocedé ~1 h 2 min en el reproductor"},
+		{"en curso, franja vieja", "live", now.Add(-5 * 24 * time.Hour), now.Add(-12*time.Hour - time.Nanosecond), "", far},
+		// Solo "live" lleva el link sin t=.
+		{"programado", "upcoming", time.Time{}, now.Add(-62 * time.Minute), "", "Retrocedé ~1 h 2 min en el reproductor del vivo"},
 	}
 	for _, c := range cases {
-		href, hint := reelLink(Video{ID: "abc", StartedAt: c.started}, c.slot, now)
+		href, hint := reelLink(Video{ID: "abc", LiveStatus: c.status, StartedAt: c.started}, c.slot, now)
 		if href != c.href || (c.has != "" && hint != c.has) || hint == "" {
 			t.Errorf("%s: reelLink = %q, %q; quería %q, %q", c.name, href, hint, c.href, c.has)
 		}
@@ -2004,8 +2015,10 @@ func TestLiveParticipationView(t *testing.T) {
 		"<th>Momento</th>", "<td class=\"n\">150</td>", "<td class=\"n\">6</td>", "4,0 %",
 		peak.Local().Format("02/01 15:04") + " a " + peak.Add(5*time.Minute).Local().Format("15:04"), "LA MAÑANA",
 		`<tr class="det"><td colspan="4">`, "Para el reel:", `target="_blank" rel="noopener"`,
-		"watch?v=v1&amp;t=", "&lt;script&gt;x&lt;/script&gt;", "dólar blue", "Solo 1" + e2,
-	}, []string{hidden, e0, e1})
+		// v1 está en curso: YouTube ignora t=, así que se linkea el vivo y se dice cuánto retroceder.
+		`href="https://www.youtube.com/watch?v=v1"`, "Abrí el vivo y retrocedé ~",
+		"&lt;script&gt;x&lt;/script&gt;", "dólar blue", "Solo 1" + e2,
+	}, []string{hidden, e0, e1, "watch?v=v1&amp;t="})
 	if n := strings.Count(body, "<th"); n != 4 {
 		t.Errorf("v1: la tabla tiene %d columnas, quería 4", n)
 	}
@@ -2316,15 +2329,15 @@ func TestLiveParticipationViewEdges(t *testing.T) {
 		"&lt;img src=x onerror=alert(2)&gt; hola",               // ejemplo
 		"200,0 %", "máx. 200,0 %", "<td class=\"n\">5</td>", "<td class=\"n\">10</td>",
 		`style="left: 0.00%"`, `style="left: 100.00%"`, "Solo 1 de 5",
-		// Vivo de 48 h y momento de hace 30 min: se dice cuánto retroceder, sin link.
-		"Retrocedé ~0 h 3",
+		// Vivo de 48 h en curso y momento de hace 30 min: link al vivo, sin t=, y cuánto retroceder.
+		`href="https://www.youtube.com/watch?v=x1"`, "Abrí el vivo y retrocedé ~0 h 3",
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("x1: falta %q", want)
 		}
 	}
-	if strings.Contains(body, "Retrocedé") && strings.Contains(body, `target="_blank"`) {
-		t.Errorf("x1: sin link de YouTube en un vivo de 48 h")
+	if strings.Contains(body, "watch?v=x1&amp;t=") {
+		t.Errorf("x1: un vivo en curso no lleva t= (YouTube lo ignora)")
 	}
 
 	body = section6(t, get("/parcial/vivo/analisis?video=x2"))
