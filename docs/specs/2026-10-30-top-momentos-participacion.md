@@ -220,6 +220,21 @@ del vivo.
   horizontal (`document.documentElement.scrollWidth <= innerWidth` en la consola), la
   tabla de la tarjeta 6 entra entera, las letras del gráfico se leen (12 px) y las barras y
   marcas del top se distinguen en los dos temas.
+- [x] CA12 (ajuste por lo que se probó a mano en CA14 de la spec anterior): Julian
+  Barbieri probó el link "Ver en YouTube desde ese momento" en un vivo en curso y YouTube
+  lo abrió en el directo, ignorando `&t=`. `reelLink` ahora, si `Video.LiveStatus ==
+  "live"` y la franja está dentro de `dvrWindow`, devuelve el link al vivo **sin** `t=`
+  (`https://www.youtube.com/watch?v=<ID>`) y el texto "Abrí el vivo y retrocedé ~X h Y
+  min en el reproductor". El link con `&t=` queda solo para vivos que ya terminaron
+  (empezaron hace 12 h o menos y la franja es posterior al inicio); el resto de los casos
+  no cambia (un caso `upcoming` en `TestReelLink` fija que solo `live` lleva el link sin
+  `t=`). Como la sección del vivo solo se arma para vivos en curso (`pickLive`), la rama
+  con `t=` casi no se ve desde el dashboard; la prueba de `&t=` en un VOD sigue sin hacerse
+  a mano. README (sección 3, punto 6) actualizado. Test de regresión: los casos "en
+  curso" de `TestReelLink` y las aserciones de `v1` y `x1` en
+  `TestLiveParticipationView(Edges)?` fallaron antes del arreglo (salida en el PR) y pasan
+  después. — se verifica con
+  `go test -count=1 -run '^(TestReelLink|TestReelLinkBorders|TestLiveParticipationView|TestLiveParticipationViewEdges)$' ./...`.
 - [x] Gates de `CLAUDE.md` → "Definición de terminado" en verde: `gofmt -l .` vacío,
   `go vet ./...`, `staticcheck` limpio, `go build ./...` y
   `GOOS=windows GOARCH=amd64 go build ./...` OK, `go test -race -count=1 ./...` y
@@ -361,8 +376,7 @@ curva; las marcas numeradas ubican el top). Letras de 12 px: entre el `.muted` (
   el mismo problema de escala en celular, pero no se pidió. Puede ser otra tarea.
 - `Participation`, la serie de espectadores (`Store`, `datos.espectadores.jsonl`), el
   worker y el cliente de YouTube: no cambian.
-- `reelLink` y `dvrWindow`: no cambian (la verificación del `&t=` sigue pendiente en CA14
-  de la spec anterior).
+- `dvrWindow`: no cambia. `reelLink` solo cambia para los vivos en curso (CA12).
 - Exportar el top a CSV, elegir la ventana desde el dashboard, cambiar el clasificador.
 - El resto de las tarjetas de `.vgrid` más allá del arreglo de `minmax` (que también les
   saca el desborde de 6 px en celular).

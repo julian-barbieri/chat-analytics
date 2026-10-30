@@ -568,11 +568,18 @@ func slotTitle(s Slot, titles map[string]string) string {
 const dvrWindow = 12 * time.Hour
 
 // reelLink dice cómo ubicar en YouTube el momento que empieza en slotStart:
-// un link con t= si el vivo es corto, o cuánto retroceder en el reproductor.
+// un link con t= si el vivo ya terminó y fue corto, o cuánto retroceder en el
+// reproductor.
 func reelLink(v Video, slotStart, now time.Time) (href, hint string) {
 	age := now.Sub(slotStart)
 	if age > dvrWindow {
 		return "", "Fuera de lo que se puede retroceder en YouTube: usá la grabación propia"
+	}
+	back := fmt.Sprintf("~%d h %d min", int(age/time.Hour), int(age%time.Hour/time.Minute))
+	// Mientras el vivo está en curso YouTube ignora t= y abre en el directo
+	// (probado a mano): se linkea el vivo y se dice cuánto ir para atrás.
+	if v.LiveStatus == "live" {
+		return "https://www.youtube.com/watch?v=" + url.QueryEscape(v.ID), "Abrí el vivo y retrocedé " + back + " en el reproductor"
 	}
 	if !v.StartedAt.IsZero() && now.Sub(v.StartedAt) <= dvrWindow && !slotStart.Before(v.StartedAt) {
 		sec := int(slotStart.Sub(v.StartedAt) / time.Second)
@@ -580,7 +587,7 @@ func reelLink(v Video, slotStart, now time.Time) (href, hint string) {
 	}
 	// En un vivo de días (como el de 24 h de Rivadavia) t= caería fuera de lo
 	// que se puede retroceder: se dice cuánto ir para atrás desde el directo.
-	return "", fmt.Sprintf("Retrocedé ~%d h %d min en el reproductor del vivo", int(age/time.Hour), int(age%time.Hour/time.Minute))
+	return "", "Retrocedé " + back + " en el reproductor del vivo"
 }
 
 // decimal escribe un número con un decimal y coma, como se lee en Argentina.
