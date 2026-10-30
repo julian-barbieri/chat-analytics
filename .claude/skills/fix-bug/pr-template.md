@@ -41,7 +41,7 @@ demuestra el punto (sin datos de usuarios ni la API key).
 | Build Linux / Windows | `go build ./...` / `GOOS=windows ...` | ✅ / ✅ |
 | Tests con race | `go test -race -count=1 ./...` | ✅ |
 | Intermitencias | `go test -count=5 ./...` | ✅ |
-| Vulnerabilidades | `govulncheck@v1.1.4 ./...` | ✅ / ⚠️ solo stdlib del Go local |
+| Vulnerabilidades | `govulncheck@v1.9.0 ./...` | ✅ / ⚠️ solo stdlib del Go local |
 
 ## Revisión (agente reviewer)
 

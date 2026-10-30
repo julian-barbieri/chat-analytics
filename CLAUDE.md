@@ -28,7 +28,7 @@ YouTube ni necesita API key.
 | Tests con detector de carreras | `go test -race -count=1 ./...` |
 | Detectar tests intermitentes | `go test -count=5 ./...` |
 | Un test | `go test -count=1 -run '^TestNombre$' ./...` |
-| Vulnerabilidades | `go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 ./...` |
+| Vulnerabilidades | `go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...` |
 
 `govulncheck` reporta vulnerabilidades de la **stdlib del Go instalado**: si falla
 solo por eso, el arreglo es actualizar Go, no el código. Decilo en el PR.

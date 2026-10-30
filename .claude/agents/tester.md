@@ -31,7 +31,7 @@ implementer y cerrás huecos de cobertura. Seguí `CLAUDE.md` y `AGENTS.md`.
    - `go build ./...` y `GOOS=windows GOARCH=amd64 go build -o /dev/null .`
    - `go test -race -count=1 ./...`
    - `go test -count=5 ./...` (intermitencias)
-   - `go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 ./...` (si falla solo por la
+   - `go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...` (si falla solo por la
      stdlib del Go instalado, reportalo como aviso, no como falla del cambio)
 4. Si algo falla, repetí una vez para distinguir falla real de intermitente y reportá
    la frecuencia.

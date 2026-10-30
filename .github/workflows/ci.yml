@@ -44,11 +44,13 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       # Go estable: govulncheck evalúa la stdlib del Go con el que corre, que es con el
-      # que se compila el binario que se distribuye.
+      # que se compila el binario que se distribuye. Cuando sale una versión nueva de Go,
+      # staticcheck y govulncheck pueden necesitar subir de versión (govulncheck v1.1.4
+      # entraba en pánico con Go 1.27: "unexpected expr: *ast.KeyValueExpr").
       - uses: actions/setup-go@v6
         with:
           go-version: stable
       - name: Staticcheck
         run: go run honnef.co/go/tools/cmd/staticcheck@2026.2.2 ./...
       - name: Escaneo de dependencias y stdlib (govulncheck)
-        run: go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 ./...
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
