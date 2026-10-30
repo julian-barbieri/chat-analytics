@@ -107,15 +107,32 @@ td.n, th.n { text-align: right; font-variant-numeric: tabular-nums; }
 .vbtn[aria-pressed="true"] { background: var(--live); border-color: var(--live); color: var(--on-live); }
 .vfeed { max-height: 360px; margin-bottom: 16px; }
 .vtitle { margin-top: 8px; }
-.vgrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 12px; }
+/* min(300px, 100%): en un celular de 360 px la columna de 300 desbordaba la tarjeta */
+.vgrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(300px, 100%), 1fr)); gap: 12px; }
 .vgrid .card { background: var(--surface-0); }
 .catrow.wide { grid-template-columns: minmax(0, 40%) 1fr 44px; }
 .catrow.wide span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .fill.warn { background: var(--warn-text); }
 .fill.crit { background: var(--crit-text); }
 .vgrid .full { grid-column: 1 / -1; }
-.bar.pico { fill: var(--warn-text); }
-.umbral { stroke: var(--text-muted); stroke-dasharray: 4 3; }
+/* Gráfico de participación: el SVG se estira a un alto fijo (no depende del
+   ancho) y los textos van en HTML para que midan siempre 12 px. */
+.pchart svg { display: block; width: 100%; height: 240px; overflow: visible; }
+.pmax, .pmarks, .pticks { position: relative; height: 16px; font-size: 12px; line-height: 16px; color: var(--text-muted); }
+.pmarks span, .pticks span { position: absolute; transform: translateX(-50%); white-space: nowrap; }
+.pticks span:first-child { transform: none; }
+.pticks span:last-child { transform: translateX(-100%); }
+.pmarks span { color: var(--warn-text); font-weight: 600; }
+.bar.top { fill: var(--warn-text); }
+.tipica { stroke: var(--text-muted); stroke-dasharray: 4 3; vector-effect: non-scaling-stroke; }
+.tops tr.main td { border-bottom: 0; }
+.tops tr.det td { overflow-wrap: anywhere; color: var(--text-secondary); }
+.tops tr.main td:first-child { overflow-wrap: anywhere; }
+.tops td.n, .tops th.n { white-space: nowrap; }
+@media (max-width: 600px) {
+  .pchart svg { height: 180px; }
+  .pticks span:nth-child(even) { display: none; }
+}
 .sub { display: block; margin: -2px 0 6px; }
 .qlist { list-style: none; margin: 0 0 8px; padding: 0; font-size: 14px; }
 .qlist li { padding: 6px 0; border-bottom: 1px solid var(--border); }

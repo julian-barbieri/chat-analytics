@@ -273,13 +273,13 @@ func sinceFor(msgs []Message, videoID string, t time.Time) []Message {
 	return out
 }
 
-// Picos de participación del chat, para elegir momentos para reels.
+// Momentos con más participación del chat, para elegir qué usar en reels.
 const (
-	slotStep        = 5 * time.Minute
-	slotCount       = 288 // 24 h, la misma ventana que el resto del análisis del vivo
-	minPersonasPico = 3   // con menos, un par de personas charlando de madrugada ya sería "pico"
-	factorPico      = 2   // veces la mediana de personas por franja del vivo
-	maxMomentos     = 5
+	slotStep       = 5 * time.Minute
+	slotCount      = 288              // 24 h, la misma ventana que el resto del análisis del vivo
+	minPersonasTop = 3                // con menos, 2 personas de madrugada con 20 mirando ganarían
+	minSeparacion  = 15 * time.Minute // que una misma charla no ocupe varios puestos
+	maxMomentos    = 5
 )
 
 // Slot es una franja de 5 minutos del chat de un vivo.
@@ -356,83 +356,63 @@ func median(xs []float64) float64 {
 	return (xs[n/2-1] + xs[n/2]) / 2
 }
 
-// peakThreshold devuelve la base del vivo (mediana de personas en las franjas
-// con algún mensaje) y cuántas personas hacen falta para que una franja sea pico.
-func peakThreshold(slots []Slot) (base, threshold float64) {
-	var people []float64
-	for _, s := range slots {
-		if s.N > 0 {
-			people = append(people, float64(s.Authors))
-		}
-	}
-	if len(people) > 0 {
-		base = median(people)
-	}
-	return base, max(minPersonasPico, factorPico*base)
-}
-
-// Moment son franjas pico seguidas.
+// Moment es una de las franjas con más participación. Es una franja sola y
+// no un grupo: así el % se compara entre intervalos de la misma duración
+// (las personas se acumulan en el intervalo y "mirando" es instantáneo).
 type Moment struct {
-	Start, End time.Time
-	Best       Slot // franja más fuerte
-	N, Authors int  // totales del momento (personas distintas en todo el momento)
-	Program    string
-	Topics     []Count
-	Examples   []Message
-	Ratio      float64 // personas de la franja más fuerte / base ("3,2 veces lo normal"); 0 si la base es 0
+	Slot             // la franja de 5 minutos (N, Authors, Viewers, Pct)
+	Rank     int     // 1 a maxMomentos
+	Program  string  // programa más frecuente en la franja
+	Topics   []Count // temas de la franja
+	Examples []Message
 }
 
-// PeakMoments agrupa las franjas pico seguidas y devuelve los momentos más
-// fuertes. El pico se mide por personas distintas y no por mensajes, así una
-// sola persona (o un spammer) que escribe mucho no infla la franja.
-func PeakMoments(slots []Slot, titles map[string]string) []Moment {
-	base, threshold := peakThreshold(slots)
+// eligible dice si la franja entra en el ranking por %.
+func eligible(s Slot) bool { return s.Viewers > 0 && s.Authors >= minPersonasTop }
+
+// ranksBefore ordena el ranking: más %, después más personas, después la más reciente.
+func ranksBefore(a, b Slot) bool {
+	if a.Pct != b.Pct {
+		return a.Pct > b.Pct
+	}
+	if a.Authors != b.Authors {
+		return a.Authors > b.Authors
+	}
+	return a.Start.After(b.Start)
+}
+
+// TopMoments devuelve las franjas con más % de participación (personas que
+// escribieron sobre los que miraban), separadas al menos minSeparacion entre
+// sí. Solo entran las que tienen dato de espectadores y minPersonasTop personas.
+func TopMoments(slots []Slot, titles map[string]string) []Moment {
+	var ranked []Slot
+	for _, s := range slots {
+		if eligible(s) {
+			ranked = append(ranked, s)
+		}
+	}
+	sort.SliceStable(ranked, func(i, j int) bool { return ranksBefore(ranked[i], ranked[j]) })
 	var out []Moment
-	for i := 0; i < len(slots); i++ {
-		if float64(slots[i].Authors) < threshold {
-			continue
+	for _, s := range ranked {
+		if len(out) == maxMomentos {
+			break
 		}
-		j := i
-		for j+1 < len(slots) && float64(slots[j+1].Authors) >= threshold {
-			j++
+		near := false
+		for _, m := range out {
+			d := s.Start.Sub(m.Start)
+			near = near || d > -minSeparacion && d < minSeparacion
 		}
-		out = append(out, newMoment(slots[i:j+1], base, titles))
-		i = j
+		if !near {
+			out = append(out, newMoment(s, len(out)+1, titles))
+		}
 	}
-	sort.SliceStable(out, func(i, j int) bool {
-		a, b := out[i].Best, out[j].Best
-		if a.Authors != b.Authors {
-			return a.Authors > b.Authors
-		}
-		if a.N != b.N {
-			return a.N > b.N
-		}
-		return a.Start.After(b.Start)
-	})
-	return out[:min(len(out), maxMomentos)]
+	return out
 }
 
-func newMoment(group []Slot, base float64, titles map[string]string) Moment {
-	m := Moment{Start: group[0].Start, End: group[len(group)-1].Start.Add(slotStep), Best: group[0]}
-	var msgs []Message
-	for _, s := range group {
-		// Gana la de más personas, después la de más mensajes; si empatan, queda la más temprana.
-		if s.Authors > m.Best.Authors || s.Authors == m.Best.Authors && s.N > m.Best.N {
-			m.Best = s
-		}
-		msgs = append(msgs, s.Msgs...)
-	}
+func newMoment(s Slot, rank int, titles map[string]string) Moment {
+	m := Moment{Slot: s, Rank: rank}
+	msgs := append([]Message(nil), s.Msgs...)
 	sort.SliceStable(msgs, func(i, j int) bool { return msgs[i].At.Before(msgs[j].At) })
-	people := map[string]bool{}
-	for _, msg := range msgs {
-		if msg.Author != "" {
-			people[msg.Author] = true
-		}
-	}
-	m.N, m.Authors = len(msgs), len(people)
-	if base > 0 {
-		m.Ratio = float64(m.Best.Authors) / base
-	}
 	m.Program = mainProgram(msgs, titles)
 	m.Topics = TopTopics(msgs, 3)
 	topic := ""
