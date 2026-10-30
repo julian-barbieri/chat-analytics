@@ -7,6 +7,8 @@ import (
 	"net/http/httptest"
 	"os"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -301,6 +303,27 @@ func TestChatBanner(t *testing.T) {
 	}
 }
 
+// startWorker lanza RunWorker y devuelve cómo pararlo y esperar a que vuelva.
+// Va en un defer y no en t.Cleanup: t.Cleanup correría después de los defer
+// que cierran el servidor falso o restauran variables globales, con el worker
+// todavía vivo.
+func startWorker(t *testing.T, yt *YouTube, st *Store, cfg WorkerConfig) (stop func()) {
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		RunWorker(ctx, yt, st, cfg)
+		close(done)
+	}()
+	return func() {
+		cancel()
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+			t.Error("RunWorker no volvió 5 s después de cancelar")
+		}
+	}
+}
+
 // TestWorkerRealTime: un vivo de RealTime se reconecta apenas YouTube corta
 // la conexión, sin esperar el intervalo de los turnos.
 func TestWorkerRealTime(t *testing.T) {
@@ -332,10 +355,12 @@ func TestWorkerRealTime(t *testing.T) {
 	}
 	yt := NewYouTube("k")
 	yt.BaseURL = srv.URL
-	go RunWorker(yt, st, WorkerConfig{
+	// Se para antes de srv.Close y de restaurar realTimeGap (los defer corren al revés).
+	stopWorker := startWorker(t, yt, st, WorkerConfig{
 		Channels: []string{"C"}, Videos: 5, Extra: []string{"r1"}, VideosEvery: time.Hour, CommentsEvery: time.Hour,
 		ChatEvery: time.Hour, ChatPeak: time.Hour, Budget: 9000, RealTime: map[string]bool{"r1": true},
 	})
+	defer stopWorker()
 	// Con un tick de 1 s, en 3,5 s tienen que entrar al menos 3 conexiones (los turnos darían 1 por hora).
 	time.Sleep(3500 * time.Millisecond)
 	if n := len(conns); n < 3 {
@@ -581,7 +606,7 @@ func TestStreamChat(t *testing.T) {
 // lecturas comunes.
 func TestWorkerStreamsChat(t *testing.T) {
 	now := time.Now().UTC().Format(time.RFC3339)
-	stop := make(chan struct{}) // el worker deja el streaming abierto: así se corta al terminar
+	stop := make(chan struct{}) // por si el worker no corta el streaming: así srv.Close no se cuelga
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		q := r.URL.Query()
 		switch r.URL.Path {
@@ -624,10 +649,12 @@ func TestWorkerStreamsChat(t *testing.T) {
 	}
 	yt := NewYouTube("k")
 	yt.BaseURL = srv.URL
-	go RunWorker(yt, st, WorkerConfig{
+	// Se para antes de close(stop) y de srv.Close (los defer corren al revés).
+	stopWorker := startWorker(t, yt, st, WorkerConfig{
 		Channels: []string{"C"}, Videos: 5, VideosEvery: time.Hour, CommentsEvery: time.Hour,
 		ChatEvery: time.Millisecond, ChatPeak: time.Millisecond, Budget: 9000,
 	})
+	defer stopWorker()
 
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
@@ -652,4 +679,327 @@ func TestWorkerStreamsChat(t *testing.T) {
 		time.Sleep(50 * time.Millisecond)
 	}
 	t.Fatalf("no llegaron los mensajes: streaming %+v, lecturas %+v", st.LastChat("s1", 5), st.LastChat("p1", 5))
+}
+
+// TestWorkerStops: al cancelar el contexto, RunWorker corta sus streaming y
+// vuelve, y después no escribe nada más en el directorio de datos.
+func TestWorkerStops(t *testing.T) {
+	now := time.Now().UTC().Format(time.RFC3339)
+	stop := make(chan struct{}) // si el arreglo no anda, igual se corta el streaming para que srv.Close no se cuelgue
+	clientGone := make(chan struct{})
+	var gone sync.Once
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+		switch r.URL.Path {
+		case "/channels":
+			w.Write([]byte(`{"items":[{"snippet":{"title":"Radio Test"},"contentDetails":{"relatedPlaylists":{"uploads":"UU1"}}}]}`))
+		case "/playlistItems":
+			if q.Get("playlistId") == "UULV1" {
+				w.Write([]byte(`{"items":[{"contentDetails":{"videoId":"s1"}},{"contentDetails":{"videoId":"p1"}}]}`))
+				return
+			}
+			w.Write([]byte(`{"items":[]}`))
+		case "/videos":
+			live := func(id, title, chat string) string {
+				return `{"id":"` + id + `","snippet":{"title":"` + title + `","channelTitle":"Radio Test","publishedAt":"` + now +
+					`","liveBroadcastContent":"live"},"statistics":{},"liveStreamingDetails":{"activeLiveChatId":"` + chat + `"}}`
+			}
+			w.Write([]byte(`{"items":[` + live("s1", "LA MAÑANA | EN VIVO", "cs") + "," + live("p1", "LA TARDE | EN VIVO", "cp") + `]}`))
+		case "/liveChat/messages/stream":
+			if q.Get("liveChatId") != "cs" {
+				w.WriteHeader(404)
+				return
+			}
+			w.Write([]byte("[" + streamItem("t1", "s-1", "en tiempo real")))
+			w.(http.Flusher).Flush()
+			select {
+			case <-r.Context().Done():
+				gone.Do(func() { close(clientGone) }) // la cortó el worker
+			case <-stop:
+			}
+		case "/liveChat/messages":
+			w.Write([]byte(`{"pollingIntervalMillis":1,"items":[{"id":"p-1","snippet":{"displayMessage":"leído en turno","publishedAt":"` + now + `"},"authorDetails":{"displayName":"Ana"}}]}`))
+		default:
+			w.WriteHeader(404)
+		}
+	}))
+	defer srv.Close()
+	defer close(stop)
+	dir := t.TempDir()
+	st, err := OpenStore(dir + "/datos.jsonl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	yt := NewYouTube("k")
+	yt.BaseURL = srv.URL
+	ctx, cancel := context.WithCancel(context.Background())
+	done := runWorker(ctx, yt, st, WorkerConfig{
+		Channels: []string{"C"}, Videos: 5, VideosEvery: time.Hour, CommentsEvery: time.Hour,
+		ChatEvery: time.Millisecond, ChatPeak: time.Millisecond, Budget: 9000,
+	})
+	defer func() { // si falla antes, que no quede vivo escribiendo en el TempDir
+		cancel()
+		returned(done, 5*time.Second)
+	}()
+
+	deadline := time.Now().Add(5 * time.Second)
+	for len(st.LastChat("s1", 5)) == 0 || len(st.LastChat("p1", 5)) == 0 {
+		if time.Now().After(deadline) {
+			t.Fatalf("no llegaron los mensajes: streaming %+v, lecturas %+v", st.LastChat("s1", 5), st.LastChat("p1", 5))
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("RunWorker no volvió 3 s después de cancelar")
+	}
+	select {
+	case <-clientGone:
+	case <-time.After(time.Second):
+		t.Fatal("el worker volvió sin cortar la conexión de streaming")
+	}
+
+	// Más de un tick del worker: si quedó algo corriendo, cambia la cuota o algún archivo.
+	state := func() string {
+		files, err := os.ReadDir(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		s := fmt.Sprintf("unidades=%d", st.Units())
+		for _, f := range files {
+			info, err := f.Info()
+			if err != nil {
+				t.Fatal(err)
+			}
+			s += fmt.Sprintf(" %s:%d:%s", f.Name(), info.Size(), info.ModTime().Format(time.RFC3339Nano))
+		}
+		return s
+	}
+	before := state()
+	time.Sleep(1500 * time.Millisecond)
+	if after := state(); after != before {
+		t.Errorf("el worker siguió escribiendo después de volver:\nantes:   %s\ndespués: %s", before, after)
+	}
+}
+
+// runWorker lanza RunWorker con ctx y devuelve un canal que se cierra cuando vuelve.
+func runWorker(ctx context.Context, yt *YouTube, st *Store, cfg WorkerConfig) <-chan struct{} {
+	done := make(chan struct{})
+	go func() {
+		RunWorker(ctx, yt, st, cfg)
+		close(done)
+	}()
+	return done
+}
+
+// returned dice si done se cerró dentro de d.
+func returned(done <-chan struct{}, d time.Duration) bool {
+	select {
+	case <-done:
+		return true
+	case <-time.After(d):
+		return false
+	}
+}
+
+// TestWorkerStopsWithoutStreams: sin ningún streaming abierto (no hay vivos o
+// el único chat quedó bloqueado), cancelar hace volver a RunWorker enseguida:
+// no hay ningún done que esperar.
+func TestWorkerStopsWithoutStreams(t *testing.T) {
+	now := time.Now().UTC().Format(time.RFC3339)
+	cases := map[string]struct {
+		videos string
+		ready  func(Snapshot) bool
+	}{
+		"sin vivos": {
+			videos: `{"items":[]}`,
+			ready:  func(s Snapshot) bool { return s.ChatNote == "No hay un vivo en este momento." },
+		},
+		"chat sin streaming y bloqueado": {
+			videos: `{"items":[{"id":"p1","snippet":{"title":"LA TARDE | EN VIVO","channelTitle":"Radio Test","publishedAt":"` + now +
+				`","liveBroadcastContent":"live"},"statistics":{},"liveStreamingDetails":{"activeLiveChatId":"cp"}}]}`,
+			ready: func(s Snapshot) bool { return s.ChatInfo["p1"].Blocked },
+		},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/channels":
+					w.Write([]byte(`{"items":[{"snippet":{"title":"Radio Test"},"contentDetails":{"relatedPlaylists":{"uploads":"UU1"}}}]}`))
+				case "/playlistItems":
+					w.Write([]byte(`{"items":[]}`))
+				case "/videos":
+					w.Write([]byte(tc.videos))
+				case "/liveChat/messages/stream":
+					w.WriteHeader(404) // sin streaming: pasa a lecturas comunes
+				case "/liveChat/messages":
+					w.WriteHeader(403) // y tampoco deja leer: queda bloqueado
+					w.Write([]byte(`{"error":{"message":"forbidden"}}`))
+				default:
+					w.WriteHeader(404)
+				}
+			}))
+			defer srv.Close()
+			st, err := OpenStore(t.TempDir() + "/datos.jsonl")
+			if err != nil {
+				t.Fatal(err)
+			}
+			yt := NewYouTube("k")
+			yt.BaseURL = srv.URL
+			ctx, cancel := context.WithCancel(context.Background())
+			done := runWorker(ctx, yt, st, WorkerConfig{
+				Channels: []string{"C"}, Videos: 5, Extra: []string{"p1"}, VideosEvery: time.Hour, CommentsEvery: time.Hour,
+				ChatEvery: time.Millisecond, ChatPeak: time.Millisecond, Budget: 9000,
+			})
+			defer func() { // si falla antes, que no quede vivo
+				cancel()
+				returned(done, 5*time.Second)
+			}()
+
+			deadline := time.Now().Add(5 * time.Second)
+			for !tc.ready(st.Status()) {
+				if time.Now().After(deadline) {
+					t.Fatalf("el worker no llegó al estado esperado: %+v", st.Status())
+				}
+				time.Sleep(20 * time.Millisecond)
+			}
+			cancel()
+			if !returned(done, time.Second) {
+				t.Fatal("RunWorker no volvió 1 s después de cancelar sin streaming abiertos")
+			}
+		})
+	}
+}
+
+// TestWorkerStopsBeforeStart: con el contexto ya cancelado, RunWorker hace a lo
+// sumo una vuelta y vuelve; el streaming que abre en esa vuelta nace cancelado.
+func TestWorkerStopsBeforeStart(t *testing.T) {
+	now := time.Now().UTC().Format(time.RFC3339)
+	stop := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/channels":
+			w.Write([]byte(`{"items":[{"snippet":{"title":"Radio Test"},"contentDetails":{"relatedPlaylists":{"uploads":"UU1"}}}]}`))
+		case "/playlistItems":
+			w.Write([]byte(`{"items":[]}`))
+		case "/videos":
+			w.Write([]byte(`{"items":[{"id":"s1","snippet":{"title":"LA MAÑANA | EN VIVO","channelTitle":"Radio Test","publishedAt":"` + now +
+				`","liveBroadcastContent":"live"},"statistics":{},"liveStreamingDetails":{"activeLiveChatId":"cs"}}]}`))
+		case "/liveChat/messages/stream":
+			w.Write([]byte("[" + streamItem("t1", "s-1", "hola")))
+			w.(http.Flusher).Flush()
+			select {
+			case <-r.Context().Done():
+			case <-stop:
+			}
+		default:
+			w.WriteHeader(404)
+		}
+	}))
+	defer srv.Close()
+	closeStop := sync.OnceFunc(func() { close(stop) })
+	defer closeStop()
+	st, err := OpenStore(t.TempDir() + "/datos.jsonl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	yt := NewYouTube("k")
+	yt.BaseURL = srv.URL
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	done := runWorker(ctx, yt, st, WorkerConfig{
+		Channels: []string{"C"}, Videos: 5, Extra: []string{"s1"}, VideosEvery: time.Hour, CommentsEvery: time.Hour,
+		ChatEvery: time.Millisecond, ChatPeak: time.Millisecond, Budget: 9000,
+	})
+	if !returned(done, 3*time.Second) {
+		closeStop() // destraba el handler por si el streaming quedó abierto
+		returned(done, 5*time.Second)
+		t.Fatal("RunWorker no volvió con el contexto ya cancelado")
+	}
+}
+
+// TestWorkerStopsAfterLiveEnds: un vivo termina, el worker corta su streaming y
+// recibe su done (que llega a un estado ya olvidado) antes de que se cancele
+// ctx. El contador de streaming no puede quedar desbalanceado: RunWorker vuelve.
+func TestWorkerStopsAfterLiveEnds(t *testing.T) {
+	now := time.Now().UTC().Format(time.RFC3339)
+	var ended atomic.Bool
+	stop := make(chan struct{})
+	clientGone := make(chan struct{})
+	var gone sync.Once
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/channels":
+			w.Write([]byte(`{"items":[{"snippet":{"title":"Radio Test"},"contentDetails":{"relatedPlaylists":{"uploads":"UU1"}}}]}`))
+		case "/playlistItems":
+			w.Write([]byte(`{"items":[]}`))
+		case "/videos":
+			if ended.Load() {
+				w.Write([]byte(`{"items":[]}`))
+				return
+			}
+			w.Write([]byte(`{"items":[{"id":"s1","snippet":{"title":"LA MAÑANA | EN VIVO","channelTitle":"Radio Test","publishedAt":"` + now +
+				`","liveBroadcastContent":"live"},"statistics":{},"liveStreamingDetails":{"activeLiveChatId":"cs"}}]}`))
+		case "/liveChat/messages/stream":
+			if ended.Load() {
+				w.WriteHeader(404)
+				return
+			}
+			w.Write([]byte("[" + streamItem("t1", "s-1", "hola")))
+			w.(http.Flusher).Flush()
+			select {
+			case <-r.Context().Done():
+				gone.Do(func() { close(clientGone) })
+			case <-stop:
+			}
+		default:
+			w.WriteHeader(404)
+		}
+	}))
+	defer srv.Close()
+	defer close(stop)
+	st, err := OpenStore(t.TempDir() + "/datos.jsonl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	yt := NewYouTube("k")
+	yt.BaseURL = srv.URL
+	ctx, cancel := context.WithCancel(context.Background())
+	done := runWorker(ctx, yt, st, WorkerConfig{
+		Channels: []string{"C"}, Videos: 5, Extra: []string{"s1"}, VideosEvery: 10 * time.Millisecond, CommentsEvery: time.Hour,
+		ChatEvery: time.Millisecond, ChatPeak: time.Millisecond, Budget: 9000,
+	})
+	defer func() { // si falla antes, que no quede vivo
+		cancel()
+		returned(done, 5*time.Second)
+	}()
+
+	deadline := time.Now().Add(5 * time.Second)
+	for len(st.LastChat("s1", 5)) == 0 {
+		if time.Now().After(deadline) {
+			t.Fatal("no llegó el mensaje del streaming")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	ended.Store(true) // en la próxima revisión de videos el vivo ya no está
+	select {
+	case <-clientGone:
+	case <-time.After(5 * time.Second):
+		t.Fatal("el worker no cortó el streaming del vivo que terminó")
+	}
+	// Margen para que el done del vivo olvidado pase por el select principal
+	// (no por el drenaje del cancel), que es el caso que se quiere cubrir.
+	time.Sleep(300 * time.Millisecond)
+	if s := st.Status(); s.ChatNote != "No hay un vivo en este momento." {
+		t.Fatalf("el worker no olvidó el vivo: %q", s.ChatNote)
+	}
+
+	cancel()
+	if !returned(done, 3*time.Second) {
+		t.Fatal("RunWorker no volvió: el done del vivo que terminó desbalanceó el contador de streaming")
+	}
 }

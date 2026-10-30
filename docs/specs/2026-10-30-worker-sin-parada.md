@@ -1,6 +1,6 @@
 # Spec: el worker no se puede parar y los tests lo dejan vivo
 
-- **Estado:** aprobada
+- **Estado:** implementada
 - **Tipo:** bug
 - **Rama:** `fix/worker-sin-parada`
 - **Origen:** CI del PR #2 de `julian-barbieri/chat-analytics`, job "Tests repetidos (intermitencias)" (`go test -count=5 ./...`): `TestWorkerStreamsChat` falla con `TempDir RemoveAll cleanup: ... directory not empty`. Localmente falla ~1 de cada 8 corridas.
@@ -97,32 +97,34 @@ cerrar el servidor falso, restaurar variables globales o borrar el `t.TempDir()`
 
 ## Criterios de aceptación
 
-- [ ] CA1: existe `TestWorkerStops` que cancela el contexto y comprueba que `RunWorker` vuelve
+- [x] CA1: existe `TestWorkerStops` que cancela el contexto y comprueba que `RunWorker` vuelve
   en menos de 3 s, que la conexión de streaming abierta se cerró del lado del cliente y que
   después de volver no cambia nada en el directorio de datos ni `Store.Units()` durante 1,5 s
   (más de un tick) — se verifica con `go test -count=1 -run '^TestWorkerStops$' ./...`.
   Antes del arreglo (paso 1 del diseño) tiene que fallar con "RunWorker no volvió"; guardar esa
   salida para el PR.
-- [ ] CA2: `TestWorkerRealTime` y `TestWorkerStreamsChat` paran el worker y esperan a que vuelva
+- [x] CA2: `TestWorkerRealTime` y `TestWorkerStreamsChat` paran el worker y esperan a que vuelva
   antes de cerrar el servidor, restaurar `realTimeGap` y del cleanup del `TempDir` — se verifica
   con `go test -count=20 -run 'TestWorker' ./...` en verde (0 fallas).
-- [ ] CA3: sin carreras en los tests del worker — `go test -race -count=5 -run 'TestWorker' ./...`
+- [x] CA3: sin carreras en los tests del worker — `go test -race -count=5 -run 'TestWorker' ./...`
   en verde y `go test -race -count=1 -run '^TestWorkerRealTime$' ./...` en verde (hoy falla 8/8).
-- [ ] CA4: sin líneas `connection refused` en la salida de los tests del worker (no queda ningún
+- [x] CA4: sin líneas `connection refused` en la salida de los tests del worker (no queda ningún
   worker de una corrida anterior pidiendo a un servidor cerrado) —
   `go test -count=5 -v -run 'TestWorker' ./... 2>&1 | grep -c 'connection refused'` da `0`.
-- [ ] CA5: producción igual que hoy: `main.go` llama a `RunWorker(context.Background(), ...)` y
+- [x] CA5: producción igual que hoy: `main.go` llama a `RunWorker(context.Background(), ...)` y
   el worker no se para nunca; ningún otro cambio en `main.go` — se verifica con
   `git diff main -- main.go` (solo esa línea y, si hace falta, el import de `context`).
-- [ ] CA6: el consumo de cuota no cambia: `TestWorkerStreamsChat` mantiene su chequeo de unidades
+- [x] CA6: el consumo de cuota no cambia: `TestWorkerStreamsChat` mantiene su chequeo de unidades
   (`u >= 19 && (u-14)%5 == 0`) y `TestFlowAgainstFakeAPI` su chequeo de `yt.Units` sin tocar —
   se verifica con `go test -count=1 -run '^(TestWorkerStreamsChat|TestFlowAgainstFakeAPI)$' ./...`
   y `git diff main -- youtube.go` vacío.
-- [ ] CA7: `go test -count=5 ./...` en verde en tres corridas seguidas (hoy falla 1 de 3).
+- [x] CA7: `go test -count=5 ./...` en verde en tres corridas seguidas (hoy falla 1 de 3).
 - [ ] Gates de `CLAUDE.md` → "Definición de terminado" en verde: `gofmt -l .` vacío,
   `go vet ./...`, `go run honnef.co/go/tools/cmd/staticcheck@2026.2.2 ./...`, `go build ./...`,
   `GOOS=windows GOARCH=amd64 go build -o /dev/null .`, `go test -race -count=1 ./...`,
   `go test -count=5 ./...`, revisión del `reviewer` y CI verde.
+  Locales en verde (gofmt, vet, staticcheck, builds, `-race`, `-count=5`); faltan la revisión
+  del `reviewer` y el CI.
 
 ## Diseño propuesto
 
