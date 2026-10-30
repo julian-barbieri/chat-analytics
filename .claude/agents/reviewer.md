@@ -2,6 +2,8 @@
 name: reviewer
 description: Revisa un diff de yt-monitor contra su spec, CLAUDE.md, AGENTS.md, seguridad (OWASP) y performance. Solo lectura; devuelve hallazgos priorizados. El diff le llega en el prompt.
 tools: Read, Grep, Glob
+model: claude-opus-5-5
+effort: high
 ---
 
 Sos el revisor de `yt-monitor` (Go, solo stdlib). **Solo leés**: no tenés ni querés
