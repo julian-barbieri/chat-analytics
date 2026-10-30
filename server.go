@@ -374,8 +374,14 @@ func (s *Server) liveAnalysis(w http.ResponseWriter, r *http.Request) {
 			video, label = v, LiveLabel(v.Title, v.Channel)
 		}
 	}
+	hours := chartHours
+	if r.URL.Query().Get("horas") == "24" {
+		hours = 24
+	}
+	// El wrapper se reemplaza entero en cada refresco para que conserve la
+	// ventana del gráfico elegida (va en su hx-get).
 	if label == "" {
-		s.render(w, "vivo-analisis", nil)
+		s.render(w, "vivo-analisis", map[string]any{"Video": id, "Hours": hours})
 		return
 	}
 	now := time.Now()
@@ -398,9 +404,9 @@ func (s *Server) liveAnalysis(w http.ResponseWriter, r *http.Request) {
 	}
 	viewers := s.st.Viewers(id, now.Add(-24*time.Hour))
 	s.render(w, "vivo-analisis", map[string]any{
-		"Label": label, "A": a, "Topics": bars(a.Topics), "Tech": bars(a.Tech),
+		"Video": id, "Hours": hours, "Label": label, "A": a, "Topics": bars(a.Topics), "Tech": bars(a.Tech),
 		"Offenders": offenders, "FilterLine": strings.Join(filterLine, ", "),
-		"Part": participationView(video, msgs, viewers, videoTitles(snap.Videos), now),
+		"Part": participationView(video, msgs, viewers, videoTitles(snap.Videos), now, hours),
 	})
 }
 
@@ -413,10 +419,45 @@ type MomentRow struct {
 	Href, Hint                      string
 }
 
+// Ventana del gráfico de participación: con las 24 h cada franja medía ~5 px
+// y no se distinguían (se vio a mano en CA11), así que por defecto se grafican
+// las últimas 6 h. El ranking sigue siendo de 24 h.
+const (
+	chartHours    = 6
+	minChartSlots = 36 // 3 h: con menos, unas pocas franjas quedarían como bloques
+)
+
+// chartWindow recorta las franjas que se grafican: las últimas hours horas,
+// sin las de antes del primer dato (chat o espectadores; por ejemplo, de antes
+// de que se empezara a guardar), y nunca menos de minChartSlots. Un hueco sin
+// chat después del primer dato se muestra: es información.
+func chartWindow(slots []Slot, hours int) []Slot {
+	first := 0
+	for first < len(slots) && slots[first].N == 0 && slots[first].Viewers == 0 {
+		first++
+	}
+	from := max(len(slots)-hours*int(time.Hour/slotStep), first)
+	return slots[max(min(from, len(slots)-minChartSlots), 0):]
+}
+
 // participationView arma la sección de momentos con más participación del vivo.
-func participationView(v Video, msgs []Message, viewers []ViewerSample, titles map[string]string, now time.Time) map[string]any {
+func participationView(v Video, msgs []Message, viewers []ViewerSample, titles map[string]string, now time.Time, hours int) map[string]any {
 	slots, typical, ok := Participation(msgs, viewers, v.ID, now)
 	moments := TopMoments(slots, titles)
+	shown := chartWindow(slots, hours)
+	// Momentos del top que quedan antes de la ventana: se avisa para que no
+	// parezca que faltan marcas.
+	var outside []string
+	for _, m := range moments {
+		if len(shown) > 0 && m.Start.Before(shown[0].Start) {
+			outside = append(outside, fmt.Sprintf("N.º %d", m.Rank))
+		}
+	}
+	var outsideNote string
+	if len(outside) > 0 {
+		outsideNote = fmt.Sprintf("Antes de las %s, fuera de este gráfico: %s del top. Tocá «Últimas 24 h» para verlos.",
+			shown[0].Start.Local().Format("15:04"), strings.Join(outside, ", "))
+	}
 	var rows []MomentRow
 	for _, m := range moments {
 		row := MomentRow{Moment: m, End: m.Start.Add(slotStep), ViewersText: miles(m.Viewers), PctText: pct(m.Pct)}
@@ -446,7 +487,8 @@ func participationView(v Video, msgs []Message, viewers []ViewerSample, titles m
 		missing = missing || s.N > 0 && s.Viewers == 0
 	}
 	return map[string]any{
-		"Chart": participationChart(slots, moments, typical, ok, titles), "Moments": rows, "Why": why,
+		"Chart": participationChart(shown, moments, typical, ok, titles), "Moments": rows, "Why": why,
+		"Video": v.ID, "Hours": hours, "Windows": []int{chartHours, 24}, "Outside": outsideNote,
 		"ByPct": ok, "Typical": pct(typical), "Concurrent": v.Concurrent, "Missing": v.Concurrent > 0 && missing,
 	}
 }
@@ -468,6 +510,7 @@ type Tick struct {
 // con los momentos del top marcados y la línea de la participación típica.
 // Si no hay ningún dato de espectadores (ok false), muestra personas para no
 // quedar vacío. El viewBox es de len(slots) × 100: una unidad por franja.
+// slots puede ser una ventana de las 24 h (chartWindow).
 func participationChart(slots []Slot, moments []Moment, typical float64, ok bool, titles map[string]string) map[string]any {
 	w := max(len(slots), 1)
 	rank := map[time.Time]int{}
@@ -513,14 +556,26 @@ func participationChart(slots []Slot, moments []Moment, typical float64, ok bool
 		}
 		bars = append(bars, b)
 	}
+	// Horas cada 30 min, 1 h, 2 h o 3 h según el ancho: a lo sumo 9 rótulos.
+	step := 36
+	for _, s := range []int{6, 12, 24} {
+		if len(slots) <= 8*s {
+			step = s
+			break
+		}
+	}
+	span := "en las últimas 24 horas"
+	if len(slots) > 0 && len(slots) < slotCount {
+		span = "desde las " + slots[0].Start.Local().Format("15:04")
+	}
 	var ticks []Tick
-	for i := 0; i <= len(slots) && len(slots) > 0; i += 36 { // cada 3 h
+	for i := 0; i <= len(slots) && len(slots) > 0; i += step {
 		ticks = append(ticks, Tick{Left: float64(i) / float64(w) * 100, Label: slots[0].Start.Add(time.Duration(i) * slotStep).Local().Format("15:04")})
 	}
 	out := map[string]any{"Bars": bars, "W": w, "Marks": marks, "Ticks": ticks, "ByPct": ok}
 	if !ok {
 		out["Max"] = fmt.Sprintf("máx. %d personas", peak.Authors)
-		aria := "Personas que escribieron en el chat cada 5 minutos en las últimas 24 horas; "
+		aria := "Personas que escribieron en el chat cada 5 minutos " + span + "; "
 		if peak.Authors > 0 {
 			aria += fmt.Sprintf("máximo de %d personas a las %s", peak.Authors, peak.Start.Local().Format("15:04"))
 		} else {
@@ -534,7 +589,7 @@ func participationChart(slots []Slot, moments []Moment, typical float64, ok bool
 		out["TypicalY"] = 100 - typical/scale*100
 	}
 	out["Max"] = "máx. " + pct(scale)
-	aria := "Participación del chat cada 5 minutos en las últimas 24 horas (personas que escribieron sobre los que miraban); "
+	aria := "Participación del chat cada 5 minutos " + span + " (personas que escribieron sobre los que miraban); "
 	if best.Viewers > 0 {
 		aria += fmt.Sprintf("la más alta: %s a las %s (%s personas de %s mirando)", pct(best.Pct), best.Start.Local().Format("15:04"), miles(best.Authors), miles(best.Viewers))
 	} else {
