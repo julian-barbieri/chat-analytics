@@ -96,6 +96,15 @@ Una tarea está terminada solo si se cumple **todo**:
 6. Revisión del agente `reviewer` sin hallazgos bloqueantes pendientes.
 7. PR abierto contra `main` con resumen, link a la spec y evidencia de tests; CI verde.
 
+## Quality gates automáticos
+
+- CI (`.github/workflows/ci.yml`) corre la tabla de comandos en cada PR y push a main.
+- Hooks de `.claude/settings.json`: después de editar un `.go`, `gofmt -w` y `go vet`
+  (si vet falla, el error vuelve al agente). Antes de cada comando se bloquean `rm -rf`,
+  `git push` forzado o a `main`, `git commit` en `main`, `git reset --hard`,
+  `git clean -f` y cualquier mención de `.env`; Read/Edit/Write de `.env` también.
+  Si un hook te bloquea, no lo esquives: cambiá el enfoque o preguntá.
+
 ## Flujo de la software factory
 
 - Bugs con stack trace o test que falla: `/fix-bug <descripción o traza>`
