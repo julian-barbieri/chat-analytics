@@ -190,41 +190,35 @@
 
   {{with .Part}}<section class="card full">
     <h2>6. Momentos con más participación (para reels)</h2>
-    <p class="muted">Participación típica: {{.Typical}} (personas que escriben en 5 minutos sobre los que miran){{if .Concurrent}} · {{miles .Concurrent}} mirando ahora{{end}}</p>
-    {{if not .Concurrent}}<div class="note">YouTube no informa cuántos miran este vivo (el canal oculta el contador): el % queda sin dato y los picos se miden solo por personas.</div>{{end}}
-    {{if .Missing}}<p class="muted">Las franjas sin muestra de espectadores (de antes de que se empezaran a guardar o de cuando se cortó la revisión de videos) dicen «sin dato» y no entran en la participación típica.</p>{{end}}
+    {{if .ByPct}}<p class="muted">Los 5 momentos de 5 minutos en que escribió el mayor % de los que miraban (con al menos 3 personas). Participación típica del vivo: {{.Typical}} (línea punteada){{if .Concurrent}} · {{miles .Concurrent}} mirando ahora{{end}}</p>
+    {{else}}<p class="muted">Sin dato de cuántos miraban: el gráfico muestra personas que escribieron y no hay ranking por %{{if .Concurrent}} · {{miles .Concurrent}} mirando ahora{{end}}</p>{{end}}
+    {{if not .Concurrent}}<div class="note">YouTube no informa cuántos miran este vivo (el canal oculta el contador): sin ese dato no se puede calcular el % de participación.</div>{{end}}
+    {{if .Missing}}<p class="muted">Las franjas sin muestra de espectadores (de antes de que se empezaran a guardar o de cuando se cortó la revisión de videos) dicen «sin dato» y quedan fuera del ranking y de la participación típica.</p>{{end}}
     {{with .Chart}}
-    <svg viewBox="0 -8 {{.W}} {{.H}}" width="100%" role="img" aria-label="{{.Aria}}" style="overflow:visible;height:auto">
-      <line x1="0" x2="{{.W}}" y1="{{.H}}" y2="{{.H}}" stroke="var(--grid)"></line>
-      <text x="0" y="0">máx. {{.Peak}} personas</text>
-      {{range .Bars}}<g>
-        <title>{{.Label}}</title>
-        <rect class="hit" x="{{.X}}" y="0" width="{{.W}}" height="140"></rect>
-        <rect class="bar{{if .Class}} {{.Class}}{{end}}" x="{{.X}}" y="{{.Y}}" width="{{.W}}" height="{{.H}}"></rect>
-      </g>{{end}}
-      <line class="umbral" x1="0" x2="{{.W}}" y1="{{.LineY}}" y2="{{.LineY}}"></line>
-      <text x="{{.W}}" y="{{.TextY}}" text-anchor="end">pico: desde {{.Threshold}} personas</text>
-    </svg>
-    <svg viewBox="0 0 {{.W}} 16" width="100%" aria-hidden="true" style="overflow:visible;height:auto">
-      {{range .Ticks}}<text x="{{.X}}" y="12">{{.Label}}</text>{{end}}
-    </svg>
+    <div class="pmax" aria-hidden="true">{{.Max}}</div>
+    <div class="pmarks" aria-hidden="true">{{range .Marks}}<span style="left: {{printf "%.2f" .Left}}%">{{.Rank}}</span>{{end}}</div>
+    <div class="pchart">
+      <svg viewBox="0 0 {{.W}} 100" preserveAspectRatio="none" role="img" aria-label="{{.Aria}}">
+        {{range .Bars}}<g><title>{{.Label}}</title><rect class="hit" x="{{.X}}" y="0" width="{{.W}}" height="100"></rect><rect class="bar{{if .Class}} {{.Class}}{{end}}" x="{{.X}}" y="{{.Y}}" width="{{.W}}" height="{{.H}}"></rect></g>
+        {{end}}{{if .ByPct}}<line class="tipica" x1="0" x2="{{.W}}" y1="{{.TypicalY}}" y2="{{.TypicalY}}"></line>{{end}}
+        <line x1="0" x2="{{.W}}" y1="100" y2="100" stroke="var(--grid)" vector-effect="non-scaling-stroke"></line>
+      </svg>
+    </div>
+    <div class="pticks" aria-hidden="true">{{range .Ticks}}<span style="left: {{printf "%.2f" .Left}}%">{{.Label}}</span>{{end}}</div>
     {{end}}
-    {{if .Moments}}<div class="scroll"><table>
-      <tr><th>Momento</th><th>Programa</th><th class="n">Mensajes</th><th class="n">Personas</th><th>Franja más fuerte</th>
-        <th class="n">Mirando (franja más fuerte)</th><th class="n">% que escribió en esa franja</th><th>Temas y ejemplos</th><th>Para el reel</th></tr>
-      {{range .Moments}}<tr>
-        <td>{{fecha .Start}} a {{fecha .End}}</td>
-        <td>{{.Program}}</td>
-        <td class="n">{{miles .N}}</td>
-        <td class="n">{{miles .Authors}}</td>
-        <td>{{hora .Best.Start}}: {{miles .Best.Authors}} personas{{if .RatioText}} ({{.RatioText}} veces lo normal){{end}}</td>
+    {{if .Moments}}<table class="tops">
+      <tr><th>Momento</th><th class="n">Mirando</th><th class="n" title="Personas distintas que escribieron en esos 5 minutos">Personas</th><th class="n"><strong>%</strong></th></tr>
+      {{range .Moments}}<tr class="main">
+        <td><strong>{{.Rank}}.</strong> {{fecha .Start}} a {{hora .End}}{{if .Program}}<div class="muted">{{.Program}}</div>{{end}}</td>
         <td class="n">{{.ViewersText}}</td>
-        <td class="n">{{.PctText}}</td>
-        <td>{{if .TopicText}}<div>{{.TopicText}}</div>{{end}}{{range .Examples}}<div class="muted"><strong>{{.Author}}</strong>: {{.Text}}</div>{{end}}</td>
-        <td>{{if .Href}}<a href="{{.Href}}" target="_blank" rel="noopener">{{.Hint}}</a>{{else}}<span class="muted">{{.Hint}}</span>{{end}}</td>
-      </tr>{{end}}
-    </table></div>{{else}}<p class="muted">Todavía no hubo picos: una franja es pico si escriben al menos 3 personas y el doble de lo normal en este vivo.</p>{{end}}
-    <p class="muted">Franjas de 5 minutos de las últimas 24 h. Personas = nombres distintos que escribieron; mirando = lo que informa YouTube en ese momento. Es una aproximación: sirve para elegir qué mirar, no como medición exacta.</p>
+        <td class="n">{{miles .Authors}}</td>
+        <td class="n"><strong>{{.PctText}}</strong></td>
+      </tr>
+      <tr class="det"><td colspan="4">Para el reel: {{if .Href}}<a href="{{.Href}}" target="_blank" rel="noopener">{{.Hint}}</a>{{else}}<span class="muted">{{.Hint}}</span>{{end}}
+        {{if .TopicText}}<div>Temas: {{.TopicText}}</div>{{end}}{{range .Examples}}<div class="muted"><strong>{{.Author}}</strong>: {{.Text}}</div>{{end}}</td></tr>{{end}}
+    </table>{{end}}
+    {{if .Why}}<p class="muted">{{.Why}}</p>{{end}}
+    <p class="muted">Franjas de 5 minutos de las últimas 24 h. Personas = nombres distintos que escribieron; mirando = lo que informa YouTube en ese momento (promedio de las lecturas de la franja). Es una aproximación: sirve para elegir qué mirar, no como medición exacta.</p>
   </section>{{end}}
 </div>
 {{else}}<p class="muted">Este vivo ya no está en la lista de videos.</p>{{end}}

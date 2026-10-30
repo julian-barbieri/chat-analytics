@@ -1,6 +1,6 @@
 # Spec: los 5 momentos con más % de participación, gráfico legible y tabla sin scroll
 
-- **Estado:** aprobada
+- **Estado:** implementada
 - **Tipo:** mejora
 - **Rama:** `feat/top-momentos-participacion`
 - **Origen:** pedido de Julian Barbieri (textual):
@@ -121,7 +121,7 @@ del vivo.
 
 ## Criterios de aceptación
 
-- [ ] CA1: `TopMoments(slots []Slot, titles map[string]string) []Moment` (función pura en
+- [x] CA1: `TopMoments(slots []Slot, titles map[string]string) []Moment` (función pura en
   `analyze.go`) elige según las definiciones. Tabla de casos con franjas armadas a mano
   (`Pct` = `Authors/Viewers*100`, como `Participation`):
   - sin franjas, o franjas sin ningún dato de espectadores → ningún momento;
@@ -133,20 +133,22 @@ del vivo.
     más reciente;
   - `Rank` vale 1, 2, 3… en el orden devuelto.
   — se verifica con `go test -count=1 -run '^TestTopMoments$' ./...`.
-- [ ] CA2: separación y tope: si la mejor es la franja `i`, las franjas `i+1` e `i+2`
+- [x] CA2: separación y tope: si la mejor es la franja `i`, las franjas `i+1` e `i+2`
   (5 y 10 minutos) no se eligen aunque sean las siguientes en %, y la `i+3` (15 minutos
   justos) sí; lo mismo hacia atrás (`i−1`, `i−2` afuera, `i−3` adentro). Con 7 franjas
-  elegibles separadas devuelve 5 en orden de %. Con 2 elegibles devuelve 2. Con 6
-  elegibles pegadas entre sí (todas a menos de 15 minutos de la mejor) devuelve 1.
+  elegibles separadas devuelve 5 en orden de %. Con 2 elegibles devuelve 2. Con 5
+  elegibles pegadas (de `i−2` a `i+2`, todas a menos de 15 minutos de la mejor) devuelve
+  1; con una sexta pegada, a 15 minutos justos de la mejor, devuelve 2. (Ajustado al
+  implementar: con 6 pegadas siempre hay una a 15 minutos justos.)
   — se verifica con `go test -count=1 -run '^TestTopMoments(Borders)?$' ./...`.
-- [ ] CA3: cada momento trae, de los mensajes de **su franja**, el programa más frecuente
+- [x] CA3: cada momento trae, de los mensajes de **su franja**, el programa más frecuente
   (`mainProgram`/`programOf`), los temas (`TopTopics(msgs, 3)`) y hasta 2 ejemplos sin spam
   ni insultos, ordenados por hora, que contengan el tema principal (o los primeros si no
   hay tema): mismas reglas que hoy. Los casos de texto de `TestPeakMoments` y
   `TestPeakMomentsBorders` (programa "LA TARDE", tema "dólar blue", ejemplos `t3`/`t4` y
   `e2`/`e1`) se portan a los tests nuevos y siguen pasando. — se verifica con
   `go test -count=1 -run '^TestTopMoments(Borders)?$' ./...`.
-- [ ] CA4: `participationChart` en **modo %** (hay al menos una franja con dato de
+- [x] CA4: `participationChart` en **modo %** (hay al menos una franja con dato de
   espectadores, o sea `ok` de `Participation`): devuelve `W = len(slots)` (viewBox
   `0 0 W 100`); por franja `i`, una barra con `X = i + 0,1`, `W = 0,8`; alto
   `H = Pct / escala × 100` (mínimo 1 si `Pct > 0`) solo para las franjas elegibles, `H = 0`
@@ -163,13 +165,13 @@ del vivo.
   mirando)" o, sin elegibles, "…; todavía sin franjas con dato de espectadores y al menos 3
   personas". — se verifica con `go test -count=1 -run '^TestParticipationChart$' ./...`
   (tabla de casos, `now` fijo, sin servidor).
-- [ ] CA5: `participationChart` en **modo personas** (ninguna franja con dato: canal que
+- [x] CA5: `participationChart` en **modo personas** (ninguna franja con dato: canal que
   oculta el contador o vivo sin muestras guardadas): alto = `Authors / máximo × 100`, sin
   clase `top`, sin marcas ni línea de típica, rótulo `máx. N personas` y `aria-label`
   "Personas que escribieron en el chat cada 5 minutos en las últimas 24 horas; máximo de N
   personas a las HH:MM" o "…; todavía sin mensajes". — se verifica con
   `go test -count=1 -run '^TestParticipationChart$' ./...`.
-- [ ] CA6: `GET /parcial/vivo/analisis?video=<ID>` (con `Store` y datos armados en el
+- [x] CA6: `GET /parcial/vivo/analisis?video=<ID>` (con `Store` y datos armados en el
   test) muestra en la tarjeta 6:
   - el SVG con `preserveAspectRatio="none"`, `role="img"`, el `aria-label` de CA4, un
     `<g><title>` por franja y `class="bar top"` en las del top; las marcas numeradas y los
@@ -192,7 +194,7 @@ del vivo.
   - se mantienen los avisos de hoy: "YouTube no informa cuántos miran este vivo" si
     `Concurrent == 0`, el de franjas sin muestra (`Missing`) y "N mirando ahora".
   — se verifica con `go test -count=1 -run '^TestLiveParticipationView$' ./...`.
-- [ ] CA7: CSS en `templates/page.html` sin colores nuevos: `.vgrid` pasa a
+- [x] CA7: CSS en `templates/page.html` sin colores nuevos: `.vgrid` pasa a
   `minmax(min(300px, 100%), 1fr)`; el contenedor del gráfico tiene alto fijo de 240 px y
   180 px con `@media (max-width: 600px)`; textos del gráfico (rótulo, marcas, ticks) en
   HTML a 12 px; en ≤ 600 px se ocultan los ticks pares (quedan 00, 06, 12, 18, 24 h);
@@ -201,12 +203,12 @@ del vivo.
   `overflow-wrap: anywhere`; se borran `.bar.pico` y `.umbral`. — se verifica con
   `git diff main -- templates/page.html | grep '^+' | grep -ciE '#[0-9a-f]{3,6}\b'`
   (debe dar 0) y con la revisión del diff.
-- [ ] CA8: sin `template.HTML` con texto de usuarios, sin JS propio ni recursos externos:
+- [x] CA8: sin `template.HTML` con texto de usuarios, sin JS propio ni recursos externos:
   `grep -n 'template.HTML' *.go` no lista nada, `grep -n '<script' templates/*.html` solo
   lista `/static/htmx.min.js` y `go.mod` sigue sin `require`.
-- [ ] CA9: cuota, store y worker sin cambios: `git diff --quiet main -- youtube.go
+- [x] CA9: cuota, store y worker sin cambios: `git diff --quiet main -- youtube.go
   worker.go store.go` sale con código 0. Las cifras de cuota del README no cambian.
-- [ ] CA10: no queda rastro del concepto de pico: `grep -nE
+- [x] CA10: no queda rastro del concepto de pico: `grep -nE
   'PeakMoments|peakThreshold|factorPico|minPersonasPico|veces lo normal|[^t]Ratio\b' *.go
   templates/*.html README.md AGENTS.md` no lista nada (`[^t]` es para no confundir `preserveAspectRatio` con `Moment.Ratio`). El README (sección 3, punto 6) y
   `AGENTS.md` (mapa de `analyze.go`) describen `TopMoments`, el ranking por %, el mínimo
@@ -218,7 +220,7 @@ del vivo.
   horizontal (`document.documentElement.scrollWidth <= innerWidth` en la consola), la
   tabla de la tarjeta 6 entra entera, las letras del gráfico se leen (12 px) y las barras y
   marcas del top se distinguen en los dos temas.
-- [ ] Gates de `CLAUDE.md` → "Definición de terminado" en verde: `gofmt -l .` vacío,
+- [x] Gates de `CLAUDE.md` → "Definición de terminado" en verde: `gofmt -l .` vacío,
   `go vet ./...`, `staticcheck` limpio, `go build ./...` y
   `GOOS=windows GOARCH=amd64 go build ./...` OK, `go test -race -count=1 ./...` y
   `go test -count=5 ./...` en verde.
@@ -386,6 +388,8 @@ curva; las marcas numeradas ubican el top). Letras de 12 px: entre el `.muted` (
 - **Windows:** sin código específico de plataforma; el build de Windows está en los gates.
 
 ## Preguntas abiertas (decisiones de producto)
+
+**Resueltas (Julian Barbieri, 2026-10-30):** se aprobaron las cinco recomendaciones tal cual: mínimo 3 personas, 15 minutos de separación, ventana de 24 h, gráfico de % (personas si no hay dato) y 240 px / 180 px de alto.
 
 1. **Mínimo de personas:** recomiendo 3 (`minPersonasTop`), lo que ya venía usando la
    tarjeta. Con 2, las franjas de madrugada con poca gente mirando ganarían el ranking; con

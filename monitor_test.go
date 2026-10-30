@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -1085,119 +1086,6 @@ func TestParticipation(t *testing.T) {
 	}
 }
 
-// peakSlots arma franjas seguidas con tantas personas como diga cada número;
-// cada persona manda un mensaje.
-func peakSlots(people ...int) []Slot {
-	base := time.Date(2026, 10, 30, 10, 0, 0, 0, time.UTC)
-	slots := make([]Slot, len(people))
-	for i, p := range people {
-		s := Slot{Start: base.Add(time.Duration(i) * 5 * time.Minute), N: p, Authors: p}
-		for j := range p {
-			s.Msgs = append(s.Msgs, Message{ID: fmt.Sprint(i, "-", j), Source: "chat", VideoID: "v",
-				Author: fmt.Sprint("p", j), Text: "mensaje", At: s.Start.Add(time.Duration(j) * time.Second)})
-		}
-		slots[i] = s
-	}
-	return slots
-}
-
-func TestPeakMoments(t *testing.T) {
-	best := func(ms []Moment) []int {
-		var out []int
-		for _, m := range ms {
-			out = append(out, m.Best.Authors)
-		}
-		return out
-	}
-	if ms := PeakMoments(peakSlots(0, 0, 0), nil); len(ms) != 0 {
-		t.Errorf("sin mensajes: %+v", ms)
-	}
-	if ms := PeakMoments(peakSlots(4, 4, 4, 4, 4), nil); len(ms) != 0 {
-		t.Errorf("actividad pareja: %+v", ms)
-	}
-
-	slots := peakSlots(1, 1, 1, 6, 1, 1)
-	ms := PeakMoments(slots, nil)
-	if len(ms) != 1 || !ms[0].Start.Equal(slots[3].Start) || !ms[0].End.Equal(slots[4].Start) ||
-		ms[0].Best.Authors != 6 || ms[0].N != 6 || ms[0].Authors != 6 || ms[0].Ratio != 6 {
-		t.Errorf("un pico de una franja: %+v", ms)
-	} else if len(ms[0].Examples) != 2 || ms[0].Examples[0].ID != "3-0" || ms[0].Examples[1].ID != "3-1" {
-		t.Errorf("sin tema, los ejemplos son los primeros: %+v", ms[0].Examples)
-	}
-
-	// Dos franjas pico seguidas: un momento de 10 minutos; la más fuerte es la de más personas.
-	slots = peakSlots(1, 1, 5, 7, 1, 1)
-	ms = PeakMoments(slots, nil)
-	if len(ms) != 1 || !ms[0].Start.Equal(slots[2].Start) || ms[0].End.Sub(ms[0].Start) != 10*time.Minute ||
-		!ms[0].Best.Start.Equal(slots[3].Start) || ms[0].N != 12 || ms[0].Authors != 7 {
-		t.Errorf("dos franjas seguidas: %+v", ms)
-	}
-	// Empate de personas: gana la de más mensajes; si también empatan, la más temprana.
-	slots = peakSlots(1, 1, 5, 5, 5, 1, 1)
-	slots[3].Msgs = append(slots[3].Msgs, Message{ID: "extra", Source: "chat", VideoID: "v", Author: "p0", Text: "otra", At: slots[3].Start.Add(time.Minute)})
-	slots[3].N++
-	if ms := PeakMoments(slots, nil); len(ms) != 1 || !ms[0].Best.Start.Equal(slots[3].Start) {
-		t.Errorf("desempate por mensajes: %+v", ms)
-	}
-	slots = peakSlots(1, 1, 5, 5, 1, 1)
-	if ms := PeakMoments(slots, nil); len(ms) != 1 || !ms[0].Best.Start.Equal(slots[2].Start) {
-		t.Errorf("desempate por la más temprana: %+v", ms)
-	}
-
-	// 7 picos separados: se muestran 5, de más a menos personas.
-	ms = PeakMoments(peakSlots(1, 3, 1, 9, 1, 4, 1, 8, 1, 5, 1, 7, 1, 6, 1, 1, 1), nil)
-	if got := fmt.Sprint(best(ms)); got != "[9 8 7 6 5]" {
-		t.Errorf("7 picos: personas de la franja más fuerte = %s", got)
-	}
-	// Mismas personas y mensajes: primero el más reciente.
-	slots = peakSlots(1, 4, 1, 4, 1, 1, 1)
-	if ms := PeakMoments(slots, nil); len(ms) != 2 || !ms[0].Start.Equal(slots[3].Start) || !ms[1].Start.Equal(slots[1].Start) {
-		t.Errorf("desempate por el más reciente: %+v", ms)
-	}
-
-	// Base 0 (franjas con mensajes sin autor): 2 personas no alcanzan el mínimo de 3, 3 sí.
-	anon := func(people int) []Slot {
-		s := peakSlots(1, 1, people, 1)
-		for _, i := range []int{0, 1, 3} {
-			s[i].Msgs[0].Author, s[i].Authors = "", 0
-		}
-		return s
-	}
-	if ms := PeakMoments(anon(2), nil); len(ms) != 0 {
-		t.Errorf("2 personas con base 0 no es pico: %+v", ms)
-	}
-	if ms := PeakMoments(anon(3), nil); len(ms) != 1 {
-		t.Errorf("3 personas con base 0 es pico: %+v", ms)
-	}
-
-	// Programa más frecuente, temas y ejemplos sin spam ni insultos que tengan el tema principal.
-	slots = peakSlots(1, 1, 1, 0, 1, 1)
-	texts := []struct{ program, text string }{
-		{"LA TARDE", "qué lindo día hoy"},
-		{"LA TARDE", "entrá a www.ejemplo.com por el dólar blue"},
-		{"", "sos un pelotudo con el dólar blue"},
-		{"LA TARDE", "el dólar blue sube otra vez"},
-		{"", "dólar blue récord"},
-		{"", "y el dólar blue mañana"},
-	}
-	for j, x := range texts {
-		slots[3].Msgs = append(slots[3].Msgs, Message{ID: fmt.Sprint("t", j), Source: "chat", VideoID: "v", Program: x.program,
-			Author: fmt.Sprint("q", j), Text: x.text, At: slots[3].Start.Add(time.Duration(j) * time.Second)})
-	}
-	slots[3].N, slots[3].Authors = len(texts), len(texts)
-	ms = PeakMoments(slots, map[string]string{"v": "🔴RADIO TEST en VIVO | LA MAÑANA"})
-	if len(ms) != 1 {
-		t.Fatalf("momento con textos: %+v", ms)
-	}
-	m := ms[0]
-	if m.Program != "LA TARDE" || len(m.Topics) == 0 || m.Topics[0].Key != "dólar blue" || len(m.Topics) > 3 {
-		t.Errorf("programa %q, temas %v", m.Program, m.Topics)
-	}
-	if len(m.Examples) != 2 || m.Examples[0].ID != "t3" || m.Examples[1].ID != "t4" {
-		t.Errorf("ejemplos = %+v", m.Examples)
-	}
-}
-
 func TestReelLink(t *testing.T) {
 	now := time.Date(2026, 10, 30, 15, 2, 0, 0, time.UTC)
 	const far = "Fuera de lo que se puede retroceder en YouTube: usá la grabación propia"
@@ -1343,92 +1231,6 @@ func TestWorkerRecordsViewers(t *testing.T) {
 	}
 }
 
-// TestLiveParticipationView: la sección de momentos con más participación del
-// vivo elegido, con sus avisos cuando falta el dato de espectadores.
-func TestLiveParticipationView(t *testing.T) {
-	st, err := OpenStore(t.TempDir() + "/datos.jsonl")
-	if err != nil {
-		t.Fatal(err)
-	}
-	now := time.Now()
-	st.SetVideos("Radio Test", []Video{
-		{ID: "v1", Title: "🔴RADIO TEST en VIVO | LA MAÑANA", Channel: "Radio Test", LiveStatus: "live", Concurrent: 150, StartedAt: now.Add(-2 * time.Hour)},
-		{ID: "v2", Title: "Oculto en VIVO", Channel: "Oculto", LiveStatus: "live"},
-		{ID: "v3", Title: "Nuevo en VIVO", Channel: "Nuevo", LiveStatus: "live", Concurrent: 80},
-	})
-	peak := now.Truncate(5 * time.Minute).Add(-30 * time.Minute)
-	var msgs []Message
-	for _, id := range []string{"v1", "v2", "v3"} {
-		for k := 1; k <= 6; k++ { // una persona por franja antes del pico
-			msgs = append(msgs, Message{ID: fmt.Sprint(id, "-b", k), Source: "chat", VideoID: id, Author: "Base", Text: "buenas",
-				Program: "LA MAÑANA", At: peak.Add(-time.Duration(k)*5*time.Minute + time.Second)})
-		}
-		for j, a := range []string{"<script>x</script>", "Ana", "Beto", "Caro", "Dani", "Eva"} {
-			msgs = append(msgs, Message{ID: fmt.Sprint(id, "-p", j), Source: "chat", VideoID: id, Author: a, Text: "el dólar blue sube",
-				Program: "LA MAÑANA", At: peak.Add(time.Duration(j+1) * time.Second)})
-		}
-	}
-	st.Add(msgs)
-	st.AddViewers(peak.Add(time.Minute), []Video{{ID: "v1", LiveStatus: "live", Concurrent: 150}})
-	h := (&Server{st: st, budget: 9000}).Routes()
-	get := func(url string) string {
-		w := httptest.NewRecorder()
-		h.ServeHTTP(w, httptest.NewRequest("GET", url, nil))
-		return w.Body.String()
-	}
-
-	body := get("/parcial/vivo/analisis?video=v1")
-	span := peak.Local().Format("15:04") + " a " + peak.Add(5*time.Minute).Local().Format("15:04")
-	for _, want := range []string{
-		"Momentos con más participación", `role="img"`, "pico de 6 personas",
-		"<title>" + span + " · LA MAÑANA · 6 mensajes · 6 personas · 150 mirando (4,0 %)</title>",
-		"sin dato de espectadores", `class="bar pico"`, "Participación típica: 4,0 %",
-		peak.Local().Format("02/01 15:04"), peak.Add(5 * time.Minute).Local().Format("02/01 15:04"),
-		"watch?v=v1&amp;t=", "&lt;script&gt;x&lt;/script&gt;", "dólar blue", "150 mirando ahora",
-	} {
-		if !strings.Contains(body, want) {
-			t.Errorf("la sección de v1 no tiene %q", want)
-		}
-	}
-	if strings.Contains(body, "<script>x</script>") {
-		t.Errorf("el autor no salió escapado")
-	}
-	if strings.Contains(body, "YouTube no informa") {
-		t.Errorf("v1 informa espectadores")
-	}
-
-	// El canal oculta el contador: todo sin dato y el aviso de YouTube.
-	body = get("/parcial/vivo/analisis?video=v2")
-	for _, want := range []string{"Participación típica: sin dato", "YouTube no informa cuántos miran este vivo", "pico de 6 personas"} {
-		if !strings.Contains(body, want) {
-			t.Errorf("la sección de v2 no tiene %q", want)
-		}
-	}
-	// Tiene espectadores pero no hay muestras de esas franjas.
-	body = get("/parcial/vivo/analisis?video=v3")
-	for _, want := range []string{"Participación típica: sin dato", "80 mirando ahora", "no entran en la participación típica", "sin dato de espectadores"} {
-		if !strings.Contains(body, want) {
-			t.Errorf("la sección de v3 no tiene %q", want)
-		}
-	}
-	if strings.Contains(body, "YouTube no informa") {
-		t.Errorf("v3 informa espectadores")
-	}
-
-	// Sin momentos pico (la franja más fuerte no llega al umbral): el
-	// aria-label no tiene que hablar de "pico".
-	st.SetVideos("Radio Test", []Video{{ID: "v4", Title: "Tranqui en VIVO", Channel: "Tranqui", LiveStatus: "live"}})
-	st.Add([]Message{
-		{ID: "v4-a", Source: "chat", VideoID: "v4", Author: "Ana", Text: "buenas", At: peak.Add(time.Second)},
-		{ID: "v4-b", Source: "chat", VideoID: "v4", Author: "Beto", Text: "hola", At: peak.Add(2 * time.Second)},
-	})
-	body = get("/parcial/vivo/analisis?video=v4")
-	if !strings.Contains(body, "máximo de 2 personas a las "+peak.Local().Format("15:04")) || strings.Contains(body, "pico de 2 personas") {
-		aria, _, _ := strings.Cut(body[strings.Index(body, "Personas que escribieron"):], `"`)
-		t.Errorf("aria-label sin momentos pico: %q", aria)
-	}
-}
-
 // TestParticipationBorders: bordes de la ventana de 24 h y del cambio de
 // franja, redondeo del promedio de espectadores y franjas en hora local.
 func TestParticipationBorders(t *testing.T) {
@@ -1499,94 +1301,6 @@ func TestParticipationBorders(t *testing.T) {
 	}
 	if !slots[len(slots)-1].Start.Equal(at(15, 0, 0, 0)) {
 		t.Errorf("la última franja debería contener now: %v", slots[len(slots)-1].Start)
-	}
-}
-
-// TestPeakMomentsBorders: casos de borde del umbral, del agrupamiento y del orden.
-func TestPeakMomentsBorders(t *testing.T) {
-	if ms := PeakMoments(nil, nil); len(ms) != 0 {
-		t.Errorf("sin franjas: %+v", ms)
-	}
-	// Vivo sin mensajes, pasando por Participation como en el servidor.
-	slots, _, _ := Participation(nil, []ViewerSample{{"v", time.Now(), 50}}, "v", time.Now())
-	if ms := PeakMoments(slots, nil); len(ms) != 0 {
-		t.Errorf("vivo sin mensajes: %+v", ms)
-	}
-	none := map[string][]int{
-		"todas iguales a la mediana, altas": {10, 10, 10, 10},
-		"menos de 3 personas":               {0, 0, 2, 0, 0},
-		"2 personas sobre base 1":           {1, 2, 1, 1},
-		"justo debajo de 2 veces la base":   {2, 2, 2, 3, 2},
-	}
-	for name, people := range none {
-		if ms := PeakMoments(peakSlots(people...), nil); len(ms) != 0 {
-			t.Errorf("%s: no debería haber picos: %+v", name, ms)
-		}
-	}
-
-	// Umbral exacto: base 2, umbral 4; 4 personas ya es pico.
-	if ms := PeakMoments(peakSlots(2, 2, 2, 4, 2), nil); len(ms) != 1 || ms[0].Best.Authors != 4 || ms[0].Ratio != 2 {
-		t.Errorf("umbral exacto: %+v", ms)
-	}
-	// Base con decimales: mediana de 1,1,1,2,2,3 = 1,5; umbral max(3, 3) = 3.
-	if ms := PeakMoments(peakSlots(1, 1, 2, 2, 1, 3), nil); len(ms) != 1 || ms[0].Ratio != 2 {
-		t.Errorf("base 1,5: %+v", ms)
-	}
-
-	// Picos en la primera y la última franja de la ventana.
-	slots = peakSlots(6, 1, 1, 1, 6)
-	ms := PeakMoments(slots, nil)
-	if len(ms) != 2 || !ms[0].Start.Equal(slots[4].Start) || !ms[0].End.Equal(slots[4].Start.Add(5*time.Minute)) ||
-		!ms[1].Start.Equal(slots[0].Start) || !ms[1].End.Equal(slots[1].Start) {
-		t.Errorf("picos en los bordes: %+v", ms)
-	}
-
-	// Cuatro franjas pico seguidas: un solo momento de 20 minutos; las personas
-	// se cuentan una vez en todo el momento, los mensajes se suman. Hacen falta
-	// más franjas normales que pico para que la mediana (base) no sea la del pico.
-	slots = peakSlots(1, 1, 1, 6, 6, 6, 6, 1, 1, 1)
-	ms = PeakMoments(slots, nil)
-	if len(ms) != 1 || ms[0].End.Sub(ms[0].Start) != 20*time.Minute || ms[0].N != 24 || ms[0].Authors != 6 ||
-		!ms[0].Best.Start.Equal(slots[3].Start) {
-		t.Errorf("picos seguidos: %+v", ms)
-	}
-	// Una franja normal en el medio corta el momento en dos.
-	if ms := PeakMoments(peakSlots(1, 6, 1, 6, 1), nil); len(ms) != 2 {
-		t.Errorf("picos separados por una franja: %d momentos, quería 2", len(ms))
-	}
-
-	// Mismas personas: primero el de más mensajes aunque sea más viejo.
-	slots = peakSlots(1, 4, 1, 4, 1, 1)
-	slots[1].Msgs = append(slots[1].Msgs, Message{ID: "extra", Source: "chat", VideoID: "v", Author: "p0", Text: "otra", At: slots[1].Start.Add(time.Minute)})
-	slots[1].N++
-	if ms := PeakMoments(slots, nil); len(ms) != 2 || !ms[0].Start.Equal(slots[1].Start) {
-		t.Errorf("orden por mensajes: %+v", ms)
-	}
-
-	// Ejemplos: ordenados por hora aunque la franja venga desordenada, sin spam
-	// ni insultos aunque no haya tema.
-	slots = peakSlots(1, 1, 0, 1, 1)
-	for j, x := range []string{"sos un pelotudo", "hola", "buenas tardes", "www.spam.com"} {
-		slots[2].Msgs = append(slots[2].Msgs, Message{ID: fmt.Sprint("e", j), Source: "chat", VideoID: "v",
-			Author: fmt.Sprint("e", j), Text: x, At: slots[2].Start.Add(time.Duration(3-j) * time.Second)})
-	}
-	slots[2].N, slots[2].Authors = 4, 4
-	ms = PeakMoments(slots, nil)
-	if len(ms) != 1 {
-		t.Fatalf("momento con ejemplos: %+v", ms)
-	}
-	var ids []string
-	for _, e := range ms[0].Examples {
-		ids = append(ids, e.ID)
-		if c := Classify(e.Text); c == CatSpam || c == CatInsulto {
-			t.Errorf("ejemplo de %s: %q", c, e.Text)
-		}
-	}
-	if fmt.Sprint(ids) != "[e2 e1]" {
-		t.Errorf("ejemplos = %v, quería [e2 e1] (los primeros por hora sin spam ni insultos)", ids)
-	}
-	if ms[0].Ratio != 4 {
-		t.Errorf("Ratio = %v, quería 4", ms[0].Ratio)
 	}
 }
 
@@ -1864,42 +1578,806 @@ func TestReadViewersBorders(t *testing.T) {
 	}
 }
 
-// TestParticipationChartAria: el aria-label habla de "pico" exactamente
-// cuando PeakMoments encuentra algún momento (la franja máxima llega al
-// umbral), incluido el umbral justo y el umbral fraccionario.
-func TestParticipationChartAria(t *testing.T) {
-	start := time.Date(2026, 10, 30, 12, 0, 0, 0, time.UTC)
-	mk := func(authors ...int) []Slot {
-		var out []Slot
-		for i, a := range authors {
-			out = append(out, Slot{Start: start.Add(time.Duration(i) * slotStep), N: a, Authors: a})
+// momentSlots arma franjas separadas por step con {personas, mirando} cada
+// una (mirando 0 = sin dato) y el % calculado como en Participation. Cada
+// persona manda un mensaje.
+func momentSlots(step time.Duration, specs ...[2]int64) []Slot {
+	base := time.Date(2026, 10, 30, 10, 0, 0, 0, time.UTC)
+	slots := make([]Slot, len(specs))
+	for i, sp := range specs {
+		s := Slot{Start: base.Add(time.Duration(i) * step), N: int(sp[0]), Authors: int(sp[0]), Viewers: sp[1]}
+		if s.Viewers > 0 {
+			s.Pct = float64(s.Authors) / float64(s.Viewers) * 100
+		}
+		for j := range s.Authors {
+			s.Msgs = append(s.Msgs, Message{ID: fmt.Sprint(i, "-", j), Source: "chat", VideoID: "v",
+				Author: fmt.Sprint("p", j), Text: "mensaje", At: s.Start.Add(time.Duration(j) * time.Second)})
+		}
+		slots[i] = s
+	}
+	return slots
+}
+
+// starts devuelve el índice de franja de cada momento, para comparar el orden.
+func starts(slots []Slot, ms []Moment) string {
+	var out []int
+	for _, m := range ms {
+		for i, s := range slots {
+			if s.Start.Equal(m.Start) {
+				out = append(out, i)
+			}
+		}
+	}
+	return fmt.Sprint(out)
+}
+
+// TestTopMoments: las franjas con más % de participación, con el mínimo de
+// personas, los desempates, el programa, los temas y los ejemplos.
+func TestTopMoments(t *testing.T) {
+	const sep = 15 * time.Minute // franjas que no se pisan por la separación
+	cases := []struct {
+		name  string
+		slots []Slot
+		want  string // índices de franja en el orden devuelto
+	}{
+		{"sin franjas", nil, "[]"},
+		{"sin dato de espectadores", momentSlots(sep, [2]int64{6, 0}, [2]int64{10, 0}), "[]"},
+		{"orden por %, sin las de 2 personas ni las sin dato",
+			momentSlots(sep, [2]int64{10, 1000}, [2]int64{5, 100}, [2]int64{3, 50}, [2]int64{2, 10}, [2]int64{6, 0}), "[2 1 0]"},
+		{"mínimo justo: 3 entra, 2 no", momentSlots(sep, [2]int64{3, 100}, [2]int64{2, 10}), "[0]"},
+		{"empate de %: más personas primero", momentSlots(sep, [2]int64{4, 200}, [2]int64{6, 300}), "[1 0]"},
+		{"empate total: la más reciente primero", momentSlots(sep, [2]int64{4, 200}, [2]int64{4, 200}, [2]int64{4, 200}), "[2 1 0]"},
+	}
+	for _, c := range cases {
+		ms := TopMoments(c.slots, nil)
+		if got := starts(c.slots, ms); got != c.want {
+			t.Errorf("%s: franjas %s, quería %s", c.name, got, c.want)
+		}
+		for i, m := range ms {
+			if m.Rank != i+1 {
+				t.Errorf("%s: Rank del %d.º = %d", c.name, i+1, m.Rank)
+			}
+			if m.Pct != float64(m.Authors)/float64(m.Viewers)*100 || m.Viewers == 0 || m.Authors < 3 {
+				t.Errorf("%s: el %% no cierra: %d personas, %d mirando, %v %%", c.name, m.Authors, m.Viewers, m.Pct)
+			}
+		}
+	}
+	// Vivo sin mensajes, pasando por Participation como en el servidor.
+	slots, _, _ := Participation(nil, []ViewerSample{{"v", time.Now(), 50}}, "v", time.Now())
+	if ms := TopMoments(slots, nil); len(ms) != 0 {
+		t.Errorf("vivo sin mensajes: %+v", ms)
+	}
+
+	// Sin tema, los ejemplos son los primeros mensajes de la franja.
+	slots = momentSlots(sep, [2]int64{6, 100})
+	if ms := TopMoments(slots, nil); len(ms) != 1 || len(ms[0].Examples) != 2 ||
+		ms[0].Examples[0].ID != "0-0" || ms[0].Examples[1].ID != "0-1" {
+		t.Errorf("sin tema, los ejemplos son los primeros: %+v", ms)
+	}
+
+	// Programa más frecuente, temas y ejemplos sin spam ni insultos que tengan el tema principal.
+	slots = momentSlots(sep, [2]int64{1, 100}, [2]int64{0, 100})
+	texts := []struct{ program, text string }{
+		{"LA TARDE", "qué lindo día hoy"},
+		{"LA TARDE", "entrá a www.ejemplo.com por el dólar blue"},
+		{"", "sos un pelotudo con el dólar blue"},
+		{"LA TARDE", "el dólar blue sube otra vez"},
+		{"", "dólar blue récord"},
+		{"", "y el dólar blue mañana"},
+	}
+	for j, x := range texts {
+		slots[1].Msgs = append(slots[1].Msgs, Message{ID: fmt.Sprint("t", j), Source: "chat", VideoID: "v", Program: x.program,
+			Author: fmt.Sprint("q", j), Text: x.text, At: slots[1].Start.Add(time.Duration(j) * time.Second)})
+	}
+	slots[1].N, slots[1].Authors = len(texts), len(texts)
+	slots[1].Pct = float64(len(texts)) / 100 * 100
+	ms := TopMoments(slots, map[string]string{"v": "🔴RADIO TEST en VIVO | LA MAÑANA"})
+	if len(ms) != 1 {
+		t.Fatalf("momento con textos: %+v", ms)
+	}
+	m := ms[0]
+	if m.Program != "LA TARDE" || len(m.Topics) == 0 || m.Topics[0].Key != "dólar blue" || len(m.Topics) > 3 {
+		t.Errorf("programa %q, temas %v", m.Program, m.Topics)
+	}
+	if len(m.Examples) != 2 || m.Examples[0].ID != "t3" || m.Examples[1].ID != "t4" {
+		t.Errorf("ejemplos = %+v", m.Examples)
+	}
+}
+
+// TestTopMomentsBorders: separación de 15 minutos entre inicios (hacia
+// adelante y hacia atrás), tope de 5 y ejemplos ordenados por hora.
+func TestTopMomentsBorders(t *testing.T) {
+	step := 5 * time.Minute
+	// La mejor es la 3; la 1, 2, 4 y 5 están a 5 o 10 minutos de ella y no
+	// entran aunque tengan más % que la 6 y la 0, que están a 15 justos.
+	slots := momentSlots(step, [2]int64{50, 1000}, [2]int64{95, 1000}, [2]int64{85, 1000}, [2]int64{100, 1000},
+		[2]int64{90, 1000}, [2]int64{80, 1000}, [2]int64{70, 1000})
+	if got := starts(slots, TopMoments(slots, nil)); got != "[3 6 0]" {
+		t.Errorf("separación: franjas %s, quería [3 6 0]", got)
+	}
+
+	// 7 elegibles separadas: las 5 de más %, en orden.
+	slots = momentSlots(15*time.Minute, [2]int64{3, 100}, [2]int64{9, 100}, [2]int64{4, 100}, [2]int64{8, 100},
+		[2]int64{5, 100}, [2]int64{7, 100}, [2]int64{6, 100})
+	ms := TopMoments(slots, nil)
+	if got := starts(slots, ms); got != "[1 3 5 6 4]" {
+		t.Errorf("tope de 5: franjas %s, quería [1 3 5 6 4]", got)
+	}
+	var ranks []int
+	for _, m := range ms {
+		ranks = append(ranks, m.Rank)
+	}
+	if fmt.Sprint(ranks) != "[1 2 3 4 5]" {
+		t.Errorf("Rank = %v", ranks)
+	}
+
+	// 2 elegibles: devuelve 2.
+	slots = momentSlots(15*time.Minute, [2]int64{3, 100}, [2]int64{1, 100}, [2]int64{4, 100}, [2]int64{6, 0})
+	if got := starts(slots, TopMoments(slots, nil)); got != "[2 0]" {
+		t.Errorf("2 elegibles: franjas %s", got)
+	}
+
+	// Elegibles pegadas, todas a menos de 15 minutos de la mejor: una sola.
+	slots = momentSlots(step, [2]int64{5, 100}, [2]int64{6, 100}, [2]int64{9, 100}, [2]int64{7, 100}, [2]int64{8, 100})
+	if got := starts(slots, TopMoments(slots, nil)); got != "[2]" {
+		t.Errorf("pegadas: franjas %s, quería [2]", got)
+	}
+	// Con una sexta pegada, esa ya está a 15 minutos de la mejor y entra.
+	slots = momentSlots(step, [2]int64{5, 100}, [2]int64{6, 100}, [2]int64{9, 100}, [2]int64{7, 100}, [2]int64{8, 100}, [2]int64{4, 100})
+	if got := starts(slots, TopMoments(slots, nil)); got != "[2 5]" {
+		t.Errorf("seis pegadas: franjas %s, quería [2 5]", got)
+	}
+
+	// Ejemplos: ordenados por hora aunque la franja venga desordenada, sin spam
+	// ni insultos aunque no haya tema.
+	slots = momentSlots(step, [2]int64{0, 100})
+	for j, x := range []string{"sos un pelotudo", "hola", "buenas tardes", "www.spam.com"} {
+		slots[0].Msgs = append(slots[0].Msgs, Message{ID: fmt.Sprint("e", j), Source: "chat", VideoID: "v",
+			Author: fmt.Sprint("e", j), Text: x, At: slots[0].Start.Add(time.Duration(3-j) * time.Second)})
+	}
+	slots[0].N, slots[0].Authors, slots[0].Pct = 4, 4, 4
+	ms = TopMoments(slots, nil)
+	if len(ms) != 1 {
+		t.Fatalf("momento con ejemplos: %+v", ms)
+	}
+	var ids []string
+	for _, e := range ms[0].Examples {
+		ids = append(ids, e.ID)
+		if c := Classify(e.Text); c == CatSpam || c == CatInsulto {
+			t.Errorf("ejemplo de %s: %q", c, e.Text)
+		}
+	}
+	if fmt.Sprint(ids) != "[e2 e1]" {
+		t.Errorf("ejemplos = %v, quería [e2 e1] (los primeros por hora sin spam ni insultos)", ids)
+	}
+}
+
+// TestParticipationChart: el gráfico de % (o de personas si no hay ningún
+// dato de espectadores), con alturas, clases, títulos, marcas, ticks, línea
+// de la típica, rótulo y aria-label.
+func TestParticipationChart(t *testing.T) {
+	start := time.Date(2026, 10, 29, 15, 5, 0, 0, time.UTC) // ventana de un now fijo a las 15:02
+	hm := func(i int) string { return start.Add(time.Duration(i) * slotStep).Local().Format("15:04") }
+	// 288 franjas vacías; set pone {mensajes y personas, mirando} en la franja i.
+	empty := func() []Slot {
+		out := make([]Slot, slotCount)
+		for i := range out {
+			out[i].Start = start.Add(time.Duration(i) * slotStep)
 		}
 		return out
 	}
-	at := func(i int) string { return start.Add(time.Duration(i) * slotStep).Local().Format("15:04") }
+	set := func(slots []Slot, i, people int, viewers int64) {
+		s := &slots[i]
+		s.N, s.Authors, s.Viewers = people, people, viewers
+		if viewers > 0 {
+			s.Pct = float64(people) / float64(viewers) * 100
+		}
+	}
+	near := func(a, b float64) bool { return math.Abs(a-b) < 1e-9 }
+
+	t.Run("modo %", func(t *testing.T) {
+		slots := empty()
+		set(slots, 10, 2, 10)   // 20 %, pero 2 personas: sin barra
+		set(slots, 20, 6, 0)    // sin dato: sin barra
+		set(slots, 100, 5, 100) // 5 %: la más alta
+		set(slots, 200, 3, 150) // 2 %
+		set(slots, 250, 0, 80)  // con dato y nadie escribió
+		moments := TopMoments(slots, nil)
+		c := participationChart(slots, moments, 1.0, true, nil)
+		if c["W"] != slotCount {
+			t.Fatalf("W = %v, quería %d", c["W"], slotCount)
+		}
+		bars := c["Bars"].([]Bar)
+		if len(bars) != slotCount {
+			t.Fatalf("barras = %d", len(bars))
+		}
+		for i, b := range bars {
+			if !near(b.X, float64(i)+0.1) || !near(b.W, 0.8) || !near(b.Y, 100-b.H) {
+				t.Errorf("barra %d: X %v, W %v, Y %v, H %v", i, b.X, b.W, b.Y, b.H)
+			}
+		}
+		heights := map[int]float64{10: 0, 20: 0, 100: 100, 200: 40, 250: 0, 0: 0}
+		for i, h := range heights {
+			if !near(bars[i].H, h) {
+				t.Errorf("alto de la franja %d = %v, quería %v", i, bars[i].H, h)
+			}
+		}
+		for i, b := range bars {
+			if top := i == 100 || i == 200; (b.Class == "top") != top {
+				t.Errorf("franja %d: clase %q", i, b.Class)
+			}
+		}
+		titles := map[int]string{
+			10:  " · 2 mensajes · 2 personas · menos de 3 personas: no entra en el ranking",
+			20:  " · 6 mensajes · 6 personas · sin dato de espectadores",
+			100: " · 5 mensajes · 5 personas · 100 mirando (5,0 %) · N.º 1 de los 5 con más participación",
+			200: " · 3 mensajes · 3 personas · 150 mirando (2,0 %) · N.º 2 de los 5 con más participación",
+			250: " · 0 mensajes · 0 personas · menos de 3 personas: no entra en el ranking",
+			0:   " · 0 mensajes · 0 personas · sin dato de espectadores",
+		}
+		for i, want := range titles {
+			if want = hm(i) + " a " + hm(i+1) + want; bars[i].Label != want {
+				t.Errorf("título de la franja %d = %q, quería %q", i, bars[i].Label, want)
+			}
+		}
+		marks := c["Marks"].([]Mark)
+		if len(marks) != 2 || marks[0].Rank != 1 || !near(marks[0].Left, 100.5/288*100) ||
+			marks[1].Rank != 2 || !near(marks[1].Left, 200.5/288*100) {
+			t.Errorf("marcas = %+v", marks)
+		}
+		ticks := c["Ticks"].([]Tick)
+		if len(ticks) != 9 || !near(ticks[0].Left, 0) || !near(ticks[1].Left, 12.5) || !near(ticks[8].Left, 100) ||
+			ticks[0].Label != hm(0) || ticks[1].Label != hm(36) || ticks[8].Label != hm(288) {
+			t.Errorf("ticks = %+v", ticks)
+		}
+		if y, ok := c["TypicalY"].(float64); !ok || !near(y, 80) {
+			t.Errorf("TypicalY = %v, quería 80 (típica 1 %% con escala 5 %%)", c["TypicalY"])
+		}
+		if c["Max"] != "máx. 5,0 %" {
+			t.Errorf("rótulo = %v", c["Max"])
+		}
+		want := "Participación del chat cada 5 minutos en las últimas 24 horas (personas que escribieron sobre los que miraban); la más alta: 5,0 % a las " + hm(100) + " (5 personas de 100 mirando)"
+		if c["Aria"] != want {
+			t.Errorf("aria = %q, quería %q", c["Aria"], want)
+		}
+	})
+
+	t.Run("típica mayor que la más alta y alto mínimo", func(t *testing.T) {
+		slots := empty()
+		set(slots, 5, 4, 100)     // 4 %
+		set(slots, 50, 3, 100000) // 0,003 %: alto mínimo de 1
+		c := participationChart(slots, TopMoments(slots, nil), 8, true, nil)
+		bars := c["Bars"].([]Bar)
+		if !near(bars[5].H, 50) || !near(bars[50].H, 1) {
+			t.Errorf("altos = %v y %v, quería 50 y 1 (escala de la típica)", bars[5].H, bars[50].H)
+		}
+		if y := c["TypicalY"].(float64); !near(y, 0) || c["Max"] != "máx. 8,0 %" {
+			t.Errorf("TypicalY %v, rótulo %v", y, c["Max"])
+		}
+	})
+
+	t.Run("con dato pero sin elegibles", func(t *testing.T) {
+		slots := empty()
+		set(slots, 5, 2, 10)
+		c := participationChart(slots, TopMoments(slots, nil), 20, true, nil)
+		aria := c["Aria"].(string)
+		if !strings.HasSuffix(aria, "; todavía sin franjas con dato de espectadores y al menos 3 personas") {
+			t.Errorf("aria = %q", aria)
+		}
+		if len(c["Marks"].([]Mark)) != 0 || c["Bars"].([]Bar)[5].H != 0 {
+			t.Errorf("sin elegibles no hay marcas ni barras: %+v", c["Marks"])
+		}
+	})
+
+	t.Run("modo personas", func(t *testing.T) {
+		slots := empty()
+		set(slots, 7, 3, 0)
+		set(slots, 30, 6, 0)
+		set(slots, 40, 6, 0) // empate: la primera
+		c := participationChart(slots, TopMoments(slots, nil), 0, false, nil)
+		bars := c["Bars"].([]Bar)
+		if !near(bars[7].H, 50) || !near(bars[30].H, 100) || bars[0].H != 0 {
+			t.Errorf("altos = %v, %v, %v", bars[7].H, bars[30].H, bars[0].H)
+		}
+		for i, b := range bars {
+			if b.Class != "" {
+				t.Errorf("franja %d con clase %q en modo personas", i, b.Class)
+			}
+		}
+		if _, has := c["TypicalY"]; has {
+			t.Errorf("modo personas sin línea de típica")
+		}
+		if m, _ := c["Marks"].([]Mark); len(m) != 0 {
+			t.Errorf("modo personas sin marcas: %+v", m)
+		}
+		if c["Max"] != "máx. 6 personas" {
+			t.Errorf("rótulo = %v", c["Max"])
+		}
+		want := "Personas que escribieron en el chat cada 5 minutos en las últimas 24 horas; máximo de 6 personas a las " + hm(30)
+		if c["Aria"] != want {
+			t.Errorf("aria = %q, quería %q", c["Aria"], want)
+		}
+		c = participationChart(empty(), nil, 0, false, nil)
+		if aria := c["Aria"].(string); !strings.HasSuffix(aria, "; todavía sin mensajes") {
+			t.Errorf("aria sin mensajes = %q", aria)
+		}
+		if c = participationChart(nil, nil, 0, false, nil); !strings.HasSuffix(c["Aria"].(string), "; todavía sin mensajes") {
+			t.Errorf("sin franjas: %q", c["Aria"])
+		}
+	})
+}
+
+// section6 recorta la tarjeta 6 del parcial de análisis.
+func section6(t *testing.T, body string) string {
+	t.Helper()
+	i := strings.Index(body, "6. Momentos con más participación")
+	if i < 0 {
+		t.Fatalf("no está la tarjeta 6")
+	}
+	j := strings.Index(body[i:], "</section>")
+	if j < 0 {
+		t.Fatalf("la tarjeta 6 no cierra")
+	}
+	return body[i : i+j]
+}
+
+// TestLiveParticipationView: la tarjeta de los 5 momentos con más
+// participación del vivo elegido, con sus avisos y los mensajes E0, E1 y E2.
+func TestLiveParticipationView(t *testing.T) {
+	st, err := OpenStore(t.TempDir() + "/datos.jsonl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	st.SetVideos("Radio Test", []Video{
+		{ID: "v1", Title: "🔴RADIO TEST en VIVO | LA MAÑANA", Channel: "Radio Test", LiveStatus: "live", Concurrent: 150, StartedAt: now.Add(-2 * time.Hour)},
+		{ID: "v2", Title: "Oculto en VIVO", Channel: "Oculto", LiveStatus: "live"},
+		{ID: "v3", Title: "Nuevo en VIVO", Channel: "Nuevo", LiveStatus: "live", Concurrent: 80},
+		{ID: "v4", Title: "Tranqui en VIVO", Channel: "Tranqui", LiveStatus: "live", Concurrent: 40},
+		{ID: "v5", Title: "Lleno en VIVO", Channel: "Lleno", LiveStatus: "live", Concurrent: 100},
+	})
+	peak := now.Truncate(5 * time.Minute).Add(-30 * time.Minute)
+	var msgs []Message
+	for _, id := range []string{"v1", "v2", "v3"} {
+		for k := 1; k <= 6; k++ { // una persona por franja antes del pico
+			msgs = append(msgs, Message{ID: fmt.Sprint(id, "-b", k), Source: "chat", VideoID: id, Author: "Base", Text: "buenas",
+				Program: "LA MAÑANA", At: peak.Add(-time.Duration(k)*5*time.Minute + time.Second)})
+		}
+		for j, a := range []string{"<script>x</script>", "Ana", "Beto", "Caro", "Dani", "Eva"} {
+			msgs = append(msgs, Message{ID: fmt.Sprint(id, "-p", j), Source: "chat", VideoID: id, Author: a, Text: "el dólar blue sube",
+				Program: "LA MAÑANA", At: peak.Add(time.Duration(j+1) * time.Second)})
+		}
+	}
+	// v4: con dato de espectadores pero solo 2 personas. v5: 5 franjas
+	// separadas por 15 minutos con 3 personas o más y dato de espectadores.
+	msgs = append(msgs,
+		Message{ID: "v4-a", Source: "chat", VideoID: "v4", Author: "Ana", Text: "buenas", At: peak.Add(time.Second)},
+		Message{ID: "v4-b", Source: "chat", VideoID: "v4", Author: "Beto", Text: "hola", At: peak.Add(2 * time.Second)})
+	st.AddViewers(peak.Add(time.Minute), []Video{{ID: "v4", LiveStatus: "live", Concurrent: 40}})
+	for k := range 5 {
+		at := peak.Add(-time.Duration(k) * 15 * time.Minute)
+		for j := range 3 + k {
+			msgs = append(msgs, Message{ID: fmt.Sprint("v5-", k, "-", j), Source: "chat", VideoID: "v5", Author: fmt.Sprint("a", j),
+				Text: "hola", At: at.Add(time.Duration(j+1) * time.Second)})
+		}
+		st.AddViewers(at.Add(time.Minute), []Video{{ID: "v5", LiveStatus: "live", Concurrent: 100}})
+	}
+	st.Add(msgs)
+	st.AddViewers(peak.Add(time.Minute), []Video{{ID: "v1", LiveStatus: "live", Concurrent: 150}})
+	h := (&Server{st: st, budget: 9000}).Routes()
+	get := func(url string) string {
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, httptest.NewRequest("GET", url, nil))
+		return section6(t, w.Body.String())
+	}
+	const (
+		e0 = "Sin registro de cuántos miraban en las últimas 24 h: todavía no se puede armar el ranking por %."
+		e1 = "Ninguna franja con dato de espectadores tuvo al menos 3 personas escribiendo."
+		e2 = " de 5: el resto de las franjas no llega a 3 personas, no tiene dato de espectadores o está a menos de 15 minutos de una elegida."
+	)
+	hidden := "YouTube no informa cuántos miran este vivo"
+	// "veces lo " + "normal" partido para que el grep de CA10 no encuentre el propio test.
+	gone := []string{"veces lo " + "normal", "pico: desde", `class="umbral"`, "Todavía no hubo picos", `class="scroll"`, "overflow-x", "<text", "<script>x</script>"}
+	check := func(name, body string, want, not []string) {
+		t.Helper()
+		for _, w := range want {
+			if !strings.Contains(body, w) {
+				t.Errorf("%s: falta %q", name, w)
+			}
+		}
+		for _, n := range append(not, gone...) {
+			if strings.Contains(body, n) {
+				t.Errorf("%s: no debería tener %q", name, n)
+			}
+		}
+	}
+
+	body := get("/parcial/vivo/analisis?video=v1")
+	hm := peak.Local().Format("15:04")
+	span := hm + " a " + peak.Add(5*time.Minute).Local().Format("15:04")
+	check("v1", body, []string{
+		`preserveAspectRatio="none"`, `role="img"`,
+		"la más alta: 4,0 % a las " + hm + " (6 personas de 150 mirando)",
+		"<title>" + span + " · LA MAÑANA · 6 mensajes · 6 personas · 150 mirando (4,0 %) · N.º 1 de los 5 con más participación</title>",
+		"sin dato de espectadores", `class="bar top"`, `class="pmarks"`, `>1</span>`, `class="pticks"`,
+		"Participación típica del vivo: 4,0 %", "150 mirando ahora", "máx. 4,0 %",
+		"<th>Momento</th>", "<td class=\"n\">150</td>", "<td class=\"n\">6</td>", "4,0 %",
+		peak.Local().Format("02/01 15:04") + " a " + peak.Add(5*time.Minute).Local().Format("15:04"), "LA MAÑANA",
+		`<tr class="det"><td colspan="4">`, "Para el reel:", `target="_blank" rel="noopener"`,
+		"watch?v=v1&amp;t=", "&lt;script&gt;x&lt;/script&gt;", "dólar blue", "Solo 1" + e2,
+	}, []string{hidden, e0, e1})
+	if n := strings.Count(body, "<th"); n != 4 {
+		t.Errorf("v1: la tabla tiene %d columnas, quería 4", n)
+	}
+	if n := strings.Count(body, "<g><title>"); n != 288 {
+		t.Errorf("v1: %d franjas con <title>, quería 288", n)
+	}
+
+	// El canal oculta el contador: gráfico de personas, aviso de YouTube y E0.
+	check("v2", get("/parcial/vivo/analisis?video=v2"), []string{
+		hidden, e0, "máx. 6 personas", "Personas que escribieron en el chat cada 5 minutos en las últimas 24 horas; máximo de 6 personas a las " + hm,
+	}, []string{"<table", `class="bar top"`, e1, e2})
+	// Tiene espectadores pero no hay muestras de esas franjas.
+	check("v3", get("/parcial/vivo/analisis?video=v3"), []string{
+		"80 mirando ahora", "quedan fuera del ranking y de la participación típica", "sin dato de espectadores", e0,
+	}, []string{hidden, "<table", e1, e2})
+	// Con dato pero nadie llega a 3 personas.
+	check("v4", get("/parcial/vivo/analisis?video=v4"), []string{
+		e1, "40 mirando ahora", "todavía sin franjas con dato de espectadores y al menos 3 personas",
+	}, []string{hidden, "<table", e0, e2})
+	// Los 5: sin mensaje de que faltan.
+	body = get("/parcial/vivo/analisis?video=v5")
+	check("v5", body, []string{"7,0 %", "3,0 %"}, []string{hidden, e0, e1, e2})
+	if n := strings.Count(body, `<tr class="det">`); n != 5 {
+		t.Errorf("v5: %d momentos, quería 5", n)
+	}
+}
+
+// TestTopMomentsEdges: bordes del ranking que no cubren TestTopMoments ni
+// TestTopMomentsBorders.
+func TestTopMomentsEdges(t *testing.T) {
+	step := 5 * time.Minute
+	sep := 15 * time.Minute
+	z := [2]int64{0, 0}
 	cases := []struct {
-		name    string
-		slots   []Slot
-		want    string
-		moments bool
+		name  string
+		slots []Slot
+		want  string
 	}{
-		{"sin franjas", nil, "todavía sin mensajes", false},
-		{"franjas sin mensajes", mk(0, 0, 0), "todavía sin mensajes", false},
-		{"mínimo justo", mk(1, 1, 1, 3), "pico de 3 personas a las " + at(3), true},
-		{"uno menos que el mínimo", mk(1, 1, 1, 2), "máximo de 2 personas a las " + at(3) + ", sin momentos pico", false},
-		{"doble de la mediana justo", mk(2, 2, 2, 4), "pico de 4 personas a las " + at(3), true},
-		{"más del mínimo pero menos del doble", mk(2, 2, 2, 3), "máximo de 3 personas a las " + at(3) + ", sin momentos pico", false},
-		{"umbral fraccionario justo", mk(2, 2, 3, 5), "pico de 5 personas a las " + at(3), true}, // mediana 2,5
-		{"empate: la primera franja", mk(1, 3, 1, 1, 3, 1), "pico de 3 personas a las " + at(1), true},
-		{"franjas vacías no bajan la mediana", mk(0, 0, 0, 3, 3, 4), "máximo de 4 personas a las " + at(5) + ", sin momentos pico", false},
+		// La de 6 personas es la más vieja: gana por personas y no por reciente.
+		{"empate de %: más personas aunque sea más vieja", momentSlots(sep, [2]int64{6, 300}, [2]int64{4, 200}), "[0 1]"},
+		{"empate de % y personas: la más reciente aunque esté antes en la lista",
+			momentSlots(sep, [2]int64{4, 200}, [2]int64{4, 200}), "[1 0]"},
+		// Empate total entre pegadas: gana la más reciente y bloquea a las otras.
+		{"empate total pegadas", momentSlots(step, [2]int64{4, 200}, [2]int64{4, 200}, [2]int64{4, 200}), "[2]"},
+		// La 8 (8 %) está a 40 min de la mejor pero a 10 de la segunda (6): queda
+		// afuera aunque supera a la 3 (7 %), que está a 15 justos de las dos.
+		{"bloqueada por la segunda elegida",
+			momentSlots(step, [2]int64{10, 100}, z, z, [2]int64{7, 100}, z, z, [2]int64{9, 100}, z, [2]int64{8, 100}), "[0 6 3]"},
+		// Más personas que espectadores informados (cache de YouTube): entra con más de 100 %.
+		{"% mayor a 100", momentSlots(sep, [2]int64{3, 100}, [2]int64{10, 5}), "[1 0]"},
+		{"E1: con dato y nadie llega a 3", momentSlots(sep, [2]int64{2, 10}, [2]int64{1, 5}, [2]int64{0, 50}), "[]"},
+		{"E2: 4 elegibles", momentSlots(sep, [2]int64{3, 100}, [2]int64{4, 100}, [2]int64{5, 100}, [2]int64{6, 100}, [2]int64{9, 0}), "[3 2 1 0]"},
+		{"Viewers 0 con muchas personas", momentSlots(sep, [2]int64{500, 0}, [2]int64{3, 1000}), "[1]"},
 	}
 	for _, c := range cases {
-		aria, _ := participationChart(c.slots, PeakMoments(c.slots, nil), nil)["Aria"].(string)
-		if !strings.HasSuffix(aria, "; "+c.want) {
-			t.Errorf("%s: aria = %q, quería que termine en %q", c.name, aria, c.want)
+		ms := TopMoments(c.slots, nil)
+		if got := starts(c.slots, ms); got != c.want {
+			t.Errorf("%s: franjas %s, quería %s", c.name, got, c.want)
 		}
-		if got := len(PeakMoments(c.slots, nil)) > 0; got != c.moments || got != strings.Contains(aria, "pico de") {
-			t.Errorf("%s: momentos %v, aria %q; quería momentos %v y que coincidan", c.name, got, aria, c.moments)
+		for i, m := range ms {
+			if m.Rank != i+1 {
+				t.Errorf("%s: Rank del %d.º = %d", c.name, i+1, m.Rank)
+			}
+			for _, o := range ms[:i] {
+				if d := m.Start.Sub(o.Start); d > -sep && d < sep {
+					t.Errorf("%s: %v y %v a menos de 15 minutos", c.name, m.Start, o.Start)
+				}
+			}
+		}
+	}
+	if ms := TopMoments(momentSlots(sep, [2]int64{3, 100}, [2]int64{10, 5}), nil); len(ms) != 2 || ms[0].Pct != 200 || ms[0].Viewers != 5 {
+		t.Errorf("%% mayor a 100: %+v", ms)
+	}
+
+	// Ventana de 24 h sin nada que entre, pasando por Participation: mensajes de
+	// hace 25 h (fuera) y muestras de espectadores sin chat en la ventana.
+	now := time.Date(2026, 10, 30, 15, 2, 0, 0, time.UTC)
+	var old []Message
+	for j := range 5 {
+		old = append(old, Message{ID: fmt.Sprint("o", j), Source: "chat", VideoID: "v", Author: fmt.Sprint("a", j), Text: "hola", At: now.Add(-25 * time.Hour)})
+	}
+	slots, _, ok := Participation(old, []ViewerSample{{"v", now.Add(-25 * time.Hour), 10}, {"v", now.Add(-time.Hour), 10}}, "v", now)
+	if ms := TopMoments(slots, nil); !ok || len(ms) != 0 {
+		t.Errorf("ventana vacía: ok %v, momentos %+v", ok, ms)
+	}
+
+	// TopMoments no reordena los mensajes de las franjas que recibe (el
+	// servidor le pasa franjas que después usa el gráfico).
+	slots = momentSlots(sep, [2]int64{4, 100})
+	slots[0].Msgs[0], slots[0].Msgs[3] = slots[0].Msgs[3], slots[0].Msgs[0]
+	before := fmt.Sprint(slots[0].Msgs)
+	if ms := TopMoments(slots, nil); len(ms) != 1 || ms[0].Examples[0].ID != "0-0" {
+		t.Errorf("ejemplos por hora: %+v", ms)
+	}
+	if fmt.Sprint(slots[0].Msgs) != before {
+		t.Errorf("TopMoments modificó los mensajes de la franja")
+	}
+}
+
+// TestParticipationChartEdges: % mayor a 100, primera y última franja del
+// top, valores dentro de 0-100, aria coherente con el N.º 1 en empates y modo
+// personas aunque lleguen momentos.
+func TestParticipationChartEdges(t *testing.T) {
+	start := time.Date(2026, 10, 29, 15, 5, 0, 0, time.UTC)
+	hm := func(i int) string { return start.Add(time.Duration(i) * slotStep).Local().Format("15:04") }
+	empty := func() []Slot {
+		out := make([]Slot, slotCount)
+		for i := range out {
+			out[i].Start = start.Add(time.Duration(i) * slotStep)
+		}
+		return out
+	}
+	set := func(slots []Slot, i, people int, viewers int64) {
+		s := &slots[i]
+		s.N, s.Authors, s.Viewers = people, people, viewers
+		if viewers > 0 {
+			s.Pct = float64(people) / float64(viewers) * 100
+		}
+	}
+	near := func(a, b float64) bool { return math.Abs(a-b) < 1e-9 }
+	inRange := func(t *testing.T, c map[string]any) {
+		t.Helper()
+		for i, b := range c["Bars"].([]Bar) {
+			for _, v := range []float64{b.X, b.Y, b.W, b.H} {
+				if math.IsNaN(v) || math.IsInf(v, 0) {
+					t.Errorf("barra %d con %v", i, v)
+				}
+			}
+			if b.H < 0 || b.H > 100 || b.Y < 0 || b.Y > 100 || b.X+b.W > float64(slotCount) {
+				t.Errorf("barra %d fuera del viewBox: %+v", i, b)
+			}
+		}
+		for _, m := range c["Marks"].([]Mark) {
+			if m.Left <= 0 || m.Left >= 100 {
+				t.Errorf("marca fuera de 0-100: %+v", m)
+			}
+		}
+		for _, k := range c["Ticks"].([]Tick) {
+			if k.Left < 0 || k.Left > 100 {
+				t.Errorf("tick fuera de 0-100: %+v", k)
+			}
+		}
+		if y, ok := c["TypicalY"].(float64); ok && (math.IsNaN(y) || y < 0 || y > 100) {
+			t.Errorf("TypicalY = %v", y)
+		}
+	}
+
+	t.Run("primera y última franja, % mayor a 100 y miles", func(t *testing.T) {
+		slots := empty()
+		set(slots, 0, 10, 5)      // 200 %
+		set(slots, 287, 3, 1573)  // 0,19 %
+		set(slots, 144, 40, 1000) // 4 %
+		ms := TopMoments(slots, nil)
+		c := participationChart(slots, ms, 1, true, nil)
+		inRange(t, c)
+		bars := c["Bars"].([]Bar)
+		if !near(bars[0].H, 100) || !near(bars[144].H, 2) || !near(bars[287].H, 1) {
+			t.Errorf("altos = %v, %v, %v", bars[0].H, bars[144].H, bars[287].H)
+		}
+		marks := c["Marks"].([]Mark)
+		if len(marks) != 3 || !near(marks[0].Left, 0.5/288*100) || marks[0].Rank != 1 ||
+			!near(marks[2].Left, 287.5/288*100) || marks[2].Rank != 3 {
+			t.Errorf("marcas = %+v", marks)
+		}
+		if c["Max"] != "máx. 200,0 %" {
+			t.Errorf("rótulo = %v", c["Max"])
+		}
+		if want := hm(287) + " a " + hm(288) + " · 3 mensajes · 3 personas · 1.573 mirando (0,2 %) · N.º 3 de los 5 con más participación"; bars[287].Label != want {
+			t.Errorf("título = %q, quería %q", bars[287].Label, want)
+		}
+		if want := "la más alta: 200,0 % a las " + hm(0) + " (10 personas de 5 mirando)"; !strings.HasSuffix(c["Aria"].(string), want) {
+			t.Errorf("aria = %q", c["Aria"])
+		}
+	})
+
+	t.Run("empate: el aria nombra al N.º 1", func(t *testing.T) {
+		slots := empty()
+		set(slots, 50, 6, 300) // 2 %, 6 personas: N.º 1
+		set(slots, 90, 4, 200) // 2 %, 4 personas, más reciente
+		set(slots, 120, 6, 300)
+		ms := TopMoments(slots, nil)
+		c := participationChart(slots, ms, 1, true, nil)
+		if len(ms) != 3 || !ms[0].Start.Equal(slots[120].Start) {
+			t.Fatalf("N.º 1 = %+v", ms)
+		}
+		if want := "la más alta: 2,0 % a las " + hm(120) + " (6 personas de 300 mirando)"; !strings.HasSuffix(c["Aria"].(string), want) {
+			t.Errorf("aria = %q, quería sufijo %q", c["Aria"], want)
+		}
+	})
+
+	t.Run("con dato, sin elegibles y típica 0", func(t *testing.T) {
+		slots := empty()
+		set(slots, 3, 0, 100)
+		c := participationChart(slots, nil, 0, true, nil)
+		inRange(t, c)
+		if c["TypicalY"] != 100.0 {
+			t.Errorf("TypicalY = %v, quería 100 (línea en la base)", c["TypicalY"])
+		}
+	})
+
+	t.Run("modo personas ignora los momentos", func(t *testing.T) {
+		slots := empty()
+		set(slots, 0, 4, 100)
+		set(slots, 287, 2, 0)
+		ms := TopMoments(slots, nil)
+		c := participationChart(slots, ms, 0, false, nil)
+		inRange(t, c)
+		for i, b := range c["Bars"].([]Bar) {
+			if b.Class != "" || strings.Contains(b.Label, "N.º") {
+				t.Errorf("franja %d en modo personas: %+v", i, b)
+			}
+		}
+		if len(c["Marks"].([]Mark)) != 0 {
+			t.Errorf("marcas en modo personas: %+v", c["Marks"])
+		}
+		if !near(c["Bars"].([]Bar)[287].H, 50) {
+			t.Errorf("alto en modo personas = %v", c["Bars"].([]Bar)[287].H)
+		}
+	})
+
+	t.Run("programa del título del vivo", func(t *testing.T) {
+		slots := empty()
+		set(slots, 9, 3, 100)
+		for j := range 3 {
+			slots[9].Msgs = append(slots[9].Msgs, Message{ID: fmt.Sprint(j), Source: "chat", VideoID: "v", Author: fmt.Sprint(j), At: slots[9].Start})
+		}
+		c := participationChart(slots, nil, 0, true, map[string]string{"v": "Radio en VIVO | <script>x</script>"})
+		if l := c["Bars"].([]Bar)[9].Label; !strings.Contains(l, " · <script>x</script> · 3 mensajes") {
+			t.Errorf("título = %q (el escapado lo hace el template)", l)
+		}
+	})
+}
+
+// TestLiveParticipationViewEdges: escapado de programas y textos, posiciones
+// de marcas y horas que pasan el escapador de CSS, filas de detalle con
+// colspan, sin scroll en la tarjeta ni textos de "pico", E2 con 4 y % mayor a 100.
+func TestLiveParticipationViewEdges(t *testing.T) {
+	st, err := OpenStore(t.TempDir() + "/datos.jsonl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	st.SetVideos("Radio Test", []Video{
+		{ID: "x1", Title: "Radio Test en VIVO | <script>alert(1)</script>", Channel: "Radio Test", LiveStatus: "live", Concurrent: 5, StartedAt: now.Add(-48 * time.Hour)},
+		{ID: "x2", Title: "Cuatro en VIVO", Channel: "Cuatro", LiveStatus: "live", Concurrent: 100},
+		{ID: "x3", Title: "Vacío en VIVO", Channel: "Vacío", LiveStatus: "live", Concurrent: 100},
+	})
+	slot := now.Truncate(5 * time.Minute).Add(-30 * time.Minute)
+	var msgs []Message
+	// x1: 10 personas con 5 mirando (200 %), programa tomado del título del vivo
+	// y un ejemplo con HTML.
+	for j := range 10 {
+		msgs = append(msgs, Message{ID: fmt.Sprint("x1-", j), Source: "chat", VideoID: "x1", Author: fmt.Sprint("p", j),
+			Text: `<img src=x onerror=alert(2)> hola`, At: slot.Add(time.Duration(j+1) * time.Second)})
+	}
+	st.AddViewers(slot.Add(time.Minute), []Video{{ID: "x1", LiveStatus: "live", Concurrent: 5}})
+	// x2: 4 franjas elegibles separadas por 15 minutos.
+	for k := range 4 {
+		at := slot.Add(-time.Duration(k) * 15 * time.Minute)
+		for j := range 3 + k {
+			msgs = append(msgs, Message{ID: fmt.Sprint("x2-", k, "-", j), Source: "chat", VideoID: "x2", Author: fmt.Sprint("a", j),
+				Program: "<b>PROG</b>", Text: "hola", At: at.Add(time.Duration(j+1) * time.Second)})
+		}
+		st.AddViewers(at.Add(time.Minute), []Video{{ID: "x2", LiveStatus: "live", Concurrent: 100}})
+	}
+	// x3: muestras de espectadores y ningún mensaje en las últimas 24 h (uno de hace 25 h).
+	msgs = append(msgs, Message{ID: "x3-old", Source: "chat", VideoID: "x3", Author: "Viejo", Text: "hola", At: now.Add(-25 * time.Hour)})
+	st.AddViewers(slot.Add(time.Minute), []Video{{ID: "x3", LiveStatus: "live", Concurrent: 100}})
+	st.Add(msgs)
+
+	h := (&Server{st: st, budget: 9000}).Routes()
+	get := func(url string) string {
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, httptest.NewRequest("GET", url, nil))
+		return w.Body.String()
+	}
+	common := func(name, body string) {
+		t.Helper()
+		if strings.Contains(strings.ToLower(body), "pico") {
+			t.Errorf("%s: queda un texto de pico", name)
+		}
+		for _, bad := range []string{`class="scroll"`, "overflow-x", "ZgotmplZ", "<script>", "<img", "<b>"} {
+			if strings.Contains(body, bad) {
+				t.Errorf("%s: no debería tener %q", name, bad)
+			}
+		}
+		// Cada fila principal tiene 4 celdas y su fila de detalle ocupa las 4.
+		mains := strings.Split(body, `<tr class="main">`)[1:]
+		if n := strings.Count(body, `<tr class="det"><td colspan="4">`); n != len(mains) {
+			t.Errorf("%s: %d filas de detalle con colspan=4 para %d momentos", name, n, len(mains))
+		}
+		for i, row := range mains {
+			row = row[:strings.Index(row, "</tr>")]
+			if n := strings.Count(row, "<td"); n != 4 {
+				t.Errorf("%s: la fila %d tiene %d celdas", name, i+1, n)
+			}
+		}
+		if n := strings.Count(body, "colspan="); n != len(mains) {
+			t.Errorf("%s: %d colspan para %d momentos", name, n, len(mains))
+		}
+	}
+
+	body := section6(t, get("/parcial/vivo/analisis?video=x1"))
+	common("x1", body)
+	for _, want := range []string{
+		"&lt;script&gt;alert(1)&lt;/script&gt;</div>",           // programa en la tabla
+		"· &lt;script&gt;alert(1)&lt;/script&gt; · 10 mensajes", // programa en el <title>
+		"&lt;img src=x onerror=alert(2)&gt; hola",               // ejemplo
+		"200,0 %", "máx. 200,0 %", "<td class=\"n\">5</td>", "<td class=\"n\">10</td>",
+		`style="left: 0.00%"`, `style="left: 100.00%"`, "Solo 1 de 5",
+		// Vivo de 48 h y momento de hace 30 min: se dice cuánto retroceder, sin link.
+		"Retrocedé ~0 h 3",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("x1: falta %q", want)
+		}
+	}
+	if strings.Contains(body, "Retrocedé") && strings.Contains(body, `target="_blank"`) {
+		t.Errorf("x1: sin link de YouTube en un vivo de 48 h")
+	}
+
+	body = section6(t, get("/parcial/vivo/analisis?video=x2"))
+	common("x2", body)
+	if !strings.Contains(body, "Solo 4 de 5: el resto de las franjas") || strings.Count(body, `<tr class="main">`) != 4 {
+		t.Errorf("x2: E2 con 4 momentos")
+	}
+	if !strings.Contains(body, "&lt;b&gt;PROG&lt;/b&gt;") {
+		t.Errorf("x2: programa sin escapar o ausente")
+	}
+	// Las 4 marcas, en orden de %, cada una dentro de 0-100.
+	marks := body[strings.Index(body, `class="pmarks"`):]
+	marks = marks[:strings.Index(marks, "</div>")]
+	if n := strings.Count(marks, "<span"); n != 4 {
+		t.Errorf("x2: %d marcas, quería 4", n)
+	}
+	for _, part := range strings.Split(marks, `left: `)[1:] {
+		var left float64
+		if _, err := fmt.Sscanf(part, "%f%%", &left); err != nil || left <= 0 || left >= 100 {
+			t.Errorf("x2: marca en %q (%v)", part[:min(len(part), 12)], err)
+		}
+	}
+
+	body = section6(t, get("/parcial/vivo/analisis?video=x3"))
+	common("x3", body)
+	for _, want := range []string{"Ninguna franja con dato de espectadores tuvo al menos 3 personas escribiendo.",
+		"todavía sin franjas con dato de espectadores y al menos 3 personas"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("x3: falta %q", want)
+		}
+	}
+	if strings.Contains(body, "<table") || strings.Contains(body, `class="bar top"`) {
+		t.Errorf("x3: ventana vacía con tabla o top")
+	}
+
+	// CSS de la tarjeta (embebido en la página): sin scroll horizontal.
+	page := get("/")
+	for _, sel := range []string{".pchart", ".pmax", ".pmarks", ".pticks", ".tops"} {
+		for _, line := range strings.Split(page, "\n") {
+			if strings.Contains(line, sel) && (strings.Contains(line, "overflow-x") || strings.Contains(line, "overflow: auto") || strings.Contains(line, "overflow: scroll")) {
+				t.Errorf("CSS de %s con scroll: %s", sel, line)
+			}
+		}
+	}
+	for _, want := range []string{"minmax(min(300px, 100%), 1fr)", "height: 240px", "height: 180px", ".bar.top { fill: var(--warn-text); }",
+		"vector-effect: non-scaling-stroke", "overflow-wrap: anywhere", ".pticks span:nth-child(even) { display: none; }"} {
+		if !strings.Contains(page, want) {
+			t.Errorf("CSS: falta %q", want)
+		}
+	}
+	for _, gone := range []string{".bar.pico", ".umbral"} {
+		if strings.Contains(page, gone) {
+			t.Errorf("CSS: queda %q", gone)
 		}
 	}
 }
