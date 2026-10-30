@@ -75,7 +75,7 @@ factory/             estado (jobs/) y actividad (events/) de la factory; en .git
 ## Qué NO tocar
 
 - `.env` (tiene `YT_API_KEY`): no leer, no imprimir, no editar, no commitear.
-- `datos.jsonl`, `datos.*.json`, `informes/`: datos reales de usuarios. No editar, no
+- `datos.jsonl`, `datos.*.json`, `datos.*.jsonl` (por ejemplo `datos.espectadores.jsonl`), `informes/`: datos reales de usuarios y de la API. No editar, no
   usar en tests, no subir. Están en `.gitignore`.
 - `static/htmx.min.js` (vendorizado), la retención de 30 días de `store.go`, el default
   `localhost` del dashboard.

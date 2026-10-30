@@ -244,6 +244,8 @@ func RunWorker(ctx context.Context, yt *YouTube, st *Store, cfg WorkerConfig) {
 					return err
 				}
 				st.SetVideos(st.Snapshot().Channel, vids)
+				// Los espectadores vienen en el mismo pedido de videos: la serie no cuesta cuota.
+				st.AddViewers(time.Now(), vids)
 				lives = nil
 				current := map[string]bool{}
 				for _, v := range vids {

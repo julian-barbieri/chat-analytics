@@ -3,6 +3,8 @@ package main
 import (
 	"bufio"
 	"encoding/json"
+	"fmt"
+	"io"
 	"maps"
 	"os"
 	"strings"
@@ -29,7 +31,9 @@ type Store struct {
 	mu        sync.RWMutex
 	path      string
 	quota     string // archivo con la cuota gastada en el día, para que sobreviva a reinicios
+	vpath     string // serie de espectadores por vivo, aparte para no tocar el formato de datos.jsonl
 	msgs      []Message
+	viewers   []ViewerSample
 	seen      map[string]bool
 	channel   string
 	videos    []Video
@@ -43,6 +47,13 @@ type Store struct {
 	updated   time.Time
 }
 
+// ViewerSample es cuántos miraban un vivo según la revisión de videos.
+type ViewerSample struct {
+	VideoID string
+	At      time.Time
+	Viewers int64
+}
+
 // quotaDay es lo que se guarda en <datos>.cuota.json: el día del Pacífico y lo gastado.
 type quotaDay struct {
 	Day   string
@@ -50,19 +61,20 @@ type quotaDay struct {
 }
 
 func OpenStore(path string) (*Store, error) {
-	s := &Store{path: path, quota: strings.TrimSuffix(path, ".jsonl") + ".cuota.json", seen: map[string]bool{}}
+	base := strings.TrimSuffix(path, ".jsonl")
+	s := &Store{path: path, quota: base + ".cuota.json", vpath: base + ".espectadores.jsonl", seen: map[string]bool{}}
 	if b, err := os.ReadFile(s.quota); err == nil {
 		var q quotaDay
 		if json.Unmarshal(b, &q) == nil {
 			s.unitsDay, s.units = q.Day, q.Units
 		}
 	}
+	cutoff := time.Now().Add(-retention)
 	f, err := os.Open(path)
 	if err != nil && !os.IsNotExist(err) {
 		return nil, err
 	}
 	if err == nil {
-		cutoff := time.Now().Add(-retention)
 		sc := bufio.NewScanner(f)
 		sc.Buffer(make([]byte, 1024*1024), 1024*1024)
 		for sc.Scan() {
@@ -75,27 +87,84 @@ func OpenStore(path string) (*Store, error) {
 		}
 		f.Close()
 		// Reescribimos el archivo sin lo vencido.
-		if err := s.rewrite(); err != nil {
+		if err := rewriteJSONL(s.path, s.msgs); err != nil {
 			return nil, err
 		}
+	}
+	if err := s.loadViewers(cutoff); err != nil {
+		return nil, err
 	}
 	return s, nil
 }
 
-func (s *Store) rewrite() error {
-	tmp := s.path + ".tmp"
+// loadViewers carga la serie de espectadores con la misma retención que los
+// mensajes (son datos de la API) y reescribe el archivo sin lo vencido ni lo
+// ilegible. Si no existe (instalaciones anteriores), se crea con el primer dato.
+func (s *Store) loadViewers(cutoff time.Time) error {
+	f, err := os.Open(s.vpath)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	vs, err := readViewers(f, cutoff)
+	f.Close()
+	if err != nil {
+		// Reescribir con lo leído a medias perdería para siempre el resto.
+		return fmt.Errorf("no pude leer %s (si está dañado, movelo a otra carpeta y volvé a arrancar): %w", s.vpath, err)
+	}
+	s.viewers = vs
+	return rewriteJSONL(s.vpath, s.viewers)
+}
+
+// maxViewerLine: una muestra ocupa menos de 100 bytes; una línea más larga es
+// basura (por ejemplo, ceros de un corte de luz) y se descarta sin cargarla.
+const maxViewerLine = 64 * 1024
+
+// readViewers lee las muestras vigentes salteando las líneas ilegibles o
+// demasiado largas. A diferencia de bufio.Scanner, una línea larga no corta
+// la lectura: se pierden solo los datos de esa línea.
+func readViewers(r io.Reader, cutoff time.Time) ([]ViewerSample, error) {
+	br := bufio.NewReaderSize(r, maxViewerLine)
+	var out []ViewerSample
+	long := false
+	for {
+		line, err := br.ReadSlice('\n')
+		if err == bufio.ErrBufferFull {
+			long = true // se descarta hasta el próximo salto de línea
+			continue
+		}
+		var v ViewerSample
+		if !long && json.Unmarshal(line, &v) == nil && !v.At.Before(cutoff) {
+			out = append(out, v)
+		}
+		long = false
+		if err == io.EOF {
+			return out, nil
+		}
+		if err != nil {
+			return nil, err
+		}
+	}
+}
+
+// rewriteJSONL reemplaza el archivo con archivo temporal + os.Rename, así un
+// corte a la mitad no deja el archivo cortado.
+func rewriteJSONL[T any](path string, items []T) error {
+	tmp := path + ".tmp"
 	f, err := os.Create(tmp)
 	if err != nil {
 		return err
 	}
 	enc := json.NewEncoder(f)
-	for _, m := range s.msgs {
-		enc.Encode(m)
+	for _, it := range items {
+		enc.Encode(it)
 	}
 	if err := f.Close(); err != nil {
 		return err
 	}
-	return os.Rename(tmp, s.path)
+	return os.Rename(tmp, path)
 }
 
 // Add agrega mensajes nuevos (ignora repetidos) y devuelve cuántos eran nuevos.
@@ -122,6 +191,48 @@ func (s *Store) Add(msgs []Message) int {
 	}
 	s.updated = time.Now()
 	return n
+}
+
+// AddViewers guarda cuántos miran cada vivo en curso. Los que no informan
+// espectadores (Concurrent 0: el canal oculta el contador) no se guardan, así
+// después se leen como "sin dato" y no como "nadie mirando".
+func (s *Store) AddViewers(at time.Time, vids []Video) {
+	var add []ViewerSample
+	for _, v := range vids {
+		if v.LiveStatus == "live" && v.Concurrent > 0 {
+			add = append(add, ViewerSample{VideoID: v.ID, At: at, Viewers: v.Concurrent})
+		}
+	}
+	if len(add) == 0 {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.viewers = append(s.viewers, add...)
+	// Si no se puede abrir el archivo, las muestras quedan igual en memoria.
+	f, err := os.OpenFile(s.vpath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	enc := json.NewEncoder(f)
+	for _, v := range add {
+		enc.Encode(v)
+	}
+}
+
+// Viewers devuelve una copia de las muestras de un vivo desde since. No va en
+// Snapshot para no copiar la serie entera cada vez que se refresca el chat.
+func (s *Store) Viewers(videoID string, since time.Time) []ViewerSample {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var out []ViewerSample
+	for _, v := range s.viewers {
+		if v.VideoID == videoID && !v.At.Before(since) {
+			out = append(out, v)
+		}
+	}
+	return out
 }
 
 func (s *Store) SetVideos(channel string, v []Video) {

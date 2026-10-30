@@ -30,10 +30,10 @@ Todo está en el paquete `main`, en la raíz:
 | `main.go` | Flags, carga de `.env` (`loadDotEnv`), modo informe (`report`, `writeCSV`), columnas del CSV (`csvHeader`, `csvRow`, `programOf`), arranque del modo dashboard. |
 | `youtube.go` | Cliente mínimo de la API (`YouTube`): `UploadsPlaylist` (ID o @handle), `RecentVideoIDs`, `ChannelVideos`, `Videos`, `Comments`, `LiveChatPage`, `LiveChats`, `StreamChat` (chat en tiempo real). Tipos `Video`, `Message` y `ChatBatch`. Helpers `TagProgram`, `ProgramName`, `ParseVideoID`, `ParseChannel`. Cuenta cuota en `YouTube.Units`. |
 | `classify.go` | `Classify` por reglas (listas de palabras y regex), `TopWords`, `TopAuthors`, `TopPrograms`, stopwords en español. |
-| `analyze.go` | `Analyze`: los 5 análisis por vivo del dashboard (temas con `TopTopics`, preguntas, quejas técnicas con `TechIssue`, spam e insultos repetidos, filtros para YouTube Studio). Solo reglas. |
+| `analyze.go` | `Analyze`: los 5 análisis por vivo del dashboard (temas con `TopTopics`, preguntas, quejas técnicas con `TechIssue`, spam e insultos repetidos, filtros para YouTube Studio). `Participation` (franjas de 5 min de las últimas 24 h con mensajes, personas por `Author`, espectadores y %) y `PeakMoments` (momentos pico para reels: al menos `minPersonasPico` personas y `factorPico` veces la mediana; los `maxMomentos` más fuertes). Solo reglas. |
 | `worker.go` | `RunWorker`: bucle infinito (tick de 1 s) que agenda videos / comentarios / chat y respeta el tope de cuota. Abre una goroutine de streaming por vivo (`StreamChat`) que le manda `chatEvent` por un canal; si el streaming no anda, lee el chat por turnos como antes. `nextChat` elige a qué vivo le toca la próxima conexión o lectura. |
-| `store.go` | `Store`: estado en memoria con `sync.RWMutex`, deduplicación por `Message.ID`, persistencia JSONL, retención de 30 días, contador de cuota diario (persistido en `datos.cuota.json`). |
-| `server.go` | Rutas HTTP, parciales htmx, gráfico de actividad (SVG armado en Go), export CSV, helper `miles`. |
+| `store.go` | `Store`: estado en memoria con `sync.RWMutex`, deduplicación por `Message.ID`, persistencia JSONL, retención de 30 días, contador de cuota diario (persistido en `datos.cuota.json`), serie de espectadores por vivo (`ViewerSample`, `AddViewers`, `Viewers`; persistida en `datos.espectadores.jsonl`). |
+| `server.go` | Rutas HTTP, parciales htmx, gráficos de actividad y de participación (SVG armado en Go, `participationChart`), `reelLink` (cómo ubicar un momento en YouTube según `dvrWindow`), export CSV, helper `miles`. |
 | `templates/page.html` | Página principal + CSS (tokens de color claro/oscuro). |
 | `templates/partials.html` | Bloques `resumen`, `feed`, `extra` que pide htmx. |
 | `monitor_test.go` | Tests: clasificador, flujo completo contra una API falsa (`httptest`), dedup y retención del store. |
@@ -95,6 +95,7 @@ Para probar contra una API simulada sin gastar cuota: `YT_BASE_URL=http://localh
 ### Datos y privacidad
 
 - Políticas de YouTube: **no guardar datos de la API más de 30 días** (`retention` en `store.go`). `OpenStore` descarta lo vencido y reescribe el archivo. No alargar esa retención ni agregar otros almacenamientos que la salteen.
+- `datos.espectadores.jsonl` guarda cuántos miraban cada vivo en cada revisión de videos (`ViewerSample`). Son datos de la API: misma retención de 30 días al abrir (`loadViewers`, tmp + `os.Rename`) y nunca dentro de `datos.jsonl`, para no cambiar el formato de `Message`. Está en `.gitignore` (`datos.*.jsonl`).
 - `datos.jsonl` e `informes/` contienen nombres de usuarios y mensajes reales: son datos generados, no código. No editarlos a mano, no usarlos como fixtures de tests (los tests arman sus propios datos) y no subirlos a ningún lado.
 - `.env` tiene `YT_API_KEY`. **No leer, imprimir ni commitear su contenido.** La clave nunca debe aparecer en logs, errores ni en el dashboard: `YouTube.get` la reemplaza por `***` en errores de red; mantener ese cuidado en cualquier código nuevo que formatee URLs o errores.
 - El dashboard no tiene autenticación. Por defecto escucha en `localhost`; no cambiar ese default ni sugerir exponerlo a internet.
@@ -116,7 +117,7 @@ Para probar contra una API simulada sin gastar cuota: `YT_BASE_URL=http://localh
 ## Concurrencia
 
 - Hay una sola goroutine que hace las llamadas comunes a YouTube (`RunWorker`); el cliente `YouTube` **no es seguro para uso concurrente** (`Units` sin lock). No llamarlo desde handlers HTTP. Las goroutines de streaming solo usan `StreamChat`, que lee `Key`, `BaseURL` y `Stream` sin modificarlos, y no tocan `chats` ni `lives`: todo lo que reciben se lo pasan al worker por el canal `events`.
-- Los handlers solo leen el estado vía `Store.Snapshot()`, `Store.Status()` o `Store.LastChat()`, que devuelven copias. No exponer los slices internos del `Store` ni modificar el `Store` desde el servidor.
+- Los handlers solo leen el estado vía `Store.Snapshot()`, `Store.Status()`, `Store.LastChat()` o `Store.Viewers()`, que devuelven copias. No exponer los slices internos del `Store` ni modificar el `Store` desde el servidor.
 - `Store.Add` agrega al JSONL en modo append; la compactación (`rewrite`) solo ocurre al abrir. Si se agrega limpieza periódica, hacerla bajo el lock y con el patrón archivo temporal + `os.Rename`.
 
 ## Estilo

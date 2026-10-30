@@ -272,3 +272,200 @@ func sinceFor(msgs []Message, videoID string, t time.Time) []Message {
 	}
 	return out
 }
+
+// Picos de participación del chat, para elegir momentos para reels.
+const (
+	slotStep        = 5 * time.Minute
+	slotCount       = 288 // 24 h, la misma ventana que el resto del análisis del vivo
+	minPersonasPico = 3   // con menos, un par de personas charlando de madrugada ya sería "pico"
+	factorPico      = 2   // veces la mediana de personas por franja del vivo
+	maxMomentos     = 5
+)
+
+// Slot es una franja de 5 minutos del chat de un vivo.
+type Slot struct {
+	Start   time.Time
+	Msgs    []Message // solo para los momentos; no se muestran todos
+	N       int       // mensajes
+	Authors int       // personas distintas
+	Viewers int64     // promedio de las muestras; 0 = sin dato
+	Pct     float64   // participación; vale solo si Viewers > 0
+}
+
+// Participation arma las franjas de las últimas 24 h del chat de un vivo y la
+// participación típica (mediana del % de las franjas con espectadores). Las
+// personas se cuentan por nombre visible y los espectadores son los que
+// YouTube informa "mirando ahora": es una aproximación.
+func Participation(msgs []Message, viewers []ViewerSample, videoID string, now time.Time) (slots []Slot, typical float64, ok bool) {
+	end := now.Truncate(slotStep).Add(slotStep)
+	start := end.Add(-slotCount * slotStep)
+	index := func(t time.Time) int {
+		if t.Before(start) || !t.Before(end) {
+			return -1
+		}
+		return int(t.Sub(start) / slotStep)
+	}
+	slots = make([]Slot, slotCount)
+	authors := make([]map[string]bool, slotCount)
+	for i := range slots {
+		slots[i].Start = start.Add(time.Duration(i) * slotStep)
+		authors[i] = map[string]bool{}
+	}
+	for _, m := range msgs {
+		i := index(m.At)
+		if m.Source != "chat" || m.VideoID != videoID || i < 0 {
+			continue
+		}
+		slots[i].Msgs = append(slots[i].Msgs, m)
+		slots[i].N++
+		if m.Author != "" {
+			authors[i][m.Author] = true
+		}
+	}
+	sum, cnt := make([]int64, slotCount), make([]int64, slotCount)
+	for _, v := range viewers {
+		// Viewers 0 es "sin dato" (el canal oculta el contador), no "nadie mirando".
+		if i := index(v.At); v.VideoID == videoID && v.Viewers > 0 && i >= 0 {
+			sum[i] += v.Viewers
+			cnt[i]++
+		}
+	}
+	var pcts []float64
+	for i := range slots {
+		s := &slots[i]
+		s.Authors = len(authors[i])
+		if cnt[i] > 0 {
+			s.Viewers = (sum[i] + cnt[i]/2) / cnt[i] // promedio redondeado
+			s.Pct = float64(s.Authors) / float64(s.Viewers) * 100
+			pcts = append(pcts, s.Pct)
+		}
+	}
+	if len(pcts) == 0 {
+		return slots, 0, false
+	}
+	return slots, median(pcts), true
+}
+
+func median(xs []float64) float64 {
+	xs = append([]float64(nil), xs...)
+	sort.Float64s(xs)
+	n := len(xs)
+	if n%2 == 1 {
+		return xs[n/2]
+	}
+	return (xs[n/2-1] + xs[n/2]) / 2
+}
+
+// peakThreshold devuelve la base del vivo (mediana de personas en las franjas
+// con algún mensaje) y cuántas personas hacen falta para que una franja sea pico.
+func peakThreshold(slots []Slot) (base, threshold float64) {
+	var people []float64
+	for _, s := range slots {
+		if s.N > 0 {
+			people = append(people, float64(s.Authors))
+		}
+	}
+	if len(people) > 0 {
+		base = median(people)
+	}
+	return base, max(minPersonasPico, factorPico*base)
+}
+
+// Moment son franjas pico seguidas.
+type Moment struct {
+	Start, End time.Time
+	Best       Slot // franja más fuerte
+	N, Authors int  // totales del momento (personas distintas en todo el momento)
+	Program    string
+	Topics     []Count
+	Examples   []Message
+	Ratio      float64 // personas de la franja más fuerte / base ("3,2 veces lo normal"); 0 si la base es 0
+}
+
+// PeakMoments agrupa las franjas pico seguidas y devuelve los momentos más
+// fuertes. El pico se mide por personas distintas y no por mensajes, así una
+// sola persona (o un spammer) que escribe mucho no infla la franja.
+func PeakMoments(slots []Slot, titles map[string]string) []Moment {
+	base, threshold := peakThreshold(slots)
+	var out []Moment
+	for i := 0; i < len(slots); i++ {
+		if float64(slots[i].Authors) < threshold {
+			continue
+		}
+		j := i
+		for j+1 < len(slots) && float64(slots[j+1].Authors) >= threshold {
+			j++
+		}
+		out = append(out, newMoment(slots[i:j+1], base, titles))
+		i = j
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		a, b := out[i].Best, out[j].Best
+		if a.Authors != b.Authors {
+			return a.Authors > b.Authors
+		}
+		if a.N != b.N {
+			return a.N > b.N
+		}
+		return a.Start.After(b.Start)
+	})
+	return out[:min(len(out), maxMomentos)]
+}
+
+func newMoment(group []Slot, base float64, titles map[string]string) Moment {
+	m := Moment{Start: group[0].Start, End: group[len(group)-1].Start.Add(slotStep), Best: group[0]}
+	var msgs []Message
+	for _, s := range group {
+		// Gana la de más personas, después la de más mensajes; si empatan, queda la más temprana.
+		if s.Authors > m.Best.Authors || s.Authors == m.Best.Authors && s.N > m.Best.N {
+			m.Best = s
+		}
+		msgs = append(msgs, s.Msgs...)
+	}
+	sort.SliceStable(msgs, func(i, j int) bool { return msgs[i].At.Before(msgs[j].At) })
+	people := map[string]bool{}
+	for _, msg := range msgs {
+		if msg.Author != "" {
+			people[msg.Author] = true
+		}
+	}
+	m.N, m.Authors = len(msgs), len(people)
+	if base > 0 {
+		m.Ratio = float64(m.Best.Authors) / base
+	}
+	m.Program = mainProgram(msgs, titles)
+	m.Topics = TopTopics(msgs, 3)
+	topic := ""
+	if len(m.Topics) > 0 {
+		topic = " " + m.Topics[0].Key + " "
+	}
+	for _, msg := range msgs {
+		if len(m.Examples) == 2 {
+			break
+		}
+		if c := Classify(msg.Text); c == CatSpam || c == CatInsulto {
+			continue
+		}
+		if topic == "" || strings.Contains(" "+strings.Join(textWords(msg.Text), " ")+" ", topic) {
+			m.Examples = append(m.Examples, msg)
+		}
+	}
+	return m
+}
+
+// mainProgram devuelve el programa con más mensajes (si empatan, el primero que llegó a esa cantidad).
+func mainProgram(msgs []Message, titles map[string]string) string {
+	counts := map[string]int{}
+	best := ""
+	for _, m := range msgs {
+		p := programOf(m, titles)
+		if p == "" {
+			continue
+		}
+		counts[p]++
+		if counts[p] > counts[best] {
+			best = p
+		}
+	}
+	return best
+}

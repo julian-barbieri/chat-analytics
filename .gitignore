@@ -4,6 +4,8 @@
 # Datos generados con nombres y mensajes reales (políticas de YouTube: no salen de esta PC)
 datos.jsonl
 datos.*.json
+datos.*.jsonl
+datos.*.tmp
 informes/
 
 # Binarios compilados
