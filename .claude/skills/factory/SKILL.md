@@ -27,8 +27,19 @@ Según cómo empieza:
 - `rehacer <id> <nota>`: andá a **Retomar una tarea** y seguí en el paso 3 con la nota.
 - `estado`: listá las tareas con
   `jq -r '[.id, .etapa, .vuelta, .rama, .pr, .motivo] | @tsv' factory/jobs/*/job.json`
-  y pará. Con el glob y no leyendo cada `job.json` por separado, así el tablero no
-  asocia esta sesión a una tarea.
+  y, para las que están en `pr-abierto`, su estado en GitHub (solo lectura):
+
+  ```bash
+  jq -r 'select(.etapa == "pr-abierto" and ((.pr // "") | test("^https://github\\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/pull/[0-9]+\\z"))) | [.id, .pr] | @tsv' factory/jobs/*/job.json |
+    while IFS=$'\t' read -r id u; do
+      printf '%s\t%s\n' "$id" "$(gh pr view --json state -q .state -- "$u" 2>/dev/null || echo 'sin datos')"
+    done
+  ```
+
+  y pará. El filtro de `jq` deja pasar solo URLs de PR de GitHub (la misma regla que el
+  tablero) y `--` hace que `gh` nunca tome el `pr` como un flag. Con el glob y no
+  leyendo cada `job.json` por separado, así el tablero no asocia esta sesión a una
+  tarea. `MERGED` es lo que el tablero muestra en "Mergeado".
 - Cualquier otra cosa es una tarea nueva: seguí en el paso 0. Si está vacío, pedila y
   pará.
 
@@ -59,7 +70,8 @@ un archivo a medias. La hora sale de `date -Iseconds`.
 - `tipo`: `fix`, `feat`, `chore`, `docs` o `test` (es también el prefijo de la rama).
 - `etapa`, en este orden: `triage`, `esperando-aprobacion`, `implementacion`, `tests`,
   `revision`, `gates`, `pr-abierto`. Fuera del camino feliz: `necesita-persona` (con
-  `motivo`) y `descartada`. El tablero marca como error cualquier otro valor.
+  `motivo`) y `descartada`. El tablero marca como error cualquier otro valor. No hay
+  etapa `mergeado`: la columna "Mergeado" la calcula el tablero con `gh` (ADR 0003).
 - `vuelta`: vuelta de revisión actual, 0 antes de la primera.
 - `revisiones`: veredicto de cada revisor en la vuelta actual: `pendiente`, `APROBADO`,
   `APROBADO CON CAMBIOS MENORES` o `CAMBIOS REQUERIDOS`.
@@ -204,11 +216,50 @@ paso 3.
 3. Pasá a `pr-abierto` con la URL en `pr`. En la spec, si quedó algo sin marcar, decí
    por qué en el PR.
 
+## 7b. Vista previa (a pedido)
+
+No se anota en `job.json`: no es una etapa.
+
+1. Solo si el diff toca el dashboard o lo que muestra (`main.go`, `server.go`,
+   `templates/`, `analyze.go`, `classify.go`, `store.go`, `worker.go`, `youtube.go`). Para cambios de
+   docs o de `tools/`, salteala. Preguntá: "¿Querés ver el cambio en una vista previa en
+   http://localhost:8081? Usa una copia temporal de tus datos y una API simulada: no
+   gasta cuota ni toca datos.jsonl." Sin un sí, seguí al paso 8.
+2. Con el sí, en segundo plano y desde la rama de la tarea (la primera entrada de
+   `git worktree list` es el checkout principal, donde está `datos.jsonl` aunque la
+   sesión corra en un worktree):
+
+   ```bash
+   go run ./tools/preview -datos "$(git worktree list --porcelain | sed -n '1s/^worktree //p')/datos.jsonl"
+   ```
+
+   Esperá la línea "Vista previa en http://…" y pasale el link a la persona. Si sale
+   "ya hay algo escuchando", no la fuerces: decíselo.
+3. Cuando la persona diga que ya está, y **siempre** antes de cerrar el paso 8, cambiar
+   de rama o pasar a otra tarea, cortala y mostrá la salida:
+
+   ```bash
+   go run ./tools/preview -cortar
+   ```
+
+   Confirmá **siempre** que el comando en segundo plano terminó. Si `-cortar` dice "No
+   hay ninguna vista previa corriendo" pero ese comando sigue vivo (por ejemplo, todavía
+   no había creado la copia), esperá unos segundos y volvé a correr `-cortar` hasta que
+   termine. Si dice que no pudo comprobar o cortar un PID, mostráselo a la persona.
+   Si la persona quiere seguir mirándola después del cierre, decile que la corte ella
+   con ese comando. La limpieza la hace el programa: no borres nada a mano.
+
 ## 8. Cierre
 
 Respondé con el link al PR, la causa raíz o el motivo en una línea, los gates y los
 hallazgos que quedaron abiertos. No mergees: el merge lo decide una persona después de
-que el CI pase.
+que el CI pase. Si levantaste la vista previa (paso 7b), cortala antes con
+`go run ./tools/preview -cortar`.
+
+Avisale además que, cuando mergee, la tarjeta pasa sola a "Mergeado" en el tablero en
+unos 2 minutos, y que para ver el cambio en su dashboard real tiene que actualizar
+`main` y reiniciarlo ella: el orquestador no lo hace, porque sería un `-dashboard`
+contra la API real.
 
 ## Retomar una tarea
 
@@ -217,7 +268,13 @@ que el CI pase.
 3. Según el comando:
    - `aprobar`: solo si la etapa es `esperando-aprobacion`. Hacé lo del paso 2 con el
      sí (marcar y commitear la spec) y seguí en el paso 3.
-   - `rehacer`: solo si la etapa es `necesita-persona` o `pr-abierto`. Guardá la nota en
+   - `rehacer`: solo si la etapa es `necesita-persona` o `pr-abierto`. Si es
+     `pr-abierto`, primero comprobá que `pr` sea una URL
+     `https://github.com/<dueño>/<repo>/pull/<número>` (la misma regla que el tablero;
+     si no, pará y decilo) y mirá el PR con `gh pr view --json state -q .state -- "<pr>"`: si
+     dice `MERGED`, pará y decí que el PR ya entró a `main` y que el ajuste va en una
+     tarea nueva (`/factory <tarea>`), porque un push a una rama mergeada no actualiza
+     nada. Si no, guardá la nota en
      `rehacer-<k>.md` (con `k` el siguiente), poné `vuelta: 0` (vuelven a quedar 2
      vueltas de revisión; `n` sigue contando) y seguí en el paso 3 pasándole la nota a
      `implementer`. Si ya había PR, el push del paso 7 lo actualiza: no abras otro.
