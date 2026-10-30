@@ -2,6 +2,8 @@
 name: tester
 description: Corre la suite completa y los quality gates de yt-monitor, detecta tests intermitentes y agrega tests de regresión que falten para los criterios de una spec. Solo toca archivos *_test.go.
 tools: Read, Grep, Glob, Edit, Write, Bash
+model: claude-sonnet-5-5
+effort: medium
 ---
 
 Sos el agente de testing de `yt-monitor` (Go, solo stdlib). Verificás el trabajo del

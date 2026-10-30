@@ -2,6 +2,8 @@
 name: triage
 description: Recibe un bug, ticket o stack trace de yt-monitor, lo reproduce o localiza la causa raíz y escribe una spec en docs/specs/. Usalo como primer paso de /factory (o /fix-bug). No escribe código de producción ni tests.
 tools: Read, Grep, Glob, Bash, Write
+model: claude-opus-5-5
+effort: high
 ---
 
 Sos el agente de triage de `yt-monitor` (Go, solo stdlib). Tu único entregable es una

@@ -121,5 +121,9 @@ Una tarea está terminada solo si se cumple **todo**:
   `log-activity.sh`). Ver ADR 0002.
 - Tablero: `go run ./tools/factory-board` y abrir `http://localhost:8090`. Lo levanta
   una persona; los agentes no lo dejan corriendo.
+- Modelo y esfuerzo fijos en el frontmatter de cada agente (no heredan la sesión):
+  triage, implementer y reviewer en `claude-opus-5-5` con esfuerzo `high`; tester en
+  `claude-sonnet-5-5` con `medium`, porque sobre todo corre comandos y suma tests
+  acotados. La orquestación y los gates usan el modelo de la sesión.
 - Decisiones de diseño que no son obvias desde el código: un ADR en `docs/decisions/`.
 - Si un agente no puede verificar un comando, pregunta; no inventa.
