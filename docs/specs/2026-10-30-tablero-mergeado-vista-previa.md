@@ -1,6 +1,6 @@
 # Spec: columna "Mergeado" en el tablero y vista previa local del PR
 
-- **Estado:** borrador
+- **Estado:** aprobada
 - **Tipo:** tarea
 - **Rama:** `chore/tablero-mergeado-vista-previa`
 - **Origen:** pedido de Julian Barbieri por `/factory` (textual): "1) Me gustaria que
@@ -10,7 +10,7 @@
   ver." Decisiones ya tomadas por la persona: columna "Mergeado" calculada por el
   tablero con `gh` sin escribir `job.json`; "vista previa del PR" que levanta el
   orquestador en otro puerto con una copia temporal de los datos y una API simulada.
-- **Aprobada por / fecha:** —
+- **Aprobada por / fecha:** Julian Barbieri, 2026-10-30 ("Aprobar las dos": con las recomendaciones de las preguntas abiertas tal cual)
 
 ## Contexto
 
