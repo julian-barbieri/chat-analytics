@@ -1,0 +1,48 @@
+{{define "tablero"}}
+{{range .Broken}}<p class="note" role="alert"><strong><a href="/tarea/{{.ID}}">{{.ID}}</a></strong>: {{.Err}}</p>{{end}}
+<div class="board">
+  {{range .Columns}}
+  <section class="col{{if .Human}} human{{end}}" aria-label="{{.Label}}">
+    <h2><span>{{.Label}}</span><span class="muted">{{len .Cards}}</span></h2>
+    {{range .Cards}}{{template "card" .}}{{else}}<p class="muted empty">—</p>{{end}}
+  </section>
+  {{end}}
+</div>
+{{end}}
+
+{{define "card"}}
+<article class="card job{{if .Stage.Human}} human{{end}}{{if eq .Etapa "descartada"}} dim{{end}}">
+  <div class="top">
+    {{if .Live}}<span class="pulse" role="img" aria-label="en curso" title="en curso"></span>{{end}}
+    <a href="/tarea/{{.ID}}">{{.ID}}</a>
+    {{if .Tipo}}<span class="badge">{{.Tipo}}</span>{{end}}
+    {{if .Vuelta}}<span class="badge">vuelta {{.Vuelta}}</span>{{end}}
+  </div>
+  {{if .Tarea}}<p>{{.Tarea}}</p>{{end}}
+  {{if .Rama}}<p class="muted"><code>{{.Rama}}</code></p>{{end}}
+  {{if .Reviews}}<div class="chips">{{range .Reviews}}<span class="badge {{.Class}}" title="{{.Verdict}}">{{.Name}}: {{.Verdict}}</span>{{end}}</div>{{end}}
+  {{if .Active}}<p class="now">Trabajando: {{range $i, $a := .Active}}{{if $i}}, {{end}}<strong>{{$a}}</strong>{{end}}</p>{{end}}
+  {{with .Last}}<p class="now">{{.Who}} · {{.Action}}{{if .Resumen}} · <code>{{.Resumen}}</code>{{end}} · <span class="muted">{{hace .At}}</span></p>{{end}}
+  {{if .Motivo}}<p class="badge warn">{{.Motivo}}</p>{{end}}
+  {{if eq .Etapa "esperando-aprobacion"}}<p class="muted">Te toca: revisá la spec y respondé en la sesión o con <code>/factory aprobar {{.ID}}</code>.</p>{{end}}
+  {{if eq .Etapa "necesita-persona"}}<p class="muted">Te toca: <code>/factory rehacer {{.ID}} &lt;nota&gt;</code>.</p>{{end}}
+  {{if .PR}}<p><a href="{{.PR}}" rel="noopener noreferrer">Ver PR</a></p>{{end}}
+</article>
+{{end}}
+
+{{define "actividad"}}
+{{if .Events}}
+<ol class="feed">
+  {{range .Events}}
+  <li{{if eq .Evento "PostToolUseFailure"}} class="fail"{{end}}>
+    <time datetime="{{.At.Format "2006-01-02T15:04:05Z07:00"}}">{{hora .At}}</time>
+    <span class="who">{{.Who}}</span>
+    <span class="what">{{.Action}}{{if .Resumen}} <code>{{.Resumen}}</code>{{end}}{{if and .Tarea (not $.Tarea)}} · <a href="/tarea/{{.Tarea}}">{{.Tarea}}</a>{{end}}</span>
+    {{if .Detalle}}<span class="det">{{.Detalle}}</span>{{end}}
+  </li>
+  {{end}}
+</ol>
+{{else}}
+<p class="muted">Todavía no hay actividad{{if .Tarea}} de esta tarea{{end}}. Los eventos llegan por el hook <code>.claude/hooks/log-activity.sh</code>.</p>
+{{end}}
+{{end}}

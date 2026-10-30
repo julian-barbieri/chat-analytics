@@ -1,0 +1,43 @@
+{{define "tarea.html"}}{{template "head" (printf "%s · Software factory" .Card.ID)}}
+  {{with .Card}}
+  <div class="head">
+    <h1>{{.ID}}</h1>
+    {{if .Stage.Label}}<span class="badge{{if .Stage.Human}} warn{{end}}">{{.Stage.Label}}</span>{{end}}
+    <a href="/">Volver al tablero</a>
+  </div>
+  {{if .Err}}<p class="note" role="alert">{{.Err}}</p>{{end}}
+  {{end}}
+
+  <div class="grid2">
+    <section class="card">
+      {{with .Card}}
+      <dl class="meta">
+        {{if .Tarea}}<dt>Tarea</dt><dd>{{.Tarea}}</dd>{{end}}
+        {{if .Tipo}}<dt>Tipo</dt><dd>{{.Tipo}}</dd>{{end}}
+        {{if .Rama}}<dt>Rama</dt><dd><code>{{.Rama}}</code></dd>{{end}}
+        {{if .Vuelta}}<dt>Vuelta</dt><dd>{{.Vuelta}}</dd>{{end}}
+        {{range .Reviews}}<dt>{{.Name}}</dt><dd><span class="badge {{.Class}}">{{.Verdict}}</span></dd>{{end}}
+        {{if .Motivo}}<dt>Motivo</dt><dd>{{.Motivo}}</dd>{{end}}
+        {{if .PR}}<dt>PR</dt><dd><a href="{{.PR}}" rel="noopener noreferrer">{{.PR}}</a></dd>{{end}}
+        {{if .Actualizada}}<dt>Actualizada</dt><dd>{{fecha .Actualizada}}</dd>{{end}}
+        {{range .Historial}}<dt>{{fecha .At}}</dt><dd>{{.Etapa}}</dd>{{end}}
+      </dl>
+      {{end}}
+      {{if .Files}}
+      <nav class="files" aria-label="Archivos de la tarea">
+        {{range .Files}}<a href="?archivo={{.}}"{{if eq . $.Archivo}} aria-current="page"{{end}}>{{.}}</a>{{end}}
+      </nav>
+      <pre class="doc">{{.Content}}</pre>
+      {{else}}
+      <p class="muted">Todavía no hay archivos.</p>
+      {{end}}
+    </section>
+
+    <section class="card">
+      <h2>Actividad</h2>
+      <div hx-get="/parcial/actividad?tarea={{.Card.ID}}" hx-trigger="load, every 2s">
+        <p class="muted">Cargando…</p>
+      </div>
+    </section>
+  </div>
+{{template "foot"}}{{end}}

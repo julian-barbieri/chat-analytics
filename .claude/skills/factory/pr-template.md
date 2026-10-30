@@ -1,7 +1,8 @@
-# Plantilla del cuerpo del PR de /fix-bug
+# Plantilla del cuerpo del PR de /factory
 
 Copiá desde `## Resumen` hasta el final y completá. Recortá las salidas a lo que
-demuestra el punto (sin datos de usuarios ni la API key).
+demuestra el punto (sin datos de usuarios ni la API key). En mejoras y tareas, "Causa
+raíz" pasa a ser "Motivo" y el rojo es el test nuevo fallando antes de implementar.
 
 ---
 
@@ -9,7 +10,7 @@ demuestra el punto (sin datos de usuarios ni la API key).
 
 <Qué estaba mal, en 1-2 oraciones, y qué cambia.>
 
-- **Spec:** [docs/specs/<archivo>.md](<url del repo>/blob/fix/<slug>/docs/specs/<archivo>.md)
+- **Spec:** [docs/specs/<archivo>.md](<url del repo>/blob/<tipo>/<slug>/docs/specs/<archivo>.md)
   (la URL sale de `gh repo view --json url -q .url`)
 - **Causa raíz:** <una línea con `archivo.go:línea`>
 
