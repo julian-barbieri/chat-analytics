@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"html/template"
 	"log"
+	"math"
 	"net/http"
+	"net/url"
 	"sort"
 	"strings"
 	"time"
@@ -70,6 +72,7 @@ type Bar struct {
 	X, Y, W, H float64
 	Label      string
 	N          int
+	Class      string // clase CSS extra, por ejemplo "pico"
 }
 
 // LiveRow es un vivo en curso con el estado de su chat.
@@ -365,17 +368,20 @@ func bars(counts []Count) []CatRow {
 func (s *Server) liveAnalysis(w http.ResponseWriter, r *http.Request) {
 	snap := s.st.Snapshot()
 	id := r.URL.Query().Get("video")
+	var video Video
 	var label string
 	for _, v := range snap.Videos {
 		if v.ID == id {
-			label = LiveLabel(v.Title, v.Channel)
+			video, label = v, LiveLabel(v.Title, v.Channel)
 		}
 	}
 	if label == "" {
 		s.render(w, "vivo-analisis", nil)
 		return
 	}
-	a := Analyze(sinceFor(snap.Msgs, id, time.Now().Add(-24*time.Hour)))
+	now := time.Now()
+	msgs := sinceFor(snap.Msgs, id, now.Add(-24*time.Hour))
+	a := Analyze(msgs)
 	var offenders []CatRow
 	peak := 1
 	for _, o := range a.Offenders {
@@ -391,11 +397,150 @@ func (s *Server) liveAnalysis(w http.ResponseWriter, r *http.Request) {
 	for _, f := range a.Filters {
 		filterLine = append(filterLine, f.Key)
 	}
+	viewers := s.st.Viewers(id, now.Add(-24*time.Hour))
 	s.render(w, "vivo-analisis", map[string]any{
 		"Label": label, "A": a, "Topics": bars(a.Topics), "Tech": bars(a.Tech),
 		"Offenders": offenders, "FilterLine": strings.Join(filterLine, ", "),
+		"Part": participationView(video, msgs, viewers, videoTitles(snap.Videos), now),
 	})
 }
+
+// MomentRow es una fila de la tabla de momentos pico, con los números ya escritos.
+type MomentRow struct {
+	Moment
+	ViewersText, PctText, RatioText, TopicText string
+	Href, Hint                                 string
+}
+
+// participationView arma la sección de momentos con más participación del vivo.
+func participationView(v Video, msgs []Message, viewers []ViewerSample, titles map[string]string, now time.Time) map[string]any {
+	slots, typical, ok := Participation(msgs, viewers, v.ID, now)
+	moments := PeakMoments(slots, titles)
+	var rows []MomentRow
+	for _, m := range moments {
+		row := MomentRow{Moment: m, ViewersText: "sin dato", PctText: "sin dato"}
+		if m.Best.Viewers > 0 {
+			row.ViewersText, row.PctText = miles(m.Best.Viewers), pct(m.Best.Pct)
+		}
+		if m.Ratio > 0 {
+			row.RatioText = decimal(m.Ratio)
+		}
+		var topics []string
+		for _, t := range m.Topics {
+			topics = append(topics, t.Key)
+		}
+		row.TopicText = strings.Join(topics, ", ")
+		row.Href, row.Hint = reelLink(v, m.Start, now)
+		rows = append(rows, row)
+	}
+	typ := "sin dato"
+	if ok {
+		typ = pct(typical)
+	}
+	// Franjas con chat y sin muestra de espectadores: de antes de que se
+	// guardaran o de cuando se cortó la revisión de videos.
+	missing := false
+	for _, s := range slots {
+		missing = missing || s.N > 0 && s.Viewers == 0
+	}
+	return map[string]any{
+		"Chart": participationChart(slots, moments, titles), "Moments": rows, "Typical": typ,
+		"Concurrent": v.Concurrent, "Missing": v.Concurrent > 0 && missing,
+	}
+}
+
+// participationChart arma las barras de personas que escribieron cada 5
+// minutos, con las franjas de los momentos pico marcadas y una línea en el umbral.
+func participationChart(slots []Slot, moments []Moment, titles map[string]string) map[string]any {
+	const width, height = 720.0, 140.0
+	// 288 barras en 720: 2,5 por franja, con 0,5 de separación entre barras.
+	step := width / float64(max(len(slots), 1))
+	_, threshold := peakThreshold(slots)
+	peak, peakAt := 0, time.Time{}
+	for _, s := range slots {
+		if s.Authors > peak {
+			peak, peakAt = s.Authors, s.Start
+		}
+	}
+	// La escala incluye el umbral para que la línea se vea aunque no haya picos.
+	scale := max(float64(peak), threshold)
+	inMoment := func(t time.Time) bool {
+		for _, m := range moments {
+			if !t.Before(m.Start) && t.Before(m.End) {
+				return true
+			}
+		}
+		return false
+	}
+	var out []Bar
+	for i, s := range slots {
+		h := float64(s.Authors) / scale * (height - 4)
+		if s.Authors > 0 {
+			h = max(h, 3)
+		}
+		label := s.Start.Local().Format("15:04") + " a " + s.Start.Add(slotStep).Local().Format("15:04")
+		if p := mainProgram(s.Msgs, titles); p != "" {
+			label += " · " + p
+		}
+		label += fmt.Sprintf(" · %s mensajes · %s personas", miles(s.N), miles(s.Authors))
+		if s.Viewers > 0 {
+			label += fmt.Sprintf(" · %s mirando (%s)", miles(s.Viewers), pct(s.Pct))
+		} else {
+			label += " · sin dato de espectadores"
+		}
+		b := Bar{X: float64(i)*step + 0.25, Y: height - h, W: step - 0.5, H: h, N: s.Authors, Label: label}
+		if inMoment(s.Start) {
+			b.Class = "pico"
+		}
+		out = append(out, b)
+	}
+	var ticks []map[string]any
+	for i := 0; i <= len(slots) && len(slots) > 0; i += 36 { // cada 3 h
+		ticks = append(ticks, map[string]any{"X": float64(i) * step, "Label": slots[0].Start.Add(time.Duration(i) * slotStep).Local().Format("15:04")})
+	}
+	aria := "Personas que escribieron en el chat cada 5 minutos en las últimas 24 horas; "
+	// Solo es "pico" si llega al umbral; si no, es el máximo de un vivo tranquilo.
+	if float64(peak) >= threshold {
+		aria += fmt.Sprintf("pico de %d personas a las %s", peak, peakAt.Local().Format("15:04"))
+	} else if peak > 0 {
+		aria += fmt.Sprintf("máximo de %d personas a las %s, sin momentos pico", peak, peakAt.Local().Format("15:04"))
+	} else {
+		aria += "todavía sin mensajes"
+	}
+	lineY := height - threshold/scale*(height-4)
+	return map[string]any{
+		"Bars": out, "W": width, "H": height, "Peak": peak, "Ticks": ticks, "Aria": aria,
+		"LineY": lineY, "TextY": lineY - 3, "Threshold": int(math.Ceil(threshold)),
+	}
+}
+
+// dvrWindow es cuánto deja retroceder YouTube en un vivo con DVR, según su
+// ayuda (sin verificar: se confirma a mano antes de mergear). Los vivos más
+// largos tampoco quedan enteros como VOD.
+const dvrWindow = 12 * time.Hour
+
+// reelLink dice cómo ubicar en YouTube el momento que empieza en slotStart:
+// un link con t= si el vivo es corto, o cuánto retroceder en el reproductor.
+func reelLink(v Video, slotStart, now time.Time) (href, hint string) {
+	age := now.Sub(slotStart)
+	if age > dvrWindow {
+		return "", "Fuera de lo que se puede retroceder en YouTube: usá la grabación propia"
+	}
+	if !v.StartedAt.IsZero() && now.Sub(v.StartedAt) <= dvrWindow && !slotStart.Before(v.StartedAt) {
+		sec := int(slotStart.Sub(v.StartedAt) / time.Second)
+		return fmt.Sprintf("https://www.youtube.com/watch?v=%s&t=%ds", url.QueryEscape(v.ID), sec), "Ver en YouTube desde ese momento"
+	}
+	// En un vivo de días (como el de 24 h de Rivadavia) t= caería fuera de lo
+	// que se puede retroceder: se dice cuánto ir para atrás desde el directo.
+	return "", fmt.Sprintf("Retrocedé ~%d h %d min en el reproductor del vivo", int(age/time.Hour), int(age%time.Hour/time.Minute))
+}
+
+// decimal escribe un número con un decimal y coma, como se lee en Argentina.
+func decimal(f float64) string {
+	return strings.Replace(fmt.Sprintf("%.1f", f), ".", ",", 1)
+}
+
+func pct(f float64) string { return decimal(f) + " %" }
 
 func (s *Server) extra(w http.ResponseWriter, r *http.Request) {
 	snap := s.st.Snapshot()

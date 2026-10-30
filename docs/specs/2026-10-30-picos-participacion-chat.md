@@ -1,6 +1,6 @@
 # Spec: picos de participación del chat por franjas de 5 minutos (para reels)
 
-- **Estado:** aprobada
+- **Estado:** implementada
 - **Tipo:** mejora
 - **Rama:** `feat/picos-participacion-chat`
 - **Origen:** pedido de Julian Barbieri (textual): "Necesito que se agregue un grafico o
@@ -104,7 +104,7 @@ retención de 30 días, sin gastar cuota extra y sin tocar el formato de `datos.
 
 ## Criterios de aceptación
 
-- [ ] CA1: `Participation` (función pura en `analyze.go`) arma las 288 franjas de la
+- [x] CA1: `Participation` (función pura en `analyze.go`) arma las 288 franjas de la
   ventana para un vivo con mensajes, personas, espectadores y participación según las
   definiciones: el mensaje a las 14:05:00 cae en la franja 14:05; ignora comentarios,
   mensajes de otros vivos y mensajes fuera de la ventana; dos mensajes del mismo autor
@@ -112,10 +112,10 @@ retención de 30 días, sin gastar cuota extra y sin tocar el formato de `datos.
   o con `Viewers == 0` da sin dato y participación sin dato; 3 personas con 150
   espectadores dan 2,0 %. — se verifica con `go test -count=1 -run '^TestParticipation$' ./...`
   (tabla de casos con `now` fijo).
-- [ ] CA2: la participación típica es la mediana de las franjas con dato (incluye franjas
+- [x] CA2: la participación típica es la mediana de las franjas con dato (incluye franjas
   con 0 personas) y es sin dato si no hay ninguna franja con espectadores. — se verifica
   con `go test -count=1 -run '^TestParticipation$' ./...`.
-- [ ] CA3: `PeakMoments` (función pura en `analyze.go`) aplica la base, el umbral
+- [x] CA3: `PeakMoments` (función pura en `analyze.go`) aplica la base, el umbral
   `max(3, 2 × base)`, agrupa franjas pico consecutivas, elige la franja más fuerte, ordena
   y corta en 5. Casos mínimos: sin mensajes → ningún momento; actividad pareja (todas las
   franjas igual) → ningún momento; un pico de 1 franja; dos franjas pico seguidas → un
@@ -125,7 +125,7 @@ retención de 30 días, sin gastar cuota extra y sin tocar el formato de `datos.
   (`TopTopics(msgs, 3)`) y hasta 2 mensajes de ejemplo que no sean spam ni insulto
   (`Classify`), los primeros del momento que contengan el tema principal, o los primeros
   si no hay tema. — se verifica con `go test -count=1 -run '^TestPeakMoments$' ./...`.
-- [ ] CA4: `reelLink` (función pura en `server.go`) devuelve cómo ubicar el momento:
+- [x] CA4: `reelLink` (función pura en `server.go`) devuelve cómo ubicar el momento:
   (a) vivo con `StartedAt` conocido, que empezó hace 12 h o menos y franja posterior al
   inicio → link `https://www.youtube.com/watch?v=<ID>&t=<segundos>s` con
   `segundos = inicio de la franja − StartedAt`; (b) vivo que empezó hace más de 12 h (el de
@@ -134,26 +134,27 @@ retención de 30 días, sin gastar cuota extra y sin tocar el formato de `datos.
   lo que se puede retroceder en YouTube: usá la grabación propia"; (d) `StartedAt` cero →
   como (b) o (c) según la antigüedad de la franja. — se verifica con
   `go test -count=1 -run '^TestReelLink$' ./...` (tabla con `now` fijo).
-- [ ] CA5: `Videos` lee `liveStreamingDetails.actualStartTime` en `Video.StartedAt` sin
+- [x] CA5: `Videos` lee `liveStreamingDetails.actualStartTime` en `Video.StartedAt` sin
   cambiar `part` ni el costo: en `TestFlowAgainstFakeAPI` el vivo falso trae
   `actualStartTime` y `concurrentViewers`, `vids[0].StartedAt` coincide y el chequeo de
   `yt.Units` (`2+1+2+1+1+2*5`) no cambia. — se verifica con
   `go test -count=1 -run '^TestFlowAgainstFakeAPI$' ./...`.
-- [ ] CA6: `Store.AddViewers(at, vids)` guarda una muestra `{VideoID, At, Viewers}` por
+- [x] CA6: `Store.AddViewers(at, vids)` guarda una muestra `{VideoID, At, Viewers}` por
   cada video con `LiveStatus == "live"` y `Concurrent > 0` (ignora los demás), en memoria
   y en modo append en `<datos sin .jsonl>.espectadores.jsonl`. `OpenStore` la carga,
   descarta las muestras de más de `retention` (30 días) y las líneas que no se pueden
   leer, y reescribe el archivo con archivo temporal + `os.Rename`. `Store.Viewers(id,
   since)` devuelve una copia (modificarla no cambia el `Store`). `datos.jsonl` queda igual
-  (mismos mensajes después de reabrir). — se verifica con
-  `go test -count=1 -run '^TestStoreViewers$' ./...`.
-- [ ] CA7: el worker llama a `AddViewers` en cada revisión de videos que sale bien, sin
+  (mismos mensajes después de reabrir). Una línea larga (más de 64 KB) se saltea sin
+  perder las siguientes y un error de lectura no reescribe el archivo. — se verifica con
+  `go test -count=1 -run '^TestStoreViewers(Open|LongLine)?$' ./...`.
+- [x] CA7: el worker llama a `AddViewers` en cada revisión de videos que sale bien, sin
   llamadas nuevas a la API: con una API falsa (`httptest`) que devuelve un vivo con
   `concurrentViewers`, después de la primera revisión `st.Viewers` tiene la muestra con
   ese valor y el servidor falso no recibió rutas distintas de las de hoy; el worker se
   para antes del cleanup de `t.TempDir()` (helper `startWorker`). — se verifica con
   `go test -count=1 -run '^TestWorkerRecordsViewers$' ./...`.
-- [ ] CA8: `GET /parcial/vivo/analisis?video=<ID>` muestra la sección "Momentos con más
+- [x] CA8: `GET /parcial/vivo/analisis?video=<ID>` muestra la sección "Momentos con más
   participación" del vivo elegido: SVG con `role="img"` y `aria-label` que nombra el pico,
   un `<title>` por barra con "HH:MM a HH:MM", programa, mensajes, personas y espectadores
   o "sin dato"; las barras de los momentos pico con la clase `pico`; la participación
@@ -162,32 +163,32 @@ retención de 30 días, sin gastar cuota extra y sin tocar el formato de `datos.
   test, un autor `<script>x</script>` sale escapado (`&lt;script&gt;`). Sin muestras de
   espectadores muestra "sin dato" y el aviso correspondiente (CA9). — se verifica con
   `go test -count=1 -run '^TestLiveParticipationView$' ./...`.
-- [ ] CA9: avisos sin dato: si el vivo tiene `Concurrent == 0` ahora, el texto dice que
+- [x] CA9: avisos sin dato: si el vivo tiene `Concurrent == 0` ahora, el texto dice que
   YouTube no informa cuántos miran este vivo; si tiene espectadores pero hay franjas sin
   muestra (por ejemplo, de antes de este cambio o de cuando se cortó la revisión de
   videos), esas franjas dicen "sin dato" y no entran en la participación típica. — se
   verifica con `go test -count=1 -run '^TestLiveParticipationView$' ./...`.
-- [ ] CA10: el archivo de espectadores no se puede commitear: `.gitignore` incluye
+- [x] CA10: el archivo de espectadores no se puede commitear: `.gitignore` incluye
   `datos.*.jsonl`. — se verifica con `git check-ignore -q datos.espectadores.jsonl`
   (sale con código 0).
-- [ ] CA11: sin `template.HTML` con texto de usuarios ni JS propio ni recursos externos:
+- [x] CA11: sin `template.HTML` con texto de usuarios ni JS propio ni recursos externos:
   `grep -n 'template.HTML' *.go` no lista nada y `grep -n '<script' templates/*.html`
   solo lista `/static/htmx.min.js`; `go.mod` sigue sin `require`.
-- [ ] CA12: cuota sin cambios: no hay endpoints nuevos ni cambios de `part` ni de `cost`
+- [x] CA12: cuota sin cambios: no hay endpoints nuevos ni cambios de `part` ni de `cost`
   (lo cubren CA5 y CA7); `git diff main -- youtube.go` solo agrega el campo
   `ActualStartTime` al struct de `videos` y `StartedAt` a `Video`.
-- [ ] CA13: el README (sección 3) menciona la sección nueva y el archivo
+- [x] CA13: el README (sección 3) menciona la sección nueva y el archivo
   `datos.espectadores.jsonl` con su retención de 30 días; `AGENTS.md` (mapa de `store.go`
   y `analyze.go`, "Datos y privacidad") y `CLAUDE.md` ("Qué NO tocar": `datos.*.jsonl`)
   quedan al día. Las cifras de cuota del README no cambian. — se verifica revisando
   `git diff main -- README.md AGENTS.md CLAUDE.md` en la revisión.
-- [ ] CA14: verificación manual en el navegador (`AGENTS.md`, "Antes de dar algo por
+- [ ] CA14 (pendiente: manual, no la puede hacer el agente): verificación manual en el navegador (`AGENTS.md`, "Antes de dar algo por
   terminado", punto 4) con una API simulada (`YT_BASE_URL=http://localhost:9999
   YT_API_KEY=x`), en modo claro y oscuro y en ancho de celular: el gráfico se lee, las
   barras pico se distinguen en los dos temas y la tabla no rompe el ancho. Una persona
   prueba a mano si el link con `&t=` abre el momento correcto en un vivo de menos de 12 h
   y en su VOD; si no, se ajusta `reelLink` antes de mergear. La evidencia va en el PR.
-- [ ] Gates de `CLAUDE.md` → "Definición de terminado" en verde: `gofmt -l .` vacío,
+- [x] Gates de `CLAUDE.md` → "Definición de terminado" en verde: `gofmt -l .` vacío,
   `go vet ./...`, `staticcheck` limpio, `go build ./...` y
   `GOOS=windows GOARCH=amd64 go build ./...` OK, `go test -race -count=1 ./...` y
   `go test -count=5 ./...` en verde.
@@ -359,22 +360,18 @@ func PeakMoments(slots []Slot, titles map[string]string) []Moment
 
 ## Preguntas abiertas (decisiones de producto)
 
-1. **Umbral y cantidad de picos.** Recomiendo franja pico = al menos 3 personas y el doble
-   de la mediana del vivo en 24 h, y mostrar los 5 momentos más fuertes. ¿Te sirve o
-   preferís otro número?
-2. **Ventana.** Recomiendo 24 h, como el resto del análisis del vivo. Alternativa: 12 h,
-   que es lo que (según YouTube) se puede retroceder en el reproductor y se ve mejor en el
-   celular.
-3. **Criterio del pico.** Recomiendo ordenar por personas distintas que escribieron (no
-   por mensajes ni por %). El % tiene sentido para comparar horarios con distinta
-   audiencia, pero de madrugada con pocos espectadores da picos con pocas personas. ¿Lo
-   querés por % en cambio, o las dos listas?
-4. **Export.** ¿Querés un CSV aparte con los momentos pico (por ejemplo
-   `GET /export/picos.csv?video=ID`: inicio, fin, programa, mensajes, personas,
-   espectadores, %, link)? Recomiendo dejarlo para otra tarea si la tabla alcanza.
-5. **Spam en los picos.** Recomiendo contar todos los mensajes (el criterio por personas
-   ya baja el peso de un spammer) y excluir spam e insultos solo de los ejemplos. ¿O
-   preferís sacar el spam también del conteo?
-6. **Link a YouTube.** ¿El equipo corta los reels del vivo de YouTube o de la grabación
-   propia de la radio? Si es de la propia, alcanza con hora y programa, y el link con `t=`
-   se puede dejar afuera para simplificar.
+Resueltas al aprobar ("Aprobar así", Julian Barbieri, 2026-10-30): se toman las
+recomendaciones tal cual.
+
+1. **Umbral y cantidad de picos:** resuelta. Franja pico = al menos 3 personas y el doble
+   de la mediana de personas por franja con actividad; se muestran los 5 momentos más
+   fuertes (`minPersonasPico = 3`, `factorPico = 2`, `maxMomentos = 5`).
+2. **Ventana:** resuelta. 24 h (288 franjas de 5 minutos), como el resto del análisis del
+   vivo.
+3. **Criterio del pico:** resuelta. Personas distintas que escribieron (no mensajes ni %);
+   los mensajes desempatan.
+4. **Export:** resuelta. El CSV de momentos pico queda fuera de alcance (otra tarea).
+5. **Spam en los picos:** resuelta. El spam cuenta para los picos; spam e insultos solo se
+   excluyen de los mensajes de ejemplo.
+6. **Link a YouTube:** resuelta. Se mantiene el link con `&t=` con la lógica de
+   `reelLink` descripta arriba (a confirmar a mano en CA14).

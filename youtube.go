@@ -67,6 +67,7 @@ type Video struct {
 	LiveStatus  string // "live", "upcoming" o "none"
 	LiveChatID  string
 	Concurrent  int64
+	StartedAt   time.Time // inicio real del vivo; cero si no empezó o no es un vivo
 }
 
 // UploadsPlaylist devuelve el nombre del canal y la lista de "subidas".
@@ -196,8 +197,9 @@ func (y *YouTube) videos(ids []string) ([]Video, error) {
 				CommentCount string `json:"commentCount"`
 			} `json:"statistics"`
 			LiveStreamingDetails struct {
-				ActiveLiveChatID  string `json:"activeLiveChatId"`
-				ConcurrentViewers string `json:"concurrentViewers"`
+				ActiveLiveChatID  string    `json:"activeLiveChatId"`
+				ConcurrentViewers string    `json:"concurrentViewers"`
+				ActualStartTime   time.Time `json:"actualStartTime"`
 			} `json:"liveStreamingDetails"`
 		} `json:"items"`
 	}
@@ -217,6 +219,7 @@ func (y *YouTube) videos(ids []string) ([]Video, error) {
 			LiveStatus:  it.Snippet.LiveBroadcastContent,
 			LiveChatID:  it.LiveStreamingDetails.ActiveLiveChatID,
 			Concurrent:  atoi(it.LiveStreamingDetails.ConcurrentViewers),
+			StartedAt:   it.LiveStreamingDetails.ActualStartTime,
 		})
 	}
 	return out, nil

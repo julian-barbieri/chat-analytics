@@ -187,6 +187,45 @@
     {{end}}
     {{if .A.Links}}<p class="muted sub">{{.A.Links}} mensajes con links: conviene activar «Bloquear vínculos» en la misma pantalla.</p>{{end}}
   </section>
+
+  {{with .Part}}<section class="card full">
+    <h2>6. Momentos con más participación (para reels)</h2>
+    <p class="muted">Participación típica: {{.Typical}} (personas que escriben en 5 minutos sobre los que miran){{if .Concurrent}} · {{miles .Concurrent}} mirando ahora{{end}}</p>
+    {{if not .Concurrent}}<div class="note">YouTube no informa cuántos miran este vivo (el canal oculta el contador): el % queda sin dato y los picos se miden solo por personas.</div>{{end}}
+    {{if .Missing}}<p class="muted">Las franjas sin muestra de espectadores (de antes de que se empezaran a guardar o de cuando se cortó la revisión de videos) dicen «sin dato» y no entran en la participación típica.</p>{{end}}
+    {{with .Chart}}
+    <svg viewBox="0 -8 {{.W}} {{.H}}" width="100%" role="img" aria-label="{{.Aria}}" style="overflow:visible;height:auto">
+      <line x1="0" x2="{{.W}}" y1="{{.H}}" y2="{{.H}}" stroke="var(--grid)"></line>
+      <text x="0" y="0">máx. {{.Peak}} personas</text>
+      {{range .Bars}}<g>
+        <title>{{.Label}}</title>
+        <rect class="hit" x="{{.X}}" y="0" width="{{.W}}" height="140"></rect>
+        <rect class="bar{{if .Class}} {{.Class}}{{end}}" x="{{.X}}" y="{{.Y}}" width="{{.W}}" height="{{.H}}"></rect>
+      </g>{{end}}
+      <line class="umbral" x1="0" x2="{{.W}}" y1="{{.LineY}}" y2="{{.LineY}}"></line>
+      <text x="{{.W}}" y="{{.TextY}}" text-anchor="end">pico: desde {{.Threshold}} personas</text>
+    </svg>
+    <svg viewBox="0 0 {{.W}} 16" width="100%" aria-hidden="true" style="overflow:visible;height:auto">
+      {{range .Ticks}}<text x="{{.X}}" y="12">{{.Label}}</text>{{end}}
+    </svg>
+    {{end}}
+    {{if .Moments}}<div class="scroll"><table>
+      <tr><th>Momento</th><th>Programa</th><th class="n">Mensajes</th><th class="n">Personas</th><th>Franja más fuerte</th>
+        <th class="n">Mirando (franja más fuerte)</th><th class="n">% que escribió en esa franja</th><th>Temas y ejemplos</th><th>Para el reel</th></tr>
+      {{range .Moments}}<tr>
+        <td>{{fecha .Start}} a {{fecha .End}}</td>
+        <td>{{.Program}}</td>
+        <td class="n">{{miles .N}}</td>
+        <td class="n">{{miles .Authors}}</td>
+        <td>{{hora .Best.Start}}: {{miles .Best.Authors}} personas{{if .RatioText}} ({{.RatioText}} veces lo normal){{end}}</td>
+        <td class="n">{{.ViewersText}}</td>
+        <td class="n">{{.PctText}}</td>
+        <td>{{if .TopicText}}<div>{{.TopicText}}</div>{{end}}{{range .Examples}}<div class="muted"><strong>{{.Author}}</strong>: {{.Text}}</div>{{end}}</td>
+        <td>{{if .Href}}<a href="{{.Href}}" target="_blank" rel="noopener">{{.Hint}}</a>{{else}}<span class="muted">{{.Hint}}</span>{{end}}</td>
+      </tr>{{end}}
+    </table></div>{{else}}<p class="muted">Todavía no hubo picos: una franja es pico si escriben al menos 3 personas y el doble de lo normal en este vivo.</p>{{end}}
+    <p class="muted">Franjas de 5 minutos de las últimas 24 h. Personas = nombres distintos que escribieron; mirando = lo que informa YouTube en ese momento. Es una aproximación: sirve para elegir qué mirar, no como medición exacta.</p>
+  </section>{{end}}
 </div>
 {{else}}<p class="muted">Este vivo ya no está en la lista de videos.</p>{{end}}
 {{end}}
