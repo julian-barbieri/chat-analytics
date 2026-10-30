@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -20,6 +21,7 @@ type Stage struct {
 	Key, Label string
 	Live       bool // un agente trabaja en esta etapa
 	Human      bool // le toca a una persona
+	Derived    bool // la calcula el tablero; nunca está en job.json
 }
 
 var stages = []Stage{
@@ -33,6 +35,10 @@ var stages = []Stage{
 	{Key: "necesita-persona", Label: "Necesita persona", Human: true},
 	{Key: "descartada", Label: "Descartadas"},
 }
+
+// mergedStage va después de "PR abierto". No está en stages para que readJob la siga
+// rechazando en job.json: la decide el tablero preguntándole a GitHub (ADR 0003).
+var mergedStage = Stage{Key: "mergeado", Label: "Mergeado", Derived: true}
 
 func stageOf(key string) (Stage, bool) {
 	for _, s := range stages {
@@ -99,13 +105,20 @@ func (e Event) Action() string {
 	return e.Tool
 }
 
-// Board lee factory/ del repo. No escribe nada.
+// Board lee factory/ del repo y consulta con gh el estado de los PR abiertos (ADR 0003).
+// No escribe nada: ni job.json ni la caché de PR van a disco.
 type Board struct {
 	root string
 	now  func() time.Time
 
 	mu    sync.Mutex
 	cache map[string]dayFile
+
+	prQuery func(ctx context.Context, url string) (PRStatus, error)
+	prMu    sync.Mutex // separado de mu: la ronda de gh no frena la lectura de eventos
+	prs     map[string]prEntry
+	prBusy  bool           // hay una ronda de consultas en vuelo
+	prWG    sync.WaitGroup // para esperar la ronda (tests)
 }
 
 type dayFile struct {
@@ -115,7 +128,7 @@ type dayFile struct {
 }
 
 func NewBoard(root string) *Board {
-	return &Board{root: root, now: time.Now, cache: map[string]dayFile{}}
+	return &Board{root: root, now: time.Now, cache: map[string]dayFile{}, prQuery: ghPRStatus, prs: map[string]prEntry{}}
 }
 
 func (b *Board) jobsDir() string   { return filepath.Join(b.root, "factory", "jobs") }

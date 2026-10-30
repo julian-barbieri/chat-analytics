@@ -1,6 +1,6 @@
 # Spec: columna "Mergeado" en el tablero y vista previa local del PR
 
-- **Estado:** aprobada
+- **Estado:** implementada
 - **Tipo:** tarea
 - **Rama:** `chore/tablero-mergeado-vista-previa`
 - **Origen:** pedido de Julian Barbieri por `/factory` (textual): "1) Me gustaria que
@@ -101,35 +101,37 @@ en verde en la rama antes de esta spec).
 
 Parte 1: columna "Mergeado" (`tools/factory-board`)
 
-- [ ] CA1: con la consulta del PR inyectada, una tarea en `pr-abierto` con URL de PR
+- [x] CA1: con la consulta del PR inyectada, una tarea en `pr-abierto` con URL de PR
   válida se ubica así: `MERGED` → columna "Mergeado" (inmediatamente después de "PR
   abierto") con la fecha del merge en `02/01 15:04`; `OPEN` → "PR abierto" sin aviso;
   `CLOSED` → "PR abierto" con el aviso "El PR se cerró sin merge"; error de la consulta
   → "PR abierto" con "No se pudo consultar GitHub: …"; todavía sin respuesta → "PR
-  abierto" con "Consultando GitHub…". En todos los casos `job.json` queda byte por byte
+  abierto" con "Consultando GitHub…"; cualquier otro estado (`DRAFT`, `merged` en
+  minúsculas) → "PR abierto" con "Estado desconocido en GitHub: <estado>" (caso en
+  `TestPRUnexpectedState`). En todos los casos `job.json` queda byte por byte
   igual. La página `/tarea/<id>` muestra la misma etapa ("Mergeado" en el badge) — se
   verifica con `go test -count=1 -run '^TestPRStatusColumns$' ./tools/factory-board/`.
-- [ ] CA2: si `pr` no es una URL de PR de GitHub (`^https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/pull/[0-9]+$`),
+- [x] CA2: si `pr` no es una URL de PR de GitHub (`^https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/pull/[0-9]+$`),
   no se consulta nada (contador de llamadas en 0) y la tarjeta muestra "PR sin URL de
   GitHub válida". Casos: vacío, `javascript:alert(1)`, `--web`, `-R otro/repo`,
   `https://github.com/a/b/pull/1?x=y` — se verifica con
   `go test -count=1 -run '^TestPRStatusColumns$' ./tools/factory-board/` (subcasos).
-- [ ] CA3: caché: 50 pedidos a `/parcial/tablero` dentro de `prEvery` (2 min, reloj
+- [x] CA3: caché: 50 pedidos a `/parcial/tablero` dentro de `prEvery` (2 min, reloj
   inyectado con `Board.now`) generan **una** consulta por PR; pasado `prEvery` se vuelve
   a consultar `OPEN`, `CLOSED` y los errores, nunca un `MERGED`; nunca hay más de una
   ronda de consultas en vuelo — se verifica con
   `go test -race -count=1 -run '^TestPRCache$' ./tools/factory-board/`.
-- [ ] CA4: la consulta real ejecuta `gh pr view <url> --json state,mergedAt` con timeout,
+- [x] CA4: la consulta real ejecuta `gh pr view <url> --json state,mergedAt` con timeout,
   `GH_PROMPT_DISABLED=1` y `GH_NO_UPDATE_NOTIFIER=1`; interpreta la salida JSON; si `gh`
   no está en el `PATH` devuelve un error que dice "falta la CLI gh"; si sale con error,
   devuelve la primera línea de stderr recortada a 120 caracteres — se verifica con
   `go test -count=1 -run '^TestGhPRStatus$' ./tools/factory-board/`, usando un `gh` falso
   (script en `t.TempDir()` puesto primero en `PATH` con `t.Setenv`; `t.Skip` si no hay
   `bash`, como `TestLogActivityHook`). Ningún test ejecuta el `gh` real.
-- [ ] CA5: `mergeado` no es una etapa válida en `job.json` (solo la calcula el tablero):
+- [x] CA5: `mergeado` no es una etapa válida en `job.json` (solo la calcula el tablero):
   `readJob` la sigue marcando "etapa desconocida" — caso nuevo en `TestLoadJobs`
   (`go test -count=1 -run '^TestLoadJobs$' ./tools/factory-board/`).
-- [ ] CA6: `/factory estado` muestra también el estado en GitHub de las tareas en
+- [x] CA6: `/factory estado` muestra también el estado en GitHub de las tareas en
   `pr-abierto`, y `/factory rehacer` sobre una tarea cuyo PR ya está mergeado para y
   pide abrir una tarea nueva — se verifica con
   `grep -n 'gh pr view' .claude/skills/factory/SKILL.md` (aparece en `estado` y en
@@ -137,15 +139,15 @@ Parte 1: columna "Mergeado" (`tools/factory-board`)
 
 Parte 2: vista previa del PR (`tools/preview`)
 
-- [ ] CA7: existe `tools/preview`, `package main` aparte, solo stdlib, que compila en
+- [x] CA7: existe `tools/preview`, `package main` aparte, solo stdlib, que compila en
   Linux y Windows; `go run ./tools/preview -h` lista en español `-repo`, `-datos`,
   `-addr` (por defecto `localhost:8081`) y `-cortar` — se verifica con
   `go run ./tools/preview -h` y `GOOS=windows GOARCH=amd64 go build ./...`.
-- [ ] CA8: `-addr` solo acepta `localhost`, `127.0.0.1` o `::1` (`:8081` se toma como
+- [x] CA8: `-addr` solo acepta `localhost`, `127.0.0.1` o `::1` (`:8081` se toma como
   `localhost:8081`); `0.0.0.0:8081`, `192.168.0.10:8081` o un nombre ajeno salen con
   error sin crear carpetas ni compilar nada — se verifica con
   `go test -count=1 -run '^TestPreviewAddr$' ./tools/preview/`.
-- [ ] CA9: la API simulada, armada a partir de una copia **sintética** (escrita por el
+- [x] CA9: la API simulada, armada a partir de una copia **sintética** (escrita por el
   test en `t.TempDir()`, nunca `datos.jsonl`), responde: `channels` → un canal
   "Vista previa" con lista de subidas; `playlistItems` de la lista `UULV…` → los IDs de
   videos con mensajes de chat, del más reciente al más viejo; de la lista de subidas →
@@ -155,52 +157,81 @@ Parte 2: vista previa del PR (`tools/preview`)
   video y un título que incluye el último `Program` guardado de ese video; cualquier
   otra ruta → 404 con `{"error":{"message":"vista previa: <ruta> no está simulado"}}` —
   se verifica con `go test -count=1 -run '^TestFakeAPI$' ./tools/preview/`.
-- [ ] CA10: de punta a punta: con una copia sintética (`datos.jsonl` con chat de dos vivos
+- [x] CA10: de punta a punta: con una copia sintética (`datos.jsonl` con chat de dos vivos
   y comentarios, `datos.cuota.json` y `datos.espectadores.jsonl`) y `YT_API_KEY` del
   entorno puesta en un valor testigo, la vista previa compila el binario de la raíz,
   levanta el dashboard en un puerto libre de `127.0.0.1` y: `/parcial/vivo/chat?video=<id>`
   termina mostrando un texto sintético del chat de ese vivo (espera máxima 30 s);
   `/parcial/resumen` contiene "Vista previa"; la API simulada nunca recibe la clave
-  testigo; al cancelar, el proceso hijo terminó, la carpeta temporal y el archivo de
+  testigo; al cancelar, el proceso hijo terminó, la carpeta de la copia y el archivo de
   estado ya no existen y los tres archivos de origen quedaron byte por byte iguales y con
   la misma fecha de modificación — se verifica con
   `go test -count=1 -run '^TestPreviewEndToEnd$' ./tools/preview/` (con `t.Skip` solo si no
   hay `go` en el `PATH`).
-- [ ] CA11: `-cortar` (la función que lo implementa) corta una vista previa en curso
-  creando el aviso de corte en su carpeta: la vista previa termina, mata al hijo, borra
-  la copia y el archivo de estado, y `-cortar` informa "Vista previa cortada y copia
-  temporal borrada". Si la vista previa ya no responde (simulado: archivo de estado que
-  apunta a una carpeta sin dueño y a un proceso auxiliar del propio test), a los 15 s
-  `-cortar` mata ese proceso y borra la carpeta él mismo. Sin vista previa, dice "No hay
-  ninguna vista previa corriendo" y sale con 0 — se verifica con
-  `go test -count=1 -run '^TestPreviewStop$' ./tools/preview/`.
-- [ ] CA12: al arrancar, si el puerto está ocupado sale con "ya hay algo escuchando en
+- [x] CA11: `-cortar` (la función que lo implementa) corta una vista previa en curso
+  creando el aviso de corte en su carpeta (en exclusiva, sin seguir enlaces): la vista
+  previa termina, mata al hijo, borra la copia y el archivo de estado, y `-cortar`
+  informa "Vista previa cortada y copia temporal borrada". Si el estado es de una vista
+  previa que ya no corre (ni el dashboard ni la vista previa usan la copia; en Linux se
+  comprueba con `/proc/<pid>/cwd`, `exe` y los archivos abiertos, así un PID reasignado
+  no cuenta), no manda el aviso, no espera ni mata a nadie: borra copia y estado y dice
+  "La vista previa ya no estaba corriendo: borré su copia temporal". Si sigue corriendo
+  y no limpia en 15 s, mata al dashboard solo si comprueba que ese PID es el dashboard de
+  la copia (Linux); si no lo puede comprobar (Windows y otros) o el que sigue es la vista
+  previa misma, no mata a nadie y lo informa con el PID. Sin vista previa, dice "No hay
+  ninguna vista previa corriendo" y sale con 0. Si el archivo de estado no es de una
+  vista previa (carpeta fuera de `yt-monitor-vista-previa-*` en la carpeta de copias,
+  JSON roto, sin PIDs, PID 1 o propio), avisa que "no es de una vista previa" y no manda
+  ninguna señal ni borra nada, ni siquiera el archivo. `-cortar` también corta una vista
+  previa que todavía compila o arranca (el estado existe desde que hay copia) — se
+  verifica con `go test -count=1 -run '^(TestPreviewStop|TestStopNeverTouchesOutside|TestPreviewSlowDashboardCancel|TestStopReusedPID|TestStopCutFileNoFollow|TestPreviewCutDuringBuild|TestStopDoesNotKillUnverifiedChild|TestPreviewStateValidAlive)$' ./tools/preview/`.
+- [x] CA12: las copias y el archivo de estado van en una carpeta privada del usuario,
+  `os.UserCacheDir()/yt-monitor-vista-previa/` (creada y corregida a `0700`; un enlace en
+  su lugar se rechaza), no en la temporal compartida (`TestPreviewDefaultTmp`). Al
+  arrancar, si el puerto está ocupado sale con "ya hay algo escuchando en
   <addr>: si es una vista previa vieja, cortala con -cortar" **sin tocar nada**; si está
-  libre y quedó un archivo de estado de una corrida muerta, borra esa copia vieja antes
-  de crear la nueva. Si `-datos` no existe, arranca con datos vacíos y lo avisa; copia
+  libre y quedó un archivo de estado de una corrida muerta (o de un PID reasignado), lo
+  borra; si el estado es de una vista previa viva en otra dirección (su dashboard o su
+  proceso siguen usando la copia), sale con "ya hay una vista previa corriendo en
+  <addr>; cortala con -cortar" sin tocar nada (`TestPreviewSecondRunKeepsLiveCopy`,
+  `TestPreviewStaleOrLiveState`). El estado se toma como lock en exclusiva apenas existe
+  la copia (temporal + `os.Link`, con `Child` 0 hasta que arranca el dashboard): de dos
+  vistas previas casi a la vez, la segunda sale con ese mismo error sin dejar nada y la
+  primera se puede cortar (`TestPreviewConcurrentRuns`, `TestCreateStateExclusive`). Con
+  el estado tomado, barre todas las copias huérfanas `yt-monitor-vista-previa-*` de la
+  carpeta privada y avisa "Borré…" solo si borró alguna (`TestPreviewSweepOrphans`,
+  `TestStaleCleanupOnlyPreviewFolders`). El temporal del estado tiene nombre al azar y no
+  sigue enlaces (`TestWriteStateNoFollow`). Si
+  el dashboard vive pero no escucha al vencer el plazo de arranque (30 s), sale con error
+  y limpia sin esperar a que el hijo termine; Ctrl+C y `-cortar` funcionan durante esa
+  espera (`TestPreviewSlowDashboardCancel`). Si `-datos` no existe, arranca con datos vacíos y lo avisa; copia
   solo los archivos que existan, en una carpeta con permisos `0700` (chequeado fuera de
-  Windows) — se verifica con `go test -count=1 -run '^TestPreviewStartup$' ./tools/preview/`.
-- [ ] CA13: si la copia de `datos.cuota.json` ya está en o sobre el tope (9.000), la vista
+  Windows) — se verifica con `go test -count=1 -run '^(TestPreviewStartup|TestPreviewDefaultTmp|TestPreviewConcurrentRuns|TestCreateStateExclusive|TestPreviewSweepOrphans|TestSweepSkipsLinksAndFiles|TestStaleCleanupOnlyPreviewFolders|TestWriteStateNoFollow|TestPreviewSlowDashboardCancel)$' ./tools/preview/`.
+- [x] CA13: si la copia de `datos.cuota.json` ya está en o sobre el tope (9.000), la vista
   previa pasa `-cuota` = unidades copiadas + 1.000 y lo avisa, para que el worker siga
   consultando la API falsa y se vean los vivos — caso en `TestPreviewStartup`.
-- [ ] CA14: verificación a mano, una vez, por la persona: con el `datos.jsonl` local,
+- [ ] CA14 (pendiente, la hace la persona): verificación a mano, una vez, por la persona: con el `datos.jsonl` local,
   `go run ./tools/preview -datos <checkout principal>/datos.jsonl`, abrir
   `http://localhost:8081`, ver los botones de vivos, el chat y los análisis en modo claro
-  y oscuro; después `go run ./tools/preview -cortar` y
-  `ls "${TMPDIR:-/tmp}" | grep -c yt-monitor-vista-previa` da `0`. La evidencia (salida
+  y oscuro; después `go run ./tools/preview -cortar`,
+  `ls "${XDG_CACHE_HOME:-$HOME/.cache}/yt-monitor-vista-previa" | grep -c yt-monitor-vista-previa-`
+  da `0` (no queda ninguna copia en la carpeta privada) y
+  `ls "${TMPDIR:-/tmp}" | grep -c yt-monitor-vista-previa` da `0` (nada en la temporal
+  compartida). La evidencia (salida
   de los dos comandos, sin datos de usuarios) va en el PR.
 
 Documentación
 
-- [ ] CA15: hay un ADR nuevo `docs/decisions/0003-tablero-consulta-github-y-vista-previa.md`
+- [x] CA15: hay un ADR nuevo `docs/decisions/0003-tablero-consulta-github-y-vista-previa.md`
   y ADR 0002 dice que lo complementa; `.claude/skills/factory/SKILL.md` tiene el paso de
   vista previa entre el 7 y el 8; CLAUDE.md y AGENTS.md mencionan la excepción de la
   vista previa y `tools/preview/` en la estructura — se verifica con
   `ls docs/decisions/0003-*.md`, `grep -n '0003' docs/decisions/0002-estado-en-archivos-y-tablero.md`,
   `grep -n 'tools/preview' CLAUDE.md AGENTS.md .claude/skills/factory/SKILL.md`.
-- [ ] Gates de `CLAUDE.md` → "Definición de terminado" en verde (`gofmt -l .` vacío,
+- [x] Gates de `CLAUDE.md` → "Definición de terminado" en verde (`gofmt -l .` vacío,
   `go vet ./...`, `staticcheck`, build Linux y Windows, `go test -race -count=1 ./...`,
-  `go test -count=5 ./...`, `govulncheck`).
+  `go test -count=5 ./...`, `govulncheck`). `govulncheck` falla solo por la stdlib de
+  Go 1.26.8 instalado (arreglo: actualizar Go a 1.26.10); hay que aclararlo en el PR.
 
 ## Diseño propuesto
 
@@ -288,24 +319,37 @@ binario de `yt-monitor`). Archivos sugeridos: `main.go` (flags, `run`, `stop`),
 2. **Arranque (`run(ctx, cfg)`)**, en este orden:
    1. Validar `-addr`. Probar que el puerto esté libre (`net.Listen` y cerrar); si no,
       salir sin tocar nada (CA12).
-   2. Si existe el archivo de estado (`os.TempDir()/yt-monitor-vista-previa.json`) de una
-      corrida muerta, borrar su carpeta (solo si el nombre empieza con
-      `yt-monitor-vista-previa-` y está dentro de `os.TempDir()`) y el archivo.
-   3. `os.MkdirTemp("", "yt-monitor-vista-previa-*")` (permisos `0700`). Copiar los
+   2. Carpeta de copias: `os.UserCacheDir()/yt-monitor-vista-previa/` (`MkdirAll` y
+      `Chmod` `0700`; si es un enlace, error), y no la temporal compartida, donde otro
+      usuario de la máquina podría plantar enlaces o estados falsos (revisión 1). Si
+      existe el archivo de estado (`<carpeta>/yt-monitor-vista-previa.json`) de una
+      vista previa viva (su dashboard o ella usan la copia: en Linux, `/proc/<pid>/cwd`,
+      `exe` o un archivo abierto dentro de la copia; en otros sistemas, que el PID
+      exista), salir con "ya hay una vista previa corriendo". Si es de una corrida
+      muerta, borrar el archivo (solo si no cambió desde que se leyó).
+   3. `os.MkdirTemp(<carpeta>, "yt-monitor-vista-previa-*")` (permisos `0700`), dejarla
+      abierta (es lo que prueba en Linux que la vista previa es dueña de ese estado) y
+      **tomar el estado como lock** con `{dir, addr, Child: 0, Self: pidPropio}`:
+      temporal con `os.CreateTemp` + `os.Link` al nombre final, que falla si ya existe
+      (sale con "ya hay una vista previa corriendo…" sin dejar nada); el temporal se
+      borra siempre. Con el lock tomado, barrer las demás carpetas
+      `yt-monitor-vista-previa-*` de primer nivel (copias huérfanas; un enlace no se
+      sigue) y avisar "Borré…" solo si borró alguna. Copiar los
       archivos de datos que existan (`io.Copy`; una última línea a medio escribir por el
       dashboard real la descarta `OpenStore` al leer). Nunca copiar nada más del repo.
    4. Si la cuota copiada está en el tope, calcular `-cuota` alto (CA13).
    5. Leer de la copia solo `ID`, `Source`, `VideoID`, `At` y `Program` de cada línea
       (struct propio: el falso nunca maneja textos ni autores) y armar la API simulada
       (CA9). Escucha en `127.0.0.1:0` con `net/http` (sin `httptest`, que es para tests).
-   6. `go build -o <copia>/yt-monitor-vista-previa[.exe] .` con `Dir = -repo`: compila la
-      rama que está en el checkout.
+   6. `go build -o <copia>/yt-monitor-vista-previa[.exe] .` con `Dir = -repo` y
+      `WaitDelay` de 2 s: compila la rama que está en el checkout. Mientras compila, una
+      goroutine mira el aviso `cortar` y cancela el build, así `-cortar` no espera a go.
    7. Lanzar el binario con `Dir = <copia>`, `-dashboard <addr>`, y un entorno sin
       `YT_API_KEY` ni `YT_BASE_URL` heredados, más `YT_API_KEY=vista-previa` y
       `YT_BASE_URL=http://127.0.0.1:<puerto del falso>`. Como el directorio de trabajo es
       la copia, el binario no encuentra el archivo de la clave del repo.
-   8. Escribir el archivo de estado (`{dir, addr, pidHijo, pidPropio}`) con temporal +
-      `os.Rename`, y loguear `Vista previa en http://<addr> (datos copiados a las HH:MM;
+   8. Anotar `Child` = PID del hijo en el estado (temporal con nombre al azar +
+      `os.Rename`) apenas arranca, esperar hasta 30 s a que escuche y loguear `Vista previa en http://<addr> (datos copiados a las HH:MM;
       no llegan mensajes nuevos). Cortala con: go run ./tools/preview -cortar`. Nada de
       mensajes, autores ni conteos por persona en el log: solo cuántos mensajes y vivos se
       copiaron.
@@ -316,9 +360,15 @@ binario de `yt-monitor`). Archivos sugeridos: `main.go` (flags, `run`, `stop`),
    borrar la carpeta ni el `.exe` de un proceso vivo), cerrar el falso, `os.RemoveAll`
    de la copia y borrar el archivo de estado. Todo en un `defer` desde el paso 3.
 4. **`-cortar` (`stop`)**: lee el archivo de estado; si no hay, "No hay ninguna vista
-   previa corriendo". Crea `<copia>/cortar` y espera hasta 15 s a que desaparezca el
-   archivo de estado. Si no desaparece (la vista previa murió sin limpiar), mata
-   `pidHijo` con `os.FindProcess` + `Kill`, borra la copia y el archivo de estado. No
+   previa corriendo". Si no es de una vista previa, no toca nada. Si ya no corre (ver
+   paso 2.2), borra copia y estado sin esperar ni matar: "La vista previa ya no estaba
+   corriendo: borré su copia temporal". Si corre, crea `<copia>/cortar` con `O_EXCL`
+   (no sigue enlaces) y espera hasta 15 s a que desaparezca el archivo de estado. Si no
+   desaparece, relee el estado y mata `Child` con `os.FindProcess` + `Kill` **solo si**
+   en Linux comprueba que su `cwd`, `exe` o un archivo abierto está dentro de la copia;
+   si no se puede comprobar (Windows, donde `FindProcess` no distingue un PID
+   reasignado) no mata: borra la copia solo si se deja borrar (nadie la usa) y si no,
+   informa el PID; si `Child` es 0 (compilando), no mata a nadie y lo informa. No
    depende de señales: no está verificado cómo corta Claude Code un comando en segundo
    plano (si manda SIGTERM al grupo, SIGKILL o nada a los nietos), y con `go run` hay
    tres procesos (go, la vista previa, el dashboard).
@@ -401,12 +451,13 @@ Alternativas descartadas (parte 2):
 
 ## Riesgos
 
-- **Privacidad (copia de datos reales).** Impacto: alto si la copia queda en `/tmp`.
-  Mitigación: carpeta `0700`, borrado en todo camino de salida, `-cortar` que no depende
-  de señales y limpieza de restos al arrancar. Se verifica con CA10, CA11, CA12 y el `ls`
+- **Privacidad (copia de datos reales).** Impacto: alto si la copia queda en una carpeta
+  compartida. Mitigación: carpeta privada `0700` en el cache del usuario (no `/tmp`),
+  copias `0700`, borrado en todo camino de salida, `-cortar` que no depende de señales y
+  barrido de copias huérfanas al arrancar. Se verifica con CA10, CA11, CA12 y el `ls`
   de CA14. Queda un caso no cubierto: si la máquina se apaga con la vista previa abierta,
-  la copia queda hasta la próxima vez que se arranque una vista previa (o hasta que el
-  sistema limpie `/tmp`); se documenta en el ADR.
+  la copia queda en la carpeta privada hasta la próxima vez que se arranque una vista
+  previa; se documenta en el ADR.
 - **Cuota y clave.** La vista previa no debe llegar a YouTube. Mitigación: entorno del
   hijo sin `YT_API_KEY`/`YT_BASE_URL` heredados, clave falsa, directorio de trabajo sin el
   archivo de la clave; CA10 comprueba que el falso nunca ve la clave testigo. `gh` en el
@@ -430,12 +481,26 @@ Alternativas descartadas (parte 2):
   Linux/WSL.
 - **`gh` sin sesión o sin instalar.** La tarjeta queda en "PR abierto" con el aviso y se
   reintenta cada 2 min, sin prompts (CA1, CA4).
-- **PID reutilizado.** `-cortar` en el camino de respaldo mata `pidHijo`; si el sistema ya
-  lo reasignó a otro proceso, mataría a ese. Mitigación: el respaldo solo corre si el
-  archivo de estado sigue ahí 15 s después del aviso, y al arrancar no se mata nada (solo
-  se borran carpetas con el puerto libre).
+- **PID reutilizado.** `-cortar` en el camino de respaldo mata `Child`; si el sistema ya
+  lo reasignó a otro proceso, mataría a ese. Mitigación: en Linux solo se mata si el PID
+  tiene el directorio de trabajo, el ejecutable o un archivo abierto dentro de la copia,
+  y la misma comprobación decide si un estado es de una vista previa viva (un PID
+  reasignado ya no bloquea). En Windows no se puede comprobar: nunca se mata de
+  respaldo y se informa el PID; un PID reasignado puede hacer que la próxima vista
+  previa diga que ya hay una corriendo: `-cortar`, a los 15 s y sin matar a nadie, borra
+  la copia si se deja borrar (en Windows no se puede borrar el `.exe` de un proceso
+  vivo, así que si se borra nadie la usaba) y destraba el estado. Esa rama no tiene test
+  (solo corre fuera de Linux).
 
 ## Preguntas abiertas
+
+Resueltas al aprobar (Julian Barbieri, 2026-10-30): se toman las recomendaciones tal
+cual. 1: aviso y queda en "PR abierto". 2: se copia la cuota con el ajuste de CA13. 3:
+solo si el diff toca el dashboard o lo que muestra. 4: sí, `rehacer` sobre un PR
+mergeado para. 5: `TestPreviewEndToEnd` siempre activo (con `-count=5` tarda unos 8 s).
+
+Verificado al implementar: `gh pr view https://github.com/julian-barbieri/chat-analytics/pull/7 --json state,mergedAt`
+devolvió `{"mergedAt":"2026-10-30T19:26:22Z","state":"MERGED"}` (gh 2.46.0).
 
 1. **PR cerrado sin merge:** ¿queda en "PR abierto" con el aviso (propuesta) o pasa a
    "Descartadas"? Recomiendo el aviso: cerrar puede ser para rehacer, y descartar lo
