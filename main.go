@@ -4,6 +4,7 @@
 package main
 
 import (
+	"context"
 	"encoding/csv"
 	"flag"
 	"fmt"
@@ -106,7 +107,7 @@ func main() {
 	if *dash != "" {
 		st, err := OpenStore("datos.jsonl")
 		check(err)
-		go RunWorker(yt, st, WorkerConfig{
+		go RunWorker(context.Background(), yt, st, WorkerConfig{
 			Channels: channels, Videos: *videos, Extra: extra, VideosEvery: 3 * time.Minute,
 			CommentsEvery: time.Duration(*comMin) * time.Minute,
 			ChatEvery:     time.Duration(*chatSeg) * time.Second, ChatPeak: time.Duration(*chatPeak) * time.Second,
