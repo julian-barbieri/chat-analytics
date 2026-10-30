@@ -1,6 +1,6 @@
 # Spec: los 5 momentos con más % de participación, gráfico legible y tabla sin scroll
 
-- **Estado:** borrador
+- **Estado:** aprobada
 - **Tipo:** mejora
 - **Rama:** `feat/top-momentos-participacion`
 - **Origen:** pedido de Julian Barbieri (textual):
@@ -16,7 +16,7 @@
   gente miraba y el %; mínimo de personas para entrar; franjas sin dato de espectadores
   afuera; tabla más simple sin scroll horizontal, con temas y ejemplos debajo de cada fila;
   gráfico más grande y legible.
-- **Aprobada por / fecha:** pendiente
+- **Aprobada por / fecha:** Julian Barbieri, 2026-10-30 ("Aprobar las dos": con las recomendaciones de las preguntas abiertas tal cual)
 
 ## Contexto
 
