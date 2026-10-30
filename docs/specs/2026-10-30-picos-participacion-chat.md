@@ -1,6 +1,6 @@
 # Spec: picos de participación del chat por franjas de 5 minutos (para reels)
 
-- **Estado:** borrador
+- **Estado:** aprobada
 - **Tipo:** mejora
 - **Rama:** `feat/picos-participacion-chat`
 - **Origen:** pedido de Julian Barbieri (textual): "Necesito que se agregue un grafico o
@@ -8,7 +8,7 @@
   miran escriben en el chat? Esos picos de participacion, me podrian dar una ayuda para
   que se puedan generar reels de ese determinado momento espacio de tiempo. dentro del
   sistema se encuentra dividido por franjas de 5 minutos."
-- **Aprobada por / fecha:** pendiente
+- **Aprobada por / fecha:** Julian Barbieri, 2026-10-30 ("Aprobar así": con las recomendaciones de las preguntas abiertas tal cual)
 
 ## Contexto
 
