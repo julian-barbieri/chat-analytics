@@ -19,7 +19,7 @@ El bot **no publica, no modera y no usa OAuth**. Cualquier cambio que requiera e
 - `go 1.24.7` en `go.mod` (se usa `min`/`max` built-in, patrones de ruta `GET /{$}` de `net/http` 1.22+, `http.FileServerFS`).
 - Templates y JS se embeben con `//go:embed`: el binario es autocontenido. Al agregar archivos en `templates/` o `static/` revisar que las directivas `//go:embed` de `server.go` los cubran (`static/` solo embebe `htmx.min.js`).
 - Frontend: `html/template` + htmx 2.0.4 vendorizado en `static/htmx.min.js` (no editarlo; no cargar nada de CDNs). CSS inline en `templates/page.html`, sin frameworks ni JS propio.
-- Plataformas objetivo: Linux y **Windows** (se compila `yt-monitor.exe` para una PC de la oficina). Por eso `main.go` importa `time/tzdata`; no sacarlo.
+- Plataformas objetivo: Linux y **Windows** (se compila `yt-monitor.exe` para una PC de la oficina). Por eso `main.go` importa `time/tzdata` (zonas del Pacífico y de Argentina); no sacarlo.
 
 ## Mapa del código
 
@@ -27,7 +27,7 @@ Todo está en el paquete `main`, en la raíz:
 
 | Archivo | Responsabilidad |
 |---|---|
-| `main.go` | Flags, carga de `.env` (`loadDotEnv`), modo informe (`report`, `writeCSV`), columnas del CSV (`csvHeader`, `csvRow`, `programOf`), arranque del modo dashboard. |
+| `main.go` | Flags, zona horaria (`setZone`, `-zona`), carga de `.env` (`loadDotEnv`), modo informe (`report`, `writeCSV`), columnas del CSV (`csvHeader`, `csvRow`, `programOf`), arranque del modo dashboard. |
 | `youtube.go` | Cliente mínimo de la API (`YouTube`): `UploadsPlaylist` (ID o @handle), `RecentVideoIDs`, `ChannelVideos`, `Videos`, `Comments`, `LiveChatPage`, `LiveChats`, `StreamChat` (chat en tiempo real). Tipos `Video`, `Message` y `ChatBatch`. Helpers `TagProgram`, `ProgramName`, `ParseVideoID`, `ParseChannel`. Cuenta cuota en `YouTube.Units`. |
 | `classify.go` | `Classify` por reglas (listas de palabras y regex), `TopWords`, `TopAuthors`, `TopPrograms`, stopwords en español. |
 | `analyze.go` | `Analyze`: los 5 análisis por vivo del dashboard (temas con `TopTopics`, preguntas, quejas técnicas con `TechIssue`, spam e insultos repetidos, filtros para YouTube Studio). `Participation` (franjas de 5 min de las últimas 24 h con mensajes, personas por `Author`, espectadores y %) y `TopMoments` (para reels: las `maxMomentos` franjas con más % de participación, con dato de espectadores y al menos `minPersonasTop` personas, separadas `minSeparacion` entre inicios; cada momento es una franja sola para que los % se comparen entre intervalos iguales). Solo reglas. |
@@ -128,7 +128,7 @@ Para ver el dashboard de una rama con los datos locales sin gastar cuota: `go ru
 - **Todo en español**: comentarios, mensajes de log, errores al usuario, textos del dashboard, nombres de flags (`-horas`, `-cuota`) y de categorías. Identificadores de Go en inglés como hasta ahora (`Store`, `Classify`, `RunWorker`). Español rioplatense con voseo en textos para el usuario ("Abrí", "ponela").
 - Código corto y directo, como el existente: funciones chicas, structs anónimos para decodificar JSON de la API, `map[string]any` para datos de templates, comentarios breves que explican el *por qué* (cuota, políticas de YouTube), no el *qué*.
 - Errores: en el modo informe, los fatales usan `check(err)`; los recuperables (video con comentarios desactivados, chat rechazado) se loguean como `aviso:` y se sigue. En el worker, nunca terminar el proceso: loguear, guardar en `SetError`/`SetChatNotes` y reintentar más tarde.
-- Fechas visibles en hora local (`t.Local()`), formato `2006-01-02 15:04` en CSV/informes y `02/01 15:04` en el dashboard. Números con separador de miles `.` vía `miles`.
+- Fechas visibles en hora local (`t.Local()`). `main` fija `time.Local` con `-zona` (por defecto `America/Argentina/Buenos_Aires`, vía `setZone`) antes de arrancar goroutines, porque la PC o WSL pueden estar en UTC: no depender de la zona del sistema. Formato `2006-01-02 15:04` en CSV/informes y `02/01 15:04` en el dashboard. Números con separador de miles `.` vía `miles`.
 - Dashboard: usar los tokens CSS existentes (`--surface-*`, `--text-*`, `--series-1`, etc.) y definir cualquier color nuevo en ambos temas. Mantener los atributos de accesibilidad (`aria-label`, `role="img"`, `<title>` en barras). `html/template` ya escapa: no usar `template.HTML` con texto de usuarios.
 
 ## Fuera de alcance sin consultar

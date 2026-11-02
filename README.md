@@ -32,7 +32,7 @@ go run . -horas 72 -videos 30  # más amplio
 go run . -chat-min 30          # además, si hay un vivo, lee su chat 30 minutos
 ```
 
-Opciones: `-canal` (uno o varios canales, ver abajo), `-videos`, `-horas`, `-chat-min`, `-salida`, `-vivos`.
+Opciones: `-canal` (uno o varios canales, ver abajo), `-videos`, `-horas`, `-chat-min`, `-salida`, `-vivos`, `-zona` (zona horaria de las horas que se muestran; por defecto `America/Argentina/Buenos_Aires`, así que da la hora argentina aunque la PC o WSL estén en UTC; `-zona ""` usa la de la PC).
 
 Los vivos del canal se detectan solos. Si alguno no aparece, se puede agregar a mano con `-vivos` (links o IDs separados por coma y **sin espacios**; si se escapa un espacio después de la coma, el monitor avisa y suma igual el link):
 
@@ -107,7 +107,7 @@ go run . -dashboard :8080 -canal UCLAj5TzCrNbqe3LosSKHLcQ,@luzutv -vivos https:/
 
 Cuesta caro: 5 unidades cada ~10 s, unas **1.800 por hora por vivo**. Con lo que queda para el chat después de videos y comentarios (~5.000 por día) alcanza para unas 2 h 45 min de tiempo real continuo; cuando se llega al tope del chat (`-cuota` menos 1.500 de reserva), se pausa el chat de **todos** los vivos, también el de Rivadavia, hasta que se reinicia la cuota (04:00 o 05:00 de Argentina). El cartel del vivo muestra cuántas unidades quedan y para cuánto tiempo alcanzan. Usalo para un programa puntual y después reinicialo sin `-tiempo-real`.
 
-Opciones: `-tiempo-real` (ver arriba), `-pico` (horario pico en hora local, por defecto `7-20`; `-pico ""` lo desactiva), `-chat-seg-pico` (segundos entre lecturas del chat en el horario pico, o mínimo entre conexiones de tiempo real), `-chat-seg` (lo mismo el resto del día), `-comentarios-min`, `-cuota`, `-videos`, `-canal`, `-vivos`.
+Opciones: `-tiempo-real` (ver arriba), `-pico` (horario pico en hora local, por defecto `7-20`; `-pico ""` lo desactiva), `-zona` (también fija la hora del horario pico), `-chat-seg-pico` (segundos entre lecturas del chat en el horario pico, o mínimo entre conexiones de tiempo real), `-chat-seg` (lo mismo el resto del día), `-comentarios-min`, `-cuota`, `-videos`, `-canal`, `-vivos`.
 
 Para dejarlo corriendo siempre: una PC o servidor de la oficina que quede prendido. En Windows, una tarea programada "Al iniciar" que ejecute `yt-monitor.exe -dashboard :8080` (se compila con `go build`). En Linux, un servicio de systemd. Solo se ve desde esa máquina; para verlo desde otras PCs de la red, usar `-dashboard 0.0.0.0:8080` (no tiene usuario ni contraseña, así que no exponerlo a internet).
 

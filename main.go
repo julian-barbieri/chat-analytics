@@ -15,8 +15,26 @@ import (
 	"sort"
 	"strings"
 	"time"
-	_ "time/tzdata" // zona horaria del Pacífico también en Windows
+	_ "time/tzdata" // zonas horarias (Pacífico, Argentina) también en Windows
 )
+
+// defaultZone es la hora de la radio. La PC donde corre (o WSL) puede estar en
+// UTC y entonces todo se vería 3 horas adelantado.
+const defaultZone = "America/Argentina/Buenos_Aires"
+
+// setZone fija la zona de time.Local, que usan el dashboard, los informes, el
+// CSV, los logs y el horario pico. Se llama antes de arrancar goroutines.
+func setZone(name string) error {
+	if name == "" {
+		return nil
+	}
+	loc, err := time.LoadLocation(name)
+	if err != nil {
+		return err
+	}
+	time.Local = loc
+	return nil
+}
 
 func main() {
 	channel := flag.String("canal", "UCLAj5TzCrNbqe3LosSKHLcQ", "IDs, @handles o links de canales separados por coma; el primero es el principal (por defecto Radio Rivadavia) y de los demás solo se siguen los vivos")
@@ -31,8 +49,12 @@ func main() {
 	peakHours := flag.String("pico", "7-20", "modo continuo: horario pico en hora local, desde-hasta (\"\" = sin horario pico)")
 	comMin := flag.Int("comentarios-min", 10, "modo continuo: minutos entre lecturas de comentarios")
 	realTime := flag.String("tiempo-real", "", "modo continuo: links o IDs de vivos con tiempo real continuo, separados por coma: se reconectan apenas YouTube corta la conexión (~1.800 unidades por hora cada uno)")
+	zone := flag.String("zona", defaultZone, "zona horaria de las horas que se muestran y del horario pico (\"\" = la de la PC)")
 	vivos := flag.String("vivos", "", "links o IDs de videos a revisar siempre, separados por coma (los vivos del canal se detectan solos)")
 	flag.Parse()
+	if err := setZone(*zone); err != nil {
+		log.Fatalf("-zona: %v", err)
+	}
 
 	// Con un espacio después de la coma ("-vivos a, b") el segundo link queda
 	// suelto y flag lo ignora sin avisar (y también todo lo que venga después):
