@@ -2022,13 +2022,14 @@ func TestLiveParticipationView(t *testing.T) {
 	if n := strings.Count(body, "<th"); n != 4 {
 		t.Errorf("v1: la tabla tiene %d columnas, quería 4", n)
 	}
-	if n := strings.Count(body, "<g><title>"); n != 288 {
-		t.Errorf("v1: %d franjas con <title>, quería 288", n)
+	// El chat de v1 empezó hace menos de 3 h: el gráfico muestra el mínimo de 3 h.
+	if n := strings.Count(body, "<g><title>"); n != minChartSlots {
+		t.Errorf("v1: %d franjas con <title>, quería %d", n, minChartSlots)
 	}
 
 	// El canal oculta el contador: gráfico de personas, aviso de YouTube y E0.
 	check("v2", get("/parcial/vivo/analisis?video=v2"), []string{
-		hidden, e0, "máx. 6 personas", "Personas que escribieron en el chat cada 5 minutos en las últimas 24 horas; máximo de 6 personas a las " + hm,
+		hidden, e0, "máx. 6 personas", "Personas que escribieron en el chat cada 5 minutos desde las ", "; máximo de 6 personas a las " + hm,
 	}, []string{"<table", `class="bar top"`, e1, e2})
 	// Tiene espectadores pero no hay muestras de esas franjas.
 	check("v3", get("/parcial/vivo/analisis?video=v3"), []string{
@@ -2392,5 +2393,182 @@ func TestLiveParticipationViewEdges(t *testing.T) {
 		if strings.Contains(page, gone) {
 			t.Errorf("CSS: queda %q", gone)
 		}
+	}
+}
+
+// TestChartWindow: el gráfico muestra las últimas 6 o 24 h, sin el tramo vacío
+// del principio y con al menos 3 h.
+func TestChartWindow(t *testing.T) {
+	cases := []struct {
+		name       string
+		hours      int
+		data       []int // franjas con chat (N) o con dato de espectadores (V)
+		viewers    bool
+		wantFirst  int
+		wantLength int
+	}{
+		{"24 h sin datos: mínimo de 3 h", 24, nil, false, 252, 36},
+		{"24 h con datos recientes: mínimo de 3 h", 24, []int{270, 280}, false, 252, 36},
+		{"24 h desde la primera con chat", 24, []int{100, 200}, false, 100, 188},
+		{"24 h con datos desde el principio", 24, []int{0}, false, 0, 288},
+		{"un dato de espectadores también cuenta", 24, []int{120}, true, 120, 168},
+		{"6 h con datos viejos: las 6 h enteras", 6, []int{0, 250}, false, 216, 72},
+		{"6 h con datos desde la mitad", 6, []int{250}, false, 250, 38},
+		{"6 h con datos recientes: mínimo de 3 h", 6, []int{280}, false, 252, 36},
+	}
+	start := time.Date(2026, 10, 29, 15, 5, 0, 0, time.UTC)
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			slots := make([]Slot, slotCount)
+			for i := range slots {
+				slots[i].Start = start.Add(time.Duration(i) * slotStep)
+			}
+			for _, i := range c.data {
+				if c.viewers {
+					slots[i].Viewers = 100
+				} else {
+					slots[i].N = 1
+				}
+			}
+			got := chartWindow(slots, c.hours)
+			if len(got) != c.wantLength || !got[0].Start.Equal(slots[c.wantFirst].Start) || !got[len(got)-1].Start.Equal(slots[287].Start) {
+				t.Errorf("ventana de %d franjas desde %v, quería %d desde la %d", len(got), got[0].Start, c.wantLength, c.wantFirst)
+			}
+		})
+	}
+	if got := chartWindow(make([]Slot, 10), 6); len(got) != 10 {
+		t.Errorf("con menos franjas que el mínimo devuelve todas: %d", len(got))
+	}
+}
+
+// TestParticipationChartWindow: rótulos de hora y marcas de un gráfico de
+// menos de 24 h.
+func TestParticipationChartWindow(t *testing.T) {
+	start := time.Date(2026, 10, 29, 15, 5, 0, 0, time.UTC)
+	hm := func(i int) string { return start.Add(time.Duration(i) * slotStep).Local().Format("15:04") }
+	near := func(a, b float64) bool { return math.Abs(a-b) < 1e-9 }
+	for _, c := range []struct {
+		n, step int
+	}{{36, 6}, {38, 6}, {48, 6}, {72, 12}, {96, 12}, {188, 24}, {288, 36}} {
+		slots := make([]Slot, c.n)
+		for i := range slots {
+			slots[i].Start = start.Add(time.Duration(i) * slotStep)
+		}
+		slots[c.n-1].N, slots[c.n-1].Authors, slots[c.n-1].Viewers, slots[c.n-1].Pct = 3, 3, 100, 3
+		ch := participationChart(slots, TopMoments(slots, nil), 1, true, nil)
+		ticks := ch["Ticks"].([]Tick)
+		if len(ticks) != c.n/c.step+1 || len(ticks) > 9 || ticks[1].Label != hm(c.step) || !near(ticks[1].Left, float64(c.step)/float64(c.n)*100) {
+			t.Errorf("%d franjas: ticks = %+v, quería uno cada %d", c.n, ticks, c.step)
+		}
+		// Solo el rótulo que cae en el borde derecho se alinea a la derecha.
+		for _, k := range ticks {
+			if k.End != near(k.Left, 100) {
+				t.Errorf("%d franjas: tick %+v con End mal puesto", c.n, k)
+			}
+		}
+		if last := ticks[len(ticks)-1]; last.End != (c.n%c.step == 0) {
+			t.Errorf("%d franjas: último tick %+v", c.n, last)
+		}
+		if ch["W"] != c.n || len(ch["Bars"].([]Bar)) != c.n {
+			t.Errorf("%d franjas: W = %v", c.n, ch["W"])
+		}
+		marks := ch["Marks"].([]Mark)
+		if len(marks) != 1 || !near(marks[0].Left, (float64(c.n)-0.5)/float64(c.n)*100) {
+			t.Errorf("%d franjas: marcas = %+v", c.n, marks)
+		}
+		aria := ch["Aria"].(string)
+		if want := "cada 5 minutos desde las " + hm(0) + " ("; c.n < slotCount && !strings.Contains(aria, want) {
+			t.Errorf("%d franjas: aria = %q, quería %q", c.n, aria, want)
+		}
+		if c.n == slotCount && !strings.Contains(aria, "en las últimas 24 horas") {
+			t.Errorf("24 h: aria = %q", aria)
+		}
+	}
+}
+
+// TestParticipationWindowView: botones de 6 y 24 h, el aviso de los momentos
+// que quedan fuera del gráfico y la ventana elegida en el refresco.
+func TestParticipationWindowView(t *testing.T) {
+	st, err := OpenStore(t.TempDir() + "/datos.jsonl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	st.SetVideos("Radio Test", []Video{{ID: "w1", Title: "RADIO en VIVO | TARDE", Channel: "Radio", LiveStatus: "live", Concurrent: 300}})
+	old := now.Truncate(slotStep).Add(-10 * time.Hour)
+	recent := now.Truncate(slotStep).Add(-30 * time.Minute)
+	var msgs []Message
+	for j := range 3 {
+		msgs = append(msgs,
+			Message{ID: fmt.Sprint("o", j), Source: "chat", VideoID: "w1", Author: fmt.Sprint("a", j), Text: "hola", At: old.Add(time.Second)},
+			Message{ID: fmt.Sprint("r", j), Source: "chat", VideoID: "w1", Author: fmt.Sprint("a", j), Text: "hola", At: recent.Add(time.Second)})
+	}
+	st.Add(msgs)
+	st.AddViewers(old.Add(time.Minute), []Video{{ID: "w1", LiveStatus: "live", Concurrent: 100}})    // 3 %: N.º 1
+	st.AddViewers(recent.Add(time.Minute), []Video{{ID: "w1", LiveStatus: "live", Concurrent: 300}}) // 1 %: N.º 2
+	h := (&Server{st: st, budget: 9000}).Routes()
+	get := func(url string) string {
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, httptest.NewRequest("GET", url, nil))
+		return w.Body.String()
+	}
+	pressed := func(hours int, on bool) string {
+		return fmt.Sprintf(`id="pwin-%d" class="vbtn" aria-pressed="%v"`, hours, on)
+	}
+	note := "fuera de este gráfico: N.º 1 del top. Tocá «Últimas 24 h» para verlo."
+	// La hora del aviso es el inicio de la ventana: puede correrse una franja si
+	// entre el test y el handler se pasó a la siguiente.
+	cut := now.Truncate(slotStep).Add(slotStep - 6*time.Hour)
+	before := func(body string) bool {
+		for _, at := range []time.Time{cut, cut.Add(slotStep)} {
+			if strings.Contains(body, "Antes de las "+at.Local().Format("15:04")+", "+note) {
+				return true
+			}
+		}
+		return false
+	}
+
+	for _, q := range []string{"", "&horas=6", "&horas=12", "&horas=x"} {
+		body := get("/parcial/vivo/analisis?video=w1" + q)
+		for _, want := range []string{`<div id="vivo-analisis" hx-get="/parcial/vivo/analisis?video=w1&horas=6" hx-trigger="every 30s" hx-swap="outerHTML">`,
+			pressed(6, true), pressed(24, false), `hx-get="/parcial/vivo/analisis?video=w1&horas=24" hx-target="#vivo-analisis" hx-swap="outerHTML"`} {
+			if !strings.Contains(body, want) {
+				t.Errorf("%q: falta %q", q, want)
+			}
+		}
+		if !before(body) {
+			t.Errorf("%q: falta el aviso %q", q, note)
+		}
+		if n := strings.Count(section6(t, body), "<g><title>"); n != 72 {
+			t.Errorf("%q: %d franjas, quería 72 (6 h)", q, n)
+		}
+	}
+
+	body := get("/parcial/vivo/analisis?video=w1&horas=24")
+	for _, want := range []string{`hx-get="/parcial/vivo/analisis?video=w1&horas=24" hx-trigger="every 30s"`, pressed(24, true), pressed(6, false)} {
+		if !strings.Contains(body, want) {
+			t.Errorf("24 h: falta %q", want)
+		}
+	}
+	if strings.Contains(body, note) {
+		t.Errorf("24 h: no debería avisar momentos fuera del gráfico")
+	}
+	// Desde la franja del chat viejo (10 h) hasta ahora: 121 franjas, o una más
+	// si entre el test y el handler se pasó a la franja siguiente.
+	if n := strings.Count(section6(t, body), "<g><title>"); n != 121 && n != 122 {
+		t.Errorf("24 h: %d franjas, quería 121", n)
+	}
+
+	// La sección del vivo pide el análisis con un lugar que se reemplaza entero
+	// (si fuera innerHTML quedarían dos #vivo-analisis anidados) y que reintenta
+	// si falla la primera carga.
+	if body := get("/parcial/vivo?video=w1"); !strings.Contains(body, `<div id="vivo-analisis" hx-get="/parcial/vivo/analisis?video=w1" hx-trigger="load, every 30s" hx-swap="outerHTML"></div>`) {
+		t.Errorf("/parcial/vivo sin el lugar del análisis: %q", body)
+	}
+
+	// Un vivo que ya no está sigue con su wrapper para volver a pedirse.
+	body = get("/parcial/vivo/analisis?video=nada&horas=24")
+	if !strings.Contains(body, `hx-get="/parcial/vivo/analisis?video=nada&horas=24"`) || !strings.Contains(body, "Este vivo ya no está en la lista de videos.") {
+		t.Errorf("vivo que ya no está: %q", body)
 	}
 }

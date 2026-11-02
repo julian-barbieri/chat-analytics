@@ -98,7 +98,7 @@
 {{define "vivo"}}
 <section id="vivo" class="card vivo" aria-label="Chat en vivo por programa">
   <div id="vivo-chat" hx-get="/parcial/vivo/chat?video={{.Video}}" hx-trigger="load, every 2s"><p class="muted">Cargando…</p></div>
-  {{if .Video}}<div id="vivo-analisis" hx-get="/parcial/vivo/analisis?video={{.Video}}" hx-trigger="load, every 30s"></div>{{end}}
+  {{if .Video}}<div id="vivo-analisis" hx-get="/parcial/vivo/analisis?video={{.Video}}" hx-trigger="load, every 30s" hx-swap="outerHTML"></div>{{end}}
 </section>
 {{end}}
 
@@ -130,7 +130,8 @@
 {{end}}
 
 {{define "vivo-analisis"}}
-{{with .}}
+<div id="vivo-analisis" hx-get="/parcial/vivo/analisis?video={{.Video}}&horas={{.Hours}}" hx-trigger="every 30s" hx-swap="outerHTML">
+{{if .Label}}
 <h2 class="vtitle">Análisis de {{.Label}} · últimas 24 h · {{miles .A.Total}} mensajes</h2>
 <div class="vgrid">
   <section class="card">
@@ -194,6 +195,10 @@
     {{else}}<p class="muted">Sin dato de cuántos miraban: el gráfico muestra personas que escribieron y no hay ranking por %{{if .Concurrent}} · {{miles .Concurrent}} mirando ahora{{end}}</p>{{end}}
     {{if not .Concurrent}}<div class="note">YouTube no informa cuántos miran este vivo (el canal oculta el contador): sin ese dato no se puede calcular el % de participación.</div>{{end}}
     {{if .Missing}}<p class="muted">Las franjas sin muestra de espectadores (de antes de que se empezaran a guardar o de cuando se cortó la revisión de videos) dicen «sin dato» y quedan fuera del ranking y de la participación típica.</p>{{end}}
+    <div class="vbtns pwin" role="group" aria-label="Horas que muestra el gráfico">
+      {{range $h := .Windows}}<button type="button" id="pwin-{{$h}}" class="vbtn" aria-pressed="{{eq $h $.Hours}}"
+        hx-get="/parcial/vivo/analisis?video={{$.Video}}&horas={{$h}}" hx-target="#vivo-analisis" hx-swap="outerHTML">Últimas {{$h}} h</button>{{end}}
+    </div>
     {{with .Chart}}
     <div class="pmax" aria-hidden="true">{{.Max}}</div>
     <div class="pmarks" aria-hidden="true">{{range .Marks}}<span style="left: {{printf "%.2f" .Left}}%">{{.Rank}}</span>{{end}}</div>
@@ -204,8 +209,9 @@
         <line x1="0" x2="{{.W}}" y1="100" y2="100" stroke="var(--grid)" vector-effect="non-scaling-stroke"></line>
       </svg>
     </div>
-    <div class="pticks" aria-hidden="true">{{range .Ticks}}<span style="left: {{printf "%.2f" .Left}}%">{{.Label}}</span>{{end}}</div>
+    <div class="pticks" aria-hidden="true">{{range .Ticks}}<span{{if .End}} class="end"{{end}} style="left: {{printf "%.2f" .Left}}%">{{.Label}}</span>{{end}}</div>
     {{end}}
+    {{if .Outside}}<p class="muted">{{.Outside}}</p>{{end}}
     {{if .Moments}}<table class="tops">
       <tr><th>Momento</th><th class="n">Mirando</th><th class="n" title="Personas distintas que escribieron en esos 5 minutos">Personas</th><th class="n"><strong>%</strong></th></tr>
       {{range .Moments}}<tr class="main">
@@ -218,8 +224,9 @@
         {{if .TopicText}}<div>Temas: {{.TopicText}}</div>{{end}}{{range .Examples}}<div class="muted"><strong>{{.Author}}</strong>: {{.Text}}</div>{{end}}</td></tr>{{end}}
     </table>{{end}}
     {{if .Why}}<p class="muted">{{.Why}}</p>{{end}}
-    <p class="muted">Franjas de 5 minutos de las últimas 24 h. Personas = nombres distintos que escribieron; mirando = lo que informa YouTube en ese momento (promedio de las lecturas de la franja). Es una aproximación: sirve para elegir qué mirar, no como medición exacta.</p>
+    <p class="muted">Franjas de 5 minutos: el ranking y la participación típica usan las últimas 24 h; el gráfico, las horas elegidas (sin el tramo del principio que no tiene datos). Personas = nombres distintos que escribieron; mirando = lo que informa YouTube en ese momento (promedio de las lecturas de la franja). Es una aproximación: sirve para elegir qué mirar, no como medición exacta.</p>
   </section>{{end}}
 </div>
 {{else}}<p class="muted">Este vivo ya no está en la lista de videos.</p>{{end}}
+</div>
 {{end}}
