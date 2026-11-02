@@ -542,6 +542,22 @@ func TestLiveChatSelection(t *testing.T) {
 	}
 }
 
+// El resumen ya no trae el gráfico de mensajes cada 5 minutos (lo pidió el usuario),
+// pero sigue mostrando las categorías.
+func TestSummaryWithoutActivityChart(t *testing.T) {
+	st, err := OpenStore(t.TempDir() + "/datos.jsonl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	st.Add([]Message{{ID: "a", Source: "chat", VideoID: "v1", Author: "Ana", Text: "hola", At: time.Now()}})
+	w := httptest.NewRecorder()
+	(&Server{st: st, budget: 9000}).Routes().ServeHTTP(w, httptest.NewRequest("GET", "/parcial/resumen", nil))
+	body := w.Body.String()
+	if w.Code != 200 || strings.Contains(body, "Mensajes cada 5 minutos") || !strings.Contains(body, "Categorías de hoy") {
+		t.Errorf("resumen (%d):\n%s", w.Code, body)
+	}
+}
+
 // streamItem arma un pedazo del streaming del chat con un mensaje.
 func streamItem(token, id, text string) string {
 	return `{"nextPageToken":"` + token + `","items":[{"id":"` + id + `","snippet":{"displayMessage":"` + text +
