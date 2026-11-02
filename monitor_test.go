@@ -2443,7 +2443,7 @@ func TestLiveParticipationViewEdges(t *testing.T) {
 			}
 		}
 	}
-	for _, want := range []string{"minmax(min(300px, 100%), 1fr)", "height: 240px", "height: 180px", ".bar.top { fill: var(--warn-text); }",
+	for _, want := range []string{"minmax(min(400px, 100%), 1fr)", "height: 240px", "height: 180px", ".bar.top { fill: var(--warn-text); }",
 		"vector-effect: non-scaling-stroke", "overflow-wrap: anywhere", ".pticks span:nth-child(even) { display: none; }"} {
 		if !strings.Contains(page, want) {
 			t.Errorf("CSS: falta %q", want)

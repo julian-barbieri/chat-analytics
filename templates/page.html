@@ -103,8 +103,9 @@ td.n, th.n { text-align: right; font-variant-numeric: tabular-nums; }
 .vbtn[aria-pressed="true"] { background: var(--live); border-color: var(--live); color: var(--on-live); }
 .vfeed { max-height: 360px; margin-bottom: 16px; }
 .vtitle { margin-top: 8px; }
-/* min(300px, 100%): en un celular de 360 px la columna de 300 desbordaba la tarjeta */
-.vgrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(300px, 100%), 1fr)); gap: 12px; }
+/* 400px: con el ancho máximo de main entran 2 por fila y las 4 tarjetas quedan en 2x2, sin huecos;
+   min(…, 100%) para que en un celular la columna no desborde la tarjeta. */
+.vgrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(400px, 100%), 1fr)); gap: 12px; }
 .vgrid .card { background: var(--surface-0); }
 .catrow.wide { grid-template-columns: minmax(0, 40%) 1fr 44px; }
 .catrow.wide span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
