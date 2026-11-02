@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"flag"
 	"fmt"
 	"io"
 	"math"
@@ -2591,7 +2592,13 @@ func TestParticipationWindowView(t *testing.T) {
 
 // La PC (o WSL) puede estar en UTC: sin fijar la zona, el dashboard, los
 // informes y el horario pico quedaban 3 horas adelantados respecto de Argentina.
+// No puede ser paralelo (ni convivir con tests paralelos): modifica time.Local.
 func TestSetZone(t *testing.T) {
+	fs := flag.NewFlagSet("test", flag.ContinueOnError)
+	if z := zoneFlag(fs); fs.Parse(nil) != nil || *z != "America/Argentina/Buenos_Aires" {
+		t.Errorf("-zona por defecto = %q, quería America/Argentina/Buenos_Aires", *z)
+	}
+
 	orig := time.Local
 	t.Cleanup(func() { time.Local = orig })
 	time.Local = time.UTC

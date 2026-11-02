@@ -32,7 +32,7 @@ go run . -horas 72 -videos 30  # más amplio
 go run . -chat-min 30          # además, si hay un vivo, lee su chat 30 minutos
 ```
 
-Opciones: `-canal` (uno o varios canales, ver abajo), `-videos`, `-horas`, `-chat-min`, `-salida`, `-vivos`, `-zona` (zona horaria de las horas que se muestran; por defecto `America/Argentina/Buenos_Aires`, así que da la hora argentina aunque la PC o WSL estén en UTC; `-zona ""` usa la de la PC).
+Opciones: `-canal` (uno o varios canales, ver abajo), `-videos`, `-horas`, `-chat-min`, `-salida`, `-vivos`, `-zona` (zona horaria de las horas que se muestran; por defecto `America/Argentina/Buenos_Aires`, así que da la hora argentina aunque la PC o WSL estén en UTC; `-zona ""` usa la de la PC o la de la variable `TZ`).
 
 Los vivos del canal se detectan solos. Si alguno no aparece, se puede agregar a mano con `-vivos` (links o IDs separados por coma y **sin espacios**; si se escapa un espacio después de la coma, el monitor avisa y suma igual el link):
 

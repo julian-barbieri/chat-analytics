@@ -27,8 +27,9 @@ Que el binario use la hora de Argentina por defecto, sin depender de la zona del
 - [x] CA2: el horario pico se evalúa en hora argentina: 21:30 UTC (18:30) queda dentro
   de `7-20` — `TestSetZone`.
 - [x] CA3: `-zona ""` deja la zona del sistema y una zona inexistente es un error —
-  `TestSetZone` y `go run . -zona Marte/X` termina con `-zona: unknown time zone Marte/X`.
+  `TestSetZone` y `go run . -zona Marte/X` termina con `-zona: no conozco la zona "Marte/X" (…)`.
 - [x] CA4: README (opciones de ambos modos) y AGENTS.md documentan `-zona`.
+- [x] CA5: el valor por defecto de `-zona` es `America/Argentina/Buenos_Aires` — `TestSetZone` (vía `zoneFlag`).
 - [x] Gates de `CLAUDE.md` → "Definición de terminado" en verde.
 
 ## Diseño propuesto
@@ -43,6 +44,8 @@ Que el binario use la hora de Argentina por defecto, sin depender de la zona del
 
 ## Fuera de alcance
 
+- `tools/preview` y `tools/factory-board` también usan la zona del sistema: sus horas
+  siguen en UTC en WSL. Queda para otra tarea.
 - Datos ya guardados: se guardan con su instante (`time.Time` con zona), así que se
   muestran bien sin migrar nada.
 
