@@ -2005,6 +2005,11 @@ func TestParticipationChartViewers(t *testing.T) {
 		if l.Aria != want || l.Max != "máx. 2.000 mirando" {
 			t.Errorf("24 h: aria = %q, rótulo %q", l.Aria, l.Max)
 		}
+		// Una sola franja sin dato: en singular.
+		delete(all, 7)
+		if l = line(t, chart(window(slotCount, all))); !strings.HasSuffix(l.Aria, "; sin dato en 1 franja") {
+			t.Errorf("1 franja sin dato: aria = %q", l.Aria)
+		}
 	})
 
 	t.Run("empate", func(t *testing.T) {

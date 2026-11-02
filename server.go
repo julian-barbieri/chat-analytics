@@ -508,7 +508,10 @@ func viewersLine(slots []Slot, span string) (ViewersLine, bool) {
 	}
 	aria := fmt.Sprintf("Cuántos miraban el vivo cada 5 minutos %s (promedio de lo que informa YouTube); máximo de %s a las %s",
 		span, miles(peak.Viewers), peak.Start.Local().Format("15:04"))
-	if missing > 0 {
+	switch {
+	case missing == 1:
+		aria += "; sin dato en 1 franja"
+	case missing > 1:
 		aria += fmt.Sprintf("; sin dato en %d franjas", missing)
 	}
 	return ViewersLine{Path: path.String(), Max: "máx. " + miles(peak.Viewers) + " mirando", Aria: aria}, true
