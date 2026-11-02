@@ -1,6 +1,6 @@
 # Spec: capturar Super Chats y Super Stickers del chat en vivo
 
-- **Estado:** aprobada
+- **Estado:** implementada
 - **Tipo:** mejora
 - **Rama:** `feat/super-chats`
 - **Origen:** pedido de Julian Barbieri (2026-11-02): "Capturar los Super Chats y Super
@@ -78,7 +78,7 @@ solo con campos que ya existen (que un Super Sticker con `displayMessage` vacío
 el resultado: hoy se descarta) y guardar esa salida para el PR; después sumar las
 afirmaciones sobre los campos nuevos.
 
-- [ ] CA1 (decodificación): `chatPage.messages` sobre una respuesta con estos items
+- [x] CA1 (decodificación): `chatPage.messages` sobre una respuesta con estos items
   devuelve, en orden:
   1. `textMessageEvent` "Grande Nelson" → `Message` igual al de hoy (`Super == ""`,
      monto, moneda, nivel y sticker en cero, `Text == "Grande Nelson"`).
@@ -104,7 +104,7 @@ afirmaciones sobre los campos nuevos.
 
   Además `Classify(m.Text)` del item 2 es `elogio`. — se verifica con
   `go test -count=1 -run '^TestChatPageSuper$' ./...`.
-- [ ] CA1b (el monto en el texto no cambia la categoría): como `Text` sale de
+- [x] CA1b (el monto en el texto no cambia la categoría): como `Text` sale de
   `displayMessage`, que podría traer el monto, `TestClassify` suma casos con montos
   plausibles delante del comentario y comprueba que la categoría es la del comentario
   solo: por ejemplo "ARS 5.000,00 Grande Nelson" → `elogio`, "US$ 1,000.00 ¿Vuelve el
@@ -112,7 +112,7 @@ afirmaciones sobre los campos nuevos.
   espacio que podría caer en `rePhone`), "ARS 500,00" solo → `otro`. Si alguno falla, se
   ajusta `Classify` lo mínimo y se cubre el falso positivo. — se verifica con
   `go test -count=1 -run '^TestClassify$' ./...`.
-- [ ] CA2 (mismos endpoints, sin cuota extra): el servidor falso de
+- [x] CA2 (mismos endpoints, sin cuota extra): el servidor falso de
   `TestFlowAgainstFakeAPI` devuelve además un `superChatEvent` en `/liveChat/messages`;
   `LiveChats` lo entrega con `Super == "superchat"`, monto y `Program` anotado, y el
   chequeo existente `yt.Units == 2+1+2+1+1+2*5` no cambia. En `TestStreamChat` un pedazo
@@ -120,7 +120,7 @@ afirmaciones sobre los campos nuevos.
   `ChatBatch.Msgs` con sus datos; `yt.Units` sigue en 0 y el primer `ChatBatch.Units` en
   5. — se verifica con
   `go test -count=1 -run '^(TestFlowAgainstFakeAPI|TestStreamChat)$' ./...`.
-- [ ] CA3 (compatibilidad de `datos.jsonl`): en `TestStoreSuper`, con un `Store` en
+- [x] CA3 (compatibilidad de `datos.jsonl`): en `TestStoreSuper`, con un `Store` en
   `t.TempDir()`:
   - `json.Marshal` de un `Message` común produce exactamente las claves de hoy (`ID`,
     `Source`, `VideoID`, `Author`, `Text`, `At`, `Likes`, `Replies`, `Program`) y ninguna
@@ -137,7 +137,7 @@ afirmaciones sobre los campos nuevos.
 
   — se verifica con `go test -count=1 -run '^TestStoreSuper$' ./...` y con
   `TestStoreDedupAndRetention` sin cambios.
-- [ ] CA4 (CSV): `csvHeader` tiene 15 columnas; las 9 primeras son exactamente
+- [x] CA4 (CSV): `csvHeader` tiene 15 columnas; las 9 primeras son exactamente
   `fuente, fecha, video, programa, autor, categoria, likes, respuestas, texto` y las 6
   nuevas van **al final**: `pago, monto, moneda, monto_youtube, nivel, sticker`. Para un
   mensaje común las 6 nuevas son `""`. Para un Super Chat de 5.500.000 micros en ARS,
@@ -148,7 +148,7 @@ afirmaciones sobre los campos nuevos.
   `Classify(m.Text)` como hoy. — se verifica con
   `go test -count=1 -run '^TestCSVSuper$' ./...` (llama a `csvRow` y a `GET /export.csv`
   con `httptest`).
-- [ ] CA5 (totales): una función pura `Supers(msgs []Message, titles map[string]string)`
+- [x] CA5 (totales): una función pura `Supers(msgs []Message, titles map[string]string)`
   en `analyze.go` devuelve, sobre los mensajes con `Super != ""`:
   - `ByCurrency`: por moneda, cantidad y suma de `AmountMicros` como `int64`, **sin
     convertir** (ARS y USD quedan en filas separadas); orden: más cantidad primero, después
@@ -164,7 +164,7 @@ afirmaciones sobre los campos nuevos.
   `ByProgram == [{LA MAÑANA, ARS, 2, 7500000}, {LA MAÑANA, USD, 1, 1990000},
   {LA TARDE, ARS, 1, 1000000}]`; con 12 pagos, `Last` tiene 10. — se verifica con
   `go test -count=1 -run '^TestSupers$' ./...`.
-- [ ] CA6 (tarjeta del dashboard): `GET /parcial/vivo/analisis?video=<vivo>` con un
+- [x] CA6 (tarjeta del dashboard): `GET /parcial/vivo/analisis?video=<vivo>` con un
   `Store` armado en el test incluye la tarjeta **"6. Super Chats y Super Stickers"** con:
   la tabla por moneda (`Moneda`, `Cantidad`, `Total`), la tabla por programa (`Programa`,
   `Moneda`, `Cantidad`, `Total`), la lista de los últimos (hora `02/01 15:04`, autor, tipo,
@@ -175,18 +175,18 @@ afirmaciones sobre los campos nuevos.
   pago de otro vivo o de hace 25 h no aparece). Sin pagos en la ventana, la tarjeta dice
   "Sin Super Chats ni Super Stickers en las últimas 24 h." Un comentario con `<b>` sale
   escapado. — se verifica con `go test -count=1 -run '^TestLiveAnalysisSuper$' ./...`.
-- [ ] CA7 (feed del chat): en `GET /parcial/vivo/chat?video=<vivo>`, la fila de un Super
+- [x] CA7 (feed del chat): en `GET /parcial/vivo/chat?video=<vivo>`, la fila de un Super
   Chat lleva, además del badge de categoría, un badge `class="badge super"` con
   "Super Chat · <AmountText>"; la de un Super Sticker sin texto muestra
   "Super Sticker · <AmountText>" y "Super Sticker: <altText>" en lugar del texto vacío. Las
   filas comunes no cambian. — se verifica con
   `go test -count=1 -run '^TestLiveChatSuper$' ./...`.
-- [ ] CA8 (sin ejemplos vacíos en momentos): `newMoment` (`analyze.go:379`) no elige como
+- [x] CA8 (sin ejemplos vacíos en momentos): `newMoment` (`analyze.go:379`) no elige como
   ejemplo un mensaje con `Text` vacío (Super Sticker o Super Chat sin comentario), aunque
   la franja no tenga temas. Los stickers sí cuentan en mensajes y personas de la franja
   (es participación). — se verifica con un caso nuevo en
   `go test -count=1 -run '^TestTopMomentsEdges$' ./...`.
-- [ ] CA9 (cuota sin cambios): no hay llamadas nuevas a la API ni cambios de costo:
+- [x] CA9 (cuota sin cambios): no hay llamadas nuevas a la API ni cambios de costo:
   `git diff main --stat` no lista `worker.go`, `chatParams` y los `cost` pasados a `get`
   no cambian (`git diff main -- youtube.go` solo toca `Message`, `chatPage` y
   `chatPage.messages` más el helper de enteros), y los chequeos de unidades de
@@ -194,7 +194,7 @@ afirmaciones sobre los campos nuevos.
   sus números. Las cifras de cuota del README no cambian. — se verifica con
   `go test -count=1 -run '^(TestFlowAgainstFakeAPI|TestStreamChat|TestWorkerStreamsChat)$' ./...`
   y revisando `git diff main -- youtube.go worker.go` en el PR.
-- [ ] CA10 (README): `README.md` describe la tarjeta nueva en la lista de secciones del
+- [x] CA10 (README): `README.md` describe la tarjeta nueva en la lista de secciones del
   análisis del vivo, las 6 columnas nuevas del CSV (al final, vacías en mensajes comunes),
   que el monto es bruto y sin convertir, y que los pagos se cuentan desde que se actualiza
   el monitor. — se verifica con `grep -n 'monto_youtube' README.md` y
@@ -203,7 +203,7 @@ afirmaciones sobre los campos nuevos.
   y en ancho de celular (≤ 600 px), con los colores nuevos definidos en ambos temas. Lo
   verifica la persona cuando haya capturas reales (decidido al aprobar): en el PR queda
   marcado como pendiente.
-- [ ] CA12 (informe Markdown): `report(...)` (`main.go:245`, devuelve el `.md` como
+- [x] CA12 (informe Markdown): `report(...)` (`main.go:245`, devuelve el `.md` como
   string) incluye una sección "## Super Chats y Super Stickers" con los totales por moneda
   y por programa de `Supers` sobre los mensajes del informe (mismo formato de montos que el
   dashboard, `8.500,00`), la cantidad de pagos y la nota de monto bruto. Sin pagos, la
@@ -211,7 +211,7 @@ afirmaciones sobre los campos nuevos.
   no cambia el resto del texto. — se verifica con
   `go test -count=1 -run '^TestReportSuper$' ./...`, que llama a `report` con mensajes
   armados en el test (sin red ni archivos).
-- [ ] Gates de `CLAUDE.md` → "Definición de terminado" en verde: `gofmt -l .` vacío,
+- [x] Gates de `CLAUDE.md` → "Definición de terminado" en verde: `gofmt -l .` vacío,
   `go vet ./...`, `staticcheck`, `go build ./...` y
   `GOOS=windows GOARCH=amd64 go build ./...`, `go test -race -count=1 ./...` y
   `go test -count=5 ./...`.

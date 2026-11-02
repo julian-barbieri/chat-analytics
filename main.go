@@ -223,14 +223,38 @@ func writeCSV(path string, msgs []Message, vids []Video) error {
 	return w.Error()
 }
 
-// Columnas del CSV para Claude; las usan el informe y el dashboard.
-var csvHeader = []string{"fuente", "fecha", "video", "programa", "autor", "categoria", "likes", "respuestas", "texto"}
+// Columnas del CSV para Claude; las usan el informe y el dashboard. Las de
+// Super Chats van al final para no correr las que ya se leían por posición.
+var csvHeader = []string{"fuente", "fecha", "video", "programa", "autor", "categoria", "likes", "respuestas", "texto",
+	"pago", "monto", "moneda", "monto_youtube", "nivel", "sticker"}
 
 func csvRow(m Message, titles map[string]string) []string {
-	return []string{
+	row := []string{
 		m.Source, m.At.Local().Format("2006-01-02 15:04"), titles[m.VideoID], programOf(m, titles), m.Author,
 		Classify(m.Text), fmt.Sprint(m.Likes), fmt.Sprint(m.Replies), m.Text,
 	}
+	if m.Super == "" {
+		return append(row, "", "", "", "", "", "")
+	}
+	tier := ""
+	if m.Tier != 0 {
+		tier = fmt.Sprint(m.Tier)
+	}
+	return append(row, m.Super, csvAmount(m.AmountMicros), m.Currency, m.AmountText, tier, m.Sticker)
+}
+
+// csvAmount escribe micros como decimal exacto con punto y sin ceros de más
+// (1990000 → "1.99"). Se arma con enteros para no arrastrar errores de float64.
+func csvAmount(micros int64) string {
+	sign := ""
+	if micros < 0 {
+		sign, micros = "-", -micros
+	}
+	whole, frac := micros/1_000_000, micros%1_000_000
+	if frac == 0 {
+		return fmt.Sprintf("%s%d", sign, whole)
+	}
+	return fmt.Sprintf("%s%d.%s", sign, whole, strings.TrimRight(fmt.Sprintf("%06d", frac), "0"))
 }
 
 // programOf devuelve el programa de un mensaje de chat ("" para comentarios).
@@ -299,6 +323,8 @@ func report(channel string, vids []Video, msgs []Message, since time.Time, units
 		p("- %s: %d\n", c.Key, c.N)
 	}
 
+	reportSupers(p, Supers(msgs, videoTitles(vids)))
+
 	for _, c := range []string{CatPregunta, CatQueja, CatInsulto, CatSpam} {
 		list := byCat[c]
 		if len(list) == 0 {
@@ -315,6 +341,29 @@ func report(channel string, vids []Video, msgs []Message, since time.Time, units
 		}
 	}
 	return b.String()
+}
+
+// reportSupers escribe la sección de Super Chats del informe, con los mismos
+// totales y formato de montos que el dashboard.
+func reportSupers(p func(string, ...any), sum SuperSummary) {
+	p("\n## Super Chats y Super Stickers\n\n")
+	if len(sum.ByCurrency) == 0 {
+		p("Sin Super Chats ni Super Stickers en este período.\n")
+		return
+	}
+	n := 0
+	for _, c := range sum.ByCurrency {
+		n += c.N
+	}
+	p("Pagos: **%d**. %s\n\n", n, superNote)
+	p("| Moneda | Cantidad | Total |\n|---|---|---|\n")
+	for _, c := range sum.ByCurrency {
+		p("| %s | %d | %s |\n", esc(currencyLabel(c.Currency)), c.N, money(c.Micros))
+	}
+	p("\n| Programa | Moneda | Cantidad | Total |\n|---|---|---|---|\n")
+	for _, c := range sum.ByProgram {
+		p("| %s | %s | %d | %s |\n", esc(programLabel(c.Program)), esc(currencyLabel(c.Currency)), c.N, money(c.Micros))
+	}
 }
 
 func oneLine(s string) string {

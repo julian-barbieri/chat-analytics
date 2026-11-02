@@ -69,11 +69,12 @@
   {{range .Rows}}<li>
     <div class="meta">
       <span class="badge {{.Cat}}">{{.CatLabel}}</span>
+      {{if .SuperLabel}}<span class="badge super">{{.SuperLabel}} · {{.AmountText}}</span>{{end}}
       <strong>{{.Author}}</strong>
       <span>{{hora .At}}</span>
       {{if .Program}}<span>· {{.Program}}</span>{{end}}
     </div>
-    <div>{{.Text}}</div>
+    <div>{{if .Text}}{{.Text}}{{else if .Sticker}}Super Sticker: {{.Sticker}}{{end}}</div>
   </li>{{end}}
 </ul>
 {{else}}<p class="muted">No hay vivos en este momento. Cuando empiece uno, aparece acá solo.</p>{{end}}
@@ -171,6 +172,26 @@
     </table>{{end}}
     {{if .Why}}<p class="muted">{{.Why}}</p>{{end}}
     <p class="muted">Franjas de 5 minutos: el ranking y la participación típica usan las últimas 24 h; el gráfico, las horas elegidas (sin el tramo del principio que no tiene datos). Personas = nombres distintos que escribieron; mirando = lo que informa YouTube en ese momento (promedio de las lecturas de la franja). Es una aproximación: sirve para elegir qué mirar, no como medición exacta.</p>
+  </section>{{end}}
+
+  {{with .Super}}<section class="card full supers" aria-label="Super Chats y Super Stickers de las últimas 24 h">
+    <h2>6. Super Chats y Super Stickers</h2>
+    {{if .ByCurrency}}
+    <table>
+      <tr><th>Moneda</th><th class="n">Cantidad</th><th class="n">Total</th></tr>
+      {{range .ByCurrency}}<tr><td>{{.Currency}}</td><td class="n">{{miles .N}}</td><td class="n">{{.Total}}</td></tr>{{end}}
+    </table>
+    <table>
+      <tr><th>Programa</th><th>Moneda</th><th class="n">Cantidad</th><th class="n">Total</th></tr>
+      {{range .ByProgram}}<tr><td>{{.Program}}</td><td>{{.Currency}}</td><td class="n">{{miles .N}}</td><td class="n">{{.Total}}</td></tr>{{end}}
+    </table>
+    <p class="muted sub">Últimos pagos:</p>
+    <ul class="qlist">{{range .Last}}<li>
+      <div class="meta">{{fecha .At}} · <strong>{{.Author}}</strong> · <span class="badge super">{{.Kind}} · {{.Amount}}</span></div>
+      <div>{{if .Text}}{{.Text}}{{else}}<span class="muted">Sin comentario.</span>{{end}}</div>
+    </li>{{end}}</ul>
+    {{else}}<p class="muted">Sin Super Chats ni Super Stickers en las últimas 24 h.</p>{{end}}
+    <p class="muted">{{.Note}} Se cuentan desde que se actualizó el monitor para guardarlos.</p>
   </section>{{end}}
 </div>
 {{else}}<p class="muted">Este vivo ya no está en la lista de videos.</p>{{end}}
