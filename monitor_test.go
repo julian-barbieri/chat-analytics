@@ -9,6 +9,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"regexp"
+	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -1835,11 +1838,11 @@ func TestParticipationChart(t *testing.T) {
 			}
 		}
 		titles := map[int]string{
-			10:  " · 2 mensajes · 2 personas · menos de 3 personas: no entra en el ranking",
+			10:  " · 2 mensajes · 2 personas · 10 mirando (20,0 %) · menos de 3 personas: no entra en el ranking",
 			20:  " · 6 mensajes · 6 personas · sin dato de espectadores",
 			100: " · 5 mensajes · 5 personas · 100 mirando (5,0 %) · N.º 1 de los 5 con más participación",
 			200: " · 3 mensajes · 3 personas · 150 mirando (2,0 %) · N.º 2 de los 5 con más participación",
-			250: " · 0 mensajes · 0 personas · menos de 3 personas: no entra en el ranking",
+			250: " · 0 mensajes · 0 personas · 80 mirando (0,0 %) · menos de 3 personas: no entra en el ranking",
 			0:   " · 0 mensajes · 0 personas · sin dato de espectadores",
 		}
 		for i, want := range titles {
@@ -1932,6 +1935,301 @@ func TestParticipationChart(t *testing.T) {
 			t.Errorf("sin franjas: %q", c["Aria"])
 		}
 	})
+}
+
+// TestParticipationChartViewers: el panel de oyentes arriba de las barras,
+// con escalones cortados donde no hay dato, escala propia, rótulo y aria.
+func TestParticipationChartViewers(t *testing.T) {
+	start := time.Date(2026, 10, 29, 15, 5, 0, 0, time.UTC)
+	hm := func(i int) string { return start.Add(time.Duration(i) * slotStep).Local().Format("15:04") }
+	// window arma n franjas; las de viewers tienen ese dato y 3 personas.
+	window := func(n int, viewers map[int]int64) []Slot {
+		out := make([]Slot, n)
+		for i := range out {
+			out[i].Start = start.Add(time.Duration(i) * slotStep)
+			if v := viewers[i]; v > 0 {
+				out[i].N, out[i].Authors, out[i].Viewers = 3, 3, v
+				out[i].Pct = 3 / float64(v) * 100
+			}
+		}
+		return out
+	}
+	chart := func(slots []Slot) map[string]any {
+		return participationChart(slots, TopMoments(slots, nil), 1, true, nil)
+	}
+	line := func(t *testing.T, c map[string]any) ViewersLine {
+		t.Helper()
+		l, ok := c["Viewers"].(ViewersLine)
+		if !ok {
+			t.Fatalf("sin panel de oyentes: %#v", c["Viewers"])
+		}
+		return l
+	}
+
+	t.Run("escalones y cortes", func(t *testing.T) {
+		cases := []struct {
+			n       int
+			viewers map[int]int64
+			want    string
+		}{
+			{36, map[int]int64{2: 100, 3: 200, 5: 50}, "M2 50.00H3V0.00H4M5 75.00H6"},
+			// Franja aislada al principio y tramo hasta el borde derecho.
+			{36, map[int]int64{0: 10, 34: 20, 35: 20}, "M0 50.00H1M34 0.00H35V0.00H36"},
+			{72, map[int]int64{71: 3}, "M71 0.00H72"},
+		}
+		for _, c := range cases {
+			if got := line(t, chart(window(c.n, c.viewers))).Path; got != c.want {
+				t.Errorf("%v: Path = %q, quería %q", c.viewers, got, c.want)
+			}
+		}
+	})
+
+	t.Run("miles y aria", func(t *testing.T) {
+		l := line(t, chart(window(36, map[int]int64{4: 1573, 9: 1000, 20: 1573})))
+		if l.Max != "máx. 1.573 mirando" {
+			t.Errorf("rótulo = %q", l.Max)
+		}
+		want := "Cuántos miraban el vivo cada 5 minutos desde las " + hm(0) +
+			" (promedio de lo que informa YouTube); máximo de 1.573 a las " + hm(4) + "; sin dato en 33 franjas"
+		if l.Aria != want {
+			t.Errorf("aria = %q, quería %q", l.Aria, want)
+		}
+		// 24 h con dato en todas: el mismo span que las barras y sin franjas sin dato.
+		all := map[int]int64{}
+		for i := range slotCount {
+			all[i] = 500
+		}
+		all[100] = 2000
+		l = line(t, chart(window(slotCount, all)))
+		want = "Cuántos miraban el vivo cada 5 minutos en las últimas 24 horas (promedio de lo que informa YouTube); máximo de 2.000 a las " + hm(100)
+		if l.Aria != want || l.Max != "máx. 2.000 mirando" {
+			t.Errorf("24 h: aria = %q, rótulo %q", l.Aria, l.Max)
+		}
+	})
+
+	t.Run("empate", func(t *testing.T) {
+		l := line(t, chart(window(72, map[int]int64{10: 500, 11: 500, 50: 500})))
+		if !strings.Contains(l.Aria, "; máximo de 500 a las "+hm(10)+";") {
+			t.Errorf("aria = %q, quería la primera franja (%s)", l.Aria, hm(10))
+		}
+		if l.Path != "M10 0.00H11V0.00H12M50 0.00H51" {
+			t.Errorf("Path = %q", l.Path)
+		}
+	})
+
+	t.Run("sin dato", func(t *testing.T) {
+		people := window(36, nil)
+		people[5].N, people[5].Authors = 4, 4
+		// Las mismas claves que antes del panel: el resto del gráfico no cambia.
+		keys := func(c map[string]any) string {
+			var ks []string
+			for k := range c {
+				ks = append(ks, k)
+			}
+			sort.Strings(ks)
+			return strings.Join(ks, " ")
+		}
+		withData := window(36, map[int]int64{3: 100})
+		for name, c := range map[string]map[string]any{
+			"modo personas":              participationChart(people, nil, 0, false, nil),
+			"modo personas con muestras": participationChart(withData, nil, 0, false, nil),
+			"ventana sin muestras":       chart(window(36, nil)),
+			"sin franjas":                participationChart(nil, nil, 0, true, nil),
+		} {
+			if v, has := c["Viewers"]; has {
+				t.Errorf("%s: no debería haber panel: %#v", name, v)
+			}
+		}
+		if got := keys(participationChart(people, nil, 0, false, nil)); got != "Aria Bars ByPct Marks Max Ticks W" {
+			t.Errorf("modo personas: claves %q", got)
+		}
+		if got := keys(chart(window(36, nil))); got != "Aria Bars ByPct Marks Max Ticks TypicalY W" {
+			t.Errorf("ventana sin muestras: claves %q", got)
+		}
+		if got := keys(chart(withData)); got != "Aria Bars ByPct Marks Max Ticks TypicalY Viewers W" {
+			t.Errorf("con muestras: claves %q", got)
+		}
+	})
+
+	t.Run("dentro del viewBox", func(t *testing.T) {
+		tok := regexp.MustCompile(`([A-Z])([^A-Z]*)`)
+		for _, n := range []int{36, 72, 288} {
+			viewers := map[int]int64{}
+			for i := range n {
+				if i%7 != 3 && i%11 != 5 { // huecos sin dato
+					viewers[i] = int64(1 + i*37%1500)
+				}
+			}
+			p := line(t, chart(window(n, viewers))).Path
+			if strings.ContainsAny(p, "LlZz") {
+				t.Errorf("%d franjas: Path con L o Z: %q", n, p)
+			}
+			if rest := tok.ReplaceAllString(p, ""); rest != "" {
+				t.Errorf("%d franjas: Path con basura %q", n, rest)
+			}
+			num := func(s string) float64 {
+				f, err := strconv.ParseFloat(s, 64)
+				if err != nil || math.IsNaN(f) || math.IsInf(f, 0) {
+					t.Errorf("%d franjas: número %q inválido", n, s)
+				}
+				return f
+			}
+			checkX := func(x float64) {
+				if x < 0 || x > float64(n) || x != math.Trunc(x) {
+					t.Errorf("%d franjas: x = %v fuera de [0, %d] o no entero", n, x, n)
+				}
+			}
+			checkY := func(y float64) {
+				if y < 0 || y > 100 {
+					t.Errorf("%d franjas: y = %v fuera de [0, 100]", n, y)
+				}
+			}
+			segments := 0
+			for _, m := range tok.FindAllStringSubmatch(p, -1) {
+				switch m[1] {
+				case "M":
+					xy := strings.Fields(m[2])
+					if len(xy) != 2 {
+						t.Fatalf("%d franjas: M %q", n, m[2])
+					}
+					checkX(num(xy[0]))
+					checkY(num(xy[1]))
+					segments++
+				case "H":
+					checkX(num(m[2]))
+				case "V":
+					checkY(num(m[2]))
+				default:
+					t.Errorf("%d franjas: comando %q", n, m[1])
+				}
+			}
+			// Un tramo por cada franja con dato que viene después de una sin dato.
+			want := 0
+			for i := range n {
+				if viewers[i] > 0 && (i == 0 || viewers[i-1] == 0) {
+					want++
+				}
+			}
+			if segments != want {
+				t.Errorf("%d franjas: %d tramos, quería %d", n, segments, want)
+			}
+		}
+	})
+}
+
+// TestParticipationViewersView: el panel de oyentes en la tarjeta 6 del
+// parcial, con el selector de 6 y 24 h y los vivos sin dato.
+func TestParticipationViewersView(t *testing.T) {
+	st, err := OpenStore(t.TempDir() + "/datos.jsonl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	st.SetVideos("Radio Test", []Video{
+		{ID: "o1", Title: "RADIO en VIVO | MAÑANA", Channel: "Radio", LiveStatus: "live", Concurrent: 1573},
+		{ID: "o2", Title: "VIEJO en VIVO", Channel: "Viejo", LiveStatus: "live", Concurrent: 300},
+		{ID: "o3", Title: "PICO en VIVO", Channel: "Pico", LiveStatus: "live", Concurrent: 200},
+		{ID: "o4", Title: "Nuevo en VIVO", Channel: "Nuevo", LiveStatus: "live", Concurrent: 80},
+		{ID: "o5", Title: "Oculto en VIVO", Channel: "Oculto", LiveStatus: "live"},
+	})
+	recent := now.Truncate(slotStep).Add(-30 * time.Minute)
+	old := now.Truncate(slotStep).Add(-10 * time.Hour)
+	var msgs []Message
+	chat := func(id string, at time.Time) {
+		for j := range 3 {
+			msgs = append(msgs, Message{ID: fmt.Sprint(id, at.Unix(), "-", j), Source: "chat", VideoID: id,
+				Author: fmt.Sprint("a", j), Text: "hola", At: at.Add(time.Duration(j+1) * time.Second)})
+		}
+	}
+	sample := func(id string, at time.Time, n int64) {
+		st.AddViewers(at.Add(time.Minute), []Video{{ID: id, LiveStatus: "live", Concurrent: n}})
+	}
+	for _, id := range []string{"o1", "o2", "o3", "o4", "o5"} {
+		chat(id, recent)
+	}
+	sample("o1", recent, 1573)
+	sample("o1", recent.Add(-slotStep), 1000)
+	chat("o2", old) // o2: muestras solo de hace 10 h
+	sample("o2", old, 300)
+	chat("o3", old) // o3: el máximo, fuera de las últimas 6 h
+	sample("o3", old, 500)
+	sample("o3", recent, 200)
+	st.Add(msgs)
+	h := (&Server{st: st, budget: 9000}).Routes()
+	get := func(url string) string {
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, httptest.NewRequest("GET", url, nil))
+		return section6(t, w.Body.String())
+	}
+	const panel = `class="oyentes"`
+
+	body := get("/parcial/vivo/analisis?video=o1")
+	n := strings.Count(body, "<g><title>")
+	if n < minChartSlots {
+		t.Fatalf("o1: %d franjas", n)
+	}
+	svg := fmt.Sprintf(`<svg viewBox="0 0 %d 100" preserveAspectRatio="none" role="img"`, n)
+	if c := strings.Count(body, svg); c != 2 || strings.Count(body, "<svg") != 2 || strings.Count(body, `role="img"`) != 2 {
+		t.Errorf("o1: quería dos <svg con %q, hay %d (%d <svg)", svg, c, strings.Count(body, "<svg"))
+	}
+	if i, j := strings.Index(body, `class="poyentes"`), strings.Index(body, `class="pchart"`); i < 0 || j < 0 || i > j {
+		t.Errorf("o1: el panel de oyentes (%d) tiene que ir antes de las barras (%d)", i, j)
+	}
+	if !regexp.MustCompile(`<path class="oyentes" d="M[0-9. MHV]+" vector-effect="non-scaling-stroke">`).MatchString(body) {
+		t.Errorf("o1: falta la línea de oyentes")
+	}
+	for _, want := range []string{
+		`<div class="pmax" aria-hidden="true">máx. 1.573 mirando</div>`,
+		`aria-label="Cuántos miraban el vivo cada 5 minutos desde las `,
+		"Arriba, cuántos miraban cada 5 minutos (la línea se corta donde no hay dato).",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("o1: falta %q", want)
+		}
+	}
+	if strings.Contains(body, "<text") {
+		t.Errorf("o1: los textos van en HTML, no en <text>")
+	}
+	// Una zona de tooltip por franja en el panel, con el mismo texto que la barra.
+	bar := regexp.MustCompile(`<g><title>([^<]*)</title>`).FindAllStringSubmatch(body, -1)
+	hit := regexp.MustCompile(`<rect class="hit" x="[^"]+" y="0" width="[^"]+" height="100"><title>([^<]*)</title></rect>`).FindAllStringSubmatch(body, -1)
+	if len(hit) != n {
+		t.Fatalf("o1: %d zonas de tooltip en el panel, quería %d", len(hit), n)
+	}
+	for i := range hit {
+		if hit[i][1] != bar[i][1] {
+			t.Errorf("o1: franja %d: panel %q, barra %q", i, hit[i][1], bar[i][1])
+		}
+	}
+	if !strings.Contains(body, " · 1.573 mirando (0,2 %)") {
+		t.Errorf("o1: el tooltip no dice cuántos miraban")
+	}
+
+	// o2: las muestras quedan fuera de las 6 h y entran en las 24 h.
+	body = get("/parcial/vivo/analisis?video=o2&horas=6")
+	if strings.Contains(body, panel) || strings.Count(body, `role="img"`) != 1 || strings.Contains(body, "Arriba, cuántos miraban") {
+		t.Errorf("o2 6 h: no debería mostrar el panel")
+	}
+	body = get("/parcial/vivo/analisis?video=o2&horas=24")
+	if !strings.Contains(body, panel) || strings.Count(body, `role="img"`) != 2 || !strings.Contains(body, "máx. 300 mirando") {
+		t.Errorf("o2 24 h: falta el panel")
+	}
+
+	// o3: la escala es el máximo de la ventana graficada.
+	for q, want := range map[string]string{"6": "máx. 200 mirando", "24": "máx. 500 mirando"} {
+		body = get("/parcial/vivo/analisis?video=o3&horas=" + q)
+		if !strings.Contains(body, `<div class="pmax" aria-hidden="true">`+want+`</div>`) {
+			t.Errorf("o3 %s h: falta %q", q, want)
+		}
+	}
+
+	// Sin muestras (o4) y con el contador oculto (o5, modo personas): sin panel.
+	for _, id := range []string{"o4", "o5"} {
+		body = get("/parcial/vivo/analisis?video=" + id + "&horas=24")
+		if strings.Contains(body, panel) || strings.Contains(body, "mirando</div>") || strings.Count(body, `role="img"`) != 1 {
+			t.Errorf("%s: no debería mostrar el panel", id)
+		}
+	}
 }
 
 // section6 recorta la tarjeta 6 del parcial de análisis.

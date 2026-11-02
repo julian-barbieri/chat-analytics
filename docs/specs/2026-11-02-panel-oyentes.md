@@ -1,6 +1,6 @@
 # Spec: panel de oyentes arriba del gráfico de participación
 
-- **Estado:** aprobada
+- **Estado:** implementada (CA11, verificación manual en el navegador, pendiente)
 - **Tipo:** mejora
 - **Rama:** `feat/panel-oyentes`
 - **Origen:** pedido de Julian Barbieri (conversado y elegido entre opciones): sumar al
@@ -55,7 +55,7 @@ Los tests nuevos van en `monitor_test.go` y se escriben **antes** del código: l
 CA6 tienen que fallar hoy (no existe la clave `Viewers` ni el panel; `slotTitle` no muestra
 espectadores con menos de 3 personas). Guardar esa salida para el PR.
 
-- [ ] CA1 (línea cortada y escala propia): `participationChart` devuelve en
+- [x] CA1 (línea cortada y escala propia): `participationChart` devuelve en
   `c["Viewers"]` un `ViewersLine{Path, Max, Aria string}`. `Path` es una línea en
   escalones: por cada tramo de franjas consecutivas con `Viewers > 0` que empieza en la
   franja `i`, `M{i} {y}H{i+1}`, y por cada franja `j` siguiente del tramo `V{y}H{j+1}`,
@@ -65,26 +65,26 @@ espectadores con menos de 3 personas). Guardar esa salida para el PR.
   de una ventana de 36 dan `Path == "M2 50.00H3V0.00H4M5 75.00H6"`. — se verifica con
   `go test -count=1 -run '^TestParticipationChartViewers$' ./...` (subtest "escalones y
   cortes").
-- [ ] CA2 (rótulo con miles y aria): con un máximo de 1.573 en la franja `k` (y otra con
+- [x] CA2 (rótulo con miles y aria): con un máximo de 1.573 en la franja `k` (y otra con
   el mismo valor más tarde), `Max == "máx. 1.573 mirando"` y `Aria` es
   `"Cuántos miraban el vivo cada 5 minutos <span> (promedio de lo que informa YouTube);
   máximo de 1.573 a las <hora de la franja k>"`, con `<span>` igual al del aria de las
   barras ("en las últimas 24 horas" o "desde las HH:MM"); si hay franjas sin dato dentro
   de la ventana, termina en `"; sin dato en N franjas"`. Empate: la primera franja. — se
   verifica con `TestParticipationChartViewers` (subtests "miles y aria" y "empate").
-- [ ] CA3 (sin dato, sin panel): no hay clave `Viewers` en el mapa si `ok` es `false`
+- [x] CA3 (sin dato, sin panel): no hay clave `Viewers` en el mapa si `ok` es `false`
   (modo personas) o si ninguna franja de `slots` tiene `Viewers > 0`, y en ese caso
   `Bars`, `Marks`, `Ticks`, `Max`, `Aria` y `TypicalY` son iguales a los de hoy. — se
   verifica con `TestParticipationChartViewers` (subtest "sin dato") y con
   `TestParticipationChart`, `TestParticipationChartEdges` y
   `TestParticipationChartWindow` sin cambios salvo los títulos de CA4.
-- [ ] CA4 (tooltip completo): `slotTitle` muestra `"· N mirando (P %)"` siempre que
+- [x] CA4 (tooltip completo): `slotTitle` muestra `"· N mirando (P %)"` siempre que
   `Viewers > 0`, también cuando hay menos de 3 personas; en ese caso el motivo va después:
   `"… · 2 mensajes · 2 personas · 10 mirando (20,0 %) · menos de 3 personas: no entra en
   el ranking"`. Sin dato sigue `"· sin dato de espectadores"`. — se verifica actualizando
   la tabla `titles` de `TestParticipationChart` (franjas 10 y 250) antes del cambio (falla
   hoy) y con `go test -count=1 -run '^TestParticipationChart$' ./...`.
-- [ ] CA5 (HTML del panel): en `GET /parcial/vivo/analisis?video=<id>` de un vivo con
+- [x] CA5 (HTML del panel): en `GET /parcial/vivo/analisis?video=<id>` de un vivo con
   muestras de espectadores, la tarjeta 6 (`section6`) tiene dos `<svg` con el **mismo**
   `viewBox="0 0 W 100"` y `preserveAspectRatio="none"`, dos `role="img"`, el panel de
   oyentes **antes** de las barras (`strings.Index` menor), un `<path class="oyentes"
@@ -94,18 +94,18 @@ espectadores con menos de 3 personas). Guardar esa salida para el PR.
   conteo de `<g><title>` sigue igual a la cantidad de franjas (el panel no usa `<g>`), así
   que `TestLiveParticipationView` y `TestParticipationWindowView` no cambian sus números.
   — se verifica con `go test -count=1 -run '^TestParticipationViewersView$' ./...`.
-- [ ] CA6 (selector 6 h / 24 h y casos sin panel): en el mismo test, un vivo con muestras
+- [x] CA6 (selector 6 h / 24 h y casos sin panel): en el mismo test, un vivo con muestras
   de espectadores solo hace 10 h no muestra el panel con `horas=6` (no hay
   `class="oyentes"` y hay un solo `role="img"`) y sí con `horas=24`; un vivo con el
   máximo de espectadores fuera de las últimas 6 h tiene distinto `máx. … mirando` en 6 h y
   en 24 h. Un vivo sin muestras (como `v3` de `TestLiveParticipationView`) y uno con el
   contador oculto (como `v2`, modo personas) no muestran el panel. — se verifica con
   `TestParticipationViewersView`.
-- [ ] CA7 (geometría dentro del viewBox): para ventanas de 36, 72 y 288 franjas, todos los
+- [x] CA7 (geometría dentro del viewBox): para ventanas de 36, 72 y 288 franjas, todos los
   `x` del `Path` están en `[0, W]` y todos los `y` en `[0, 100]`, sin `NaN` ni `Inf`, y
   el `Path` no tiene `L` (solo `M`, `H`, `V`). — se verifica con
   `TestParticipationChartViewers` (subtest "dentro del viewBox", parseando el `Path`).
-- [ ] CA8 (estilos y temas): la línea usa un token de color que existe en los dos temas
+- [x] CA8 (estilos y temas): la línea usa un token de color que existe en los dos temas
   de `templates/page.html` (propuesta: `var(--text-secondary)`); si se agrega un token
   nuevo, aparece en `:root` y en el bloque `prefers-color-scheme: dark`. No hay colores
   sueltos fuera de esos bloques: `git diff main -- templates/page.html | grep -nE
@@ -113,11 +113,11 @@ espectadores con menos de 3 personas). Guardar esa salida para el PR.
   panel tiene alto propio en escritorio y en `@media (max-width: 600px)`, y
   `.oyentes` tiene `fill: none` y `pointer-events: none` (para que el tooltip lo tome la
   zona de la franja). — se verifica con el `grep` y `grep -n 'oyentes' templates/page.html`.
-- [ ] CA9 (sin cuota, sin cambios en lo guardado ni en la concurrencia):
+- [x] CA9 (sin cuota, sin cambios en lo guardado ni en la concurrencia):
   `git diff --quiet main -- youtube.go worker.go store.go analyze.go` sale con código 0;
   `go.mod` sigue sin `require`; `grep -n 'template.HTML' *.go` no lista nada nuevo. Las
   cifras de cuota del README no cambian.
-- [ ] CA10 (documentación): el README (sección 3, punto 6) y `AGENTS.md` (mapa de
+- [x] CA10 (documentación): el README (sección 3, punto 6) y `AGENTS.md` (mapa de
   `server.go`) mencionan el panel de oyentes arriba de las barras, que se corta donde no
   hay dato y que no aparece sin dato en la ventana. — se verifica con
   `grep -n 'oyentes' README.md AGENTS.md` y revisando `git diff main -- README.md AGENTS.md`.
@@ -130,7 +130,7 @@ espectadores con menos de 3 personas). Guardar esa salida para el PR.
   no se deforman, la línea se ve cortada en los huecos sin dato, el tooltip aparece al
   pasar el mouse tanto por el panel como por las barras, y la página no tiene scroll
   horizontal (`document.documentElement.scrollWidth <= innerWidth` en la consola).
-- [ ] Gates de `CLAUDE.md` → "Definición de terminado" en verde: `gofmt -l .` vacío,
+- [x] Gates de `CLAUDE.md` → "Definición de terminado" en verde: `gofmt -l .` vacío,
   `go vet ./...`, `go run honnef.co/go/tools/cmd/staticcheck@2026.2.2 ./...`,
   `go build ./...`, `GOOS=windows GOARCH=amd64 go build ./...`,
   `go test -race -count=1 ./...` y `go test -count=5 ./...`.
