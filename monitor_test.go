@@ -2167,7 +2167,7 @@ func TestParticipationChartViewers(t *testing.T) {
 	})
 }
 
-// TestParticipationViewersView: el panel de oyentes en la tarjeta 6 del
+// TestParticipationViewersView: el panel de oyentes en la tarjeta 5 del
 // parcial, con el selector de 6 y 24 h y los vivos sin dato.
 func TestParticipationViewersView(t *testing.T) {
 	st, err := OpenStore(t.TempDir() + "/datos.jsonl")
@@ -2209,7 +2209,7 @@ func TestParticipationViewersView(t *testing.T) {
 	get := func(url string) string {
 		w := httptest.NewRecorder()
 		h.ServeHTTP(w, httptest.NewRequest("GET", url, nil))
-		return section6(t, w.Body.String())
+		return section5(t, w.Body.String())
 	}
 	const panel = `class="oyentes"`
 
@@ -2282,8 +2282,8 @@ func TestParticipationViewersView(t *testing.T) {
 	}
 }
 
-// section6 recorta la tarjeta 6 del parcial de análisis.
-func section6(t *testing.T, body string) string {
+// section5 recorta la tarjeta 5 del parcial de análisis.
+func section5(t *testing.T, body string) string {
 	t.Helper()
 	i := strings.Index(body, "5. Momentos con más participación")
 	if i < 0 {
@@ -2391,10 +2391,10 @@ func TestLiveParticipationView(t *testing.T) {
 		t.Errorf("v1: %d franjas con <title>, quería %d", n, minChartSlots)
 	}
 
-	// El canal oculta el contador: gráfico de personas, aviso de YouTube y E0.
+	// El canal oculta el contador: gráfico de personas y E0, sin aviso aparte.
 	check("v2", get("/parcial/vivo/analisis?video=v2"), []string{
-		hidden, e0, "máx. 6 personas", "Personas que escribieron en el chat cada 5 minutos desde las ", "; máximo de 6 personas a las " + hm,
-	}, []string{"<table", `class="bar top"`, e1, e2})
+		e0, "máx. 6 personas", "Personas que escribieron en el chat cada 5 minutos desde las ", "; máximo de 6 personas a las " + hm,
+	}, []string{hidden, "<table", `class="bar top"`, e1, e2})
 	// Tiene espectadores pero no hay muestras de esas franjas.
 	check("v3", get("/parcial/vivo/analisis?video=v3"), []string{
 		"80 mirando ahora", "quedan fuera del ranking y de la participación típica", "sin dato de espectadores", e0,
