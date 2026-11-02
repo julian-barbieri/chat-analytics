@@ -23,34 +23,15 @@
   </div>{{end}}
 </div>
 
-<div class="grid2">
-  <section class="card">
-    <h2>Mensajes cada 5 minutos (últimas 3 horas) · {{miles .Activity.Total}} en total</h2>
-    {{with .Activity}}
-    <svg viewBox="0 -8 {{.W}} {{.H}}" width="100%" role="img" aria-label="Mensajes cada 5 minutos en las últimas 3 horas; pico de {{.Peak}}" style="overflow:visible;height:auto">
-      <line x1="0" x2="{{.W}}" y1="{{.H}}" y2="{{.H}}" stroke="var(--grid)"></line>
-      <text x="0" y="0">máx. {{.Peak}}</text>
-      {{range .Bars}}<g>
-        <title>{{.Label}}</title>
-        <rect class="hit" x="{{.X}}" y="0" width="{{.W}}" height="140"></rect>
-        <rect class="bar" x="{{.X}}" y="{{.Y}}" width="{{.W}}" height="{{.H}}" rx="2"></rect>
-      </g>{{end}}
-    </svg>
-    <svg viewBox="0 0 {{.W}} 16" width="100%" aria-hidden="true" style="overflow:visible;height:auto">
-      {{range .Ticks}}<text x="{{.X}}" y="12">{{.Label}}</text>{{end}}
-    </svg>
-    {{end}}
-  </section>
-  <section class="card">
-    <h2>Categorías de hoy</h2>
-    {{range .Cats}}<div class="catrow" title="{{.Label}}: {{.N}}">
-      <span>{{.Label}}</span>
-      <div class="track"><div class="fill" style="width: {{printf "%.1f" .Pct}}%"></div></div>
-      <span class="num">{{miles .N}}</span>
-    </div>{{end}}
-    <p class="muted">Clasificación automática por reglas simples; el detalle fino hacelo con Claude sobre el CSV.</p>
-  </section>
-</div>
+<section class="card mb">
+  <h2>Categorías de hoy</h2>
+  {{range .Cats}}<div class="catrow" title="{{.Label}}: {{.N}}">
+    <span>{{.Label}}</span>
+    <div class="track"><div class="fill" style="width: {{printf "%.1f" .Pct}}%"></div></div>
+    <span class="num">{{miles .N}}</span>
+  </div>{{end}}
+  <p class="muted">Clasificación automática por reglas simples; el detalle fino hacelo con Claude sobre el CSV.</p>
+</section>
 {{end}}
 
 {{define "feed"}}

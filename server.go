@@ -133,51 +133,12 @@ func (s *Server) summary(w http.ResponseWriter, r *http.Request) {
 		"Channel":  snap.Channel,
 		"Lives":    lives,
 		"Tiles":    tiles,
-		"Activity": activity(snap.Msgs, now),
 		"Cats":     rows,
 		"ChatNote": snap.ChatNote,
 		"LastErr":  snap.LastErr,
 		"Updated":  snap.Updated,
 		"Started":  !snap.Updated.IsZero(),
 	})
-}
-
-// activity arma las barras de mensajes cada 5 minutos en las últimas 3 horas.
-func activity(msgs []Message, now time.Time) map[string]any {
-	const buckets, width, height, step = 36, 720.0, 140.0, 5 * time.Minute
-	end := now.Truncate(step).Add(step)
-	start := end.Add(-buckets * step)
-	counts := make([]int, buckets)
-	for _, m := range msgs {
-		if m.At.Before(start) || !m.At.Before(end) {
-			continue
-		}
-		counts[int(m.At.Sub(start)/step)]++
-	}
-	peak := 1
-	for _, c := range counts {
-		peak = max(peak, c)
-	}
-	bw := width / buckets
-	var bars []Bar
-	total := 0
-	for i, c := range counts {
-		total += c
-		h := float64(c) / float64(peak) * (height - 4)
-		if c > 0 {
-			h = max(h, 3)
-		}
-		t := start.Add(time.Duration(i) * step)
-		bars = append(bars, Bar{
-			X: float64(i)*bw + 1, Y: height - h, W: bw - 2, H: h, N: c,
-			Label: fmt.Sprintf("%s a %s: %d mensajes", t.Format("15:04"), t.Add(step).Format("15:04"), c),
-		})
-	}
-	var ticks []map[string]any
-	for i := 0; i <= buckets; i += 12 {
-		ticks = append(ticks, map[string]any{"X": float64(i) * bw, "Label": start.Add(time.Duration(i) * step).Format("15:04")})
-	}
-	return map[string]any{"Bars": bars, "W": width, "H": height, "Peak": peak, "Total": total, "Ticks": ticks}
 }
 
 type FeedRow struct {
