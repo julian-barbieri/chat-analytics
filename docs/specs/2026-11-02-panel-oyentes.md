@@ -1,12 +1,12 @@
 # Spec: panel de oyentes arriba del gráfico de participación
 
-- **Estado:** borrador
+- **Estado:** aprobada
 - **Tipo:** mejora
 - **Rama:** `feat/panel-oyentes`
 - **Origen:** pedido de Julian Barbieri (conversado y elegido entre opciones): sumar al
   gráfico "6. Momentos con más participación (para reels)" una línea con el promedio de
   oyentes por franja de 5 minutos, en un panel propio arriba de las barras.
-- **Aprobada por / fecha:** <pendiente>
+- **Aprobada por / fecha:** Julian Barbieri, 2026-11-02 ("Sí, aprobada"; quedan las respuestas propuestas a las preguntas abiertas)
 
 ## Contexto
 
@@ -229,7 +229,7 @@ tiene el promedio por franja.
 - **Windows:** sin impacto (solo templates y Go puro); lo cubre el build de Windows de
   los gates.
 
-## Preguntas abiertas
+## Preguntas abiertas (resueltas: se aprobaron las propuestas)
 
 1. **Palabra:** se propone `máx. 1.573 mirando` y `· 1.573 mirando` en el tooltip, igual
    que la columna "Mirando" de la tabla. ¿O prefieren "oyentes" en el panel (por ejemplo
