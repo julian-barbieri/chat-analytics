@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"flag"
 	"fmt"
 	"io"
 	"math"
@@ -2586,5 +2587,40 @@ func TestParticipationWindowView(t *testing.T) {
 	body = get("/parcial/vivo/analisis?video=nada&horas=24")
 	if !strings.Contains(body, `hx-get="/parcial/vivo/analisis?video=nada&horas=24"`) || !strings.Contains(body, "Este vivo ya no está en la lista de videos.") {
 		t.Errorf("vivo que ya no está: %q", body)
+	}
+}
+
+// La PC (o WSL) puede estar en UTC: sin fijar la zona, el dashboard, los
+// informes y el horario pico quedaban 3 horas adelantados respecto de Argentina.
+// No puede ser paralelo (ni convivir con tests paralelos): modifica time.Local.
+func TestSetZone(t *testing.T) {
+	fs := flag.NewFlagSet("test", flag.ContinueOnError)
+	if z := zoneFlag(fs); fs.Parse(nil) != nil || *z != "America/Argentina/Buenos_Aires" {
+		t.Errorf("-zona por defecto = %q, quería America/Argentina/Buenos_Aires", *z)
+	}
+
+	orig := time.Local
+	t.Cleanup(func() { time.Local = orig })
+	time.Local = time.UTC
+
+	if err := setZone(defaultZone); err != nil {
+		t.Fatal(err)
+	}
+	// Lo mismo que hacen las funciones hora y fecha de los templates y el CSV.
+	if got := time.Date(2026, 11, 2, 13, 8, 0, 0, time.UTC).Local().Format("15:04"); got != "10:08" {
+		t.Errorf("13:08 UTC se muestra como %s, quería 10:08", got)
+	}
+	// 21:30 UTC son las 18:30 en Argentina: dentro del pico 7-20 (en UTC quedaba afuera).
+	cfg := WorkerConfig{PeakFrom: 7, PeakTo: 20, ChatPeak: time.Minute, ChatEvery: 3 * time.Minute}
+	if _, peak := cfg.chatInterval(time.Date(2026, 11, 2, 21, 30, 0, 0, time.UTC)); !peak {
+		t.Error("18:30 de Argentina quedó fuera del horario pico 7-20")
+	}
+
+	time.Local = time.UTC
+	if err := setZone(""); err != nil || time.Local != time.UTC {
+		t.Errorf("setZone(\"\") = %v, cambió la zona a %v", err, time.Local)
+	}
+	if err := setZone("Marte/Olympus"); err == nil {
+		t.Error("setZone aceptó una zona que no existe")
 	}
 }
