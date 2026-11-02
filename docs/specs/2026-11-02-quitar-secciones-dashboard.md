@@ -31,6 +31,8 @@ sin uso, y que las tarjetas del análisis queden numeradas sin saltos.
   ni las reglas CSS `.filters`, `select, input[type=search]`, `.scroll` y `.fill.crit` —
   `go vet`, `staticcheck` y `grep -n "Offender\|catOptions\|parcial/feed\|\.filters\|\.scroll\|fill crit\|fill.crit" *.go templates/*` sin resultados.
 - [x] CA5: README y AGENTS.md describen el dashboard sin esas secciones.
+- [x] CA6: verificado en el navegador con la vista previa (datos locales): modo claro y
+  oscuro a 1.163 px y celular a 390 px, sin desbordes ni huecos en la grilla.
 - [x] Gates de `CLAUDE.md` → "Definición de terminado" en verde.
 
 ## Diseño propuesto
@@ -44,6 +46,9 @@ sin uso, y que las tarjetas del análisis queden numeradas sin saltos.
   `FeedRow` queda como `ChatRow` (sin `Video`) porque lo usa el chat en vivo.
 - `analyze.go`: borrar `Offender` y su conteo. Filtros, candidatos y links siguen igual.
 - `TopPrograms` se queda: lo usa el informe Markdown (`report`).
+- `.vgrid` pasa de columnas de 300 px a 400 px: con 3 columnas la tarjeta de filtros
+  quedaba sola con dos huecos; con 400 px y el ancho máximo de `main` entran 2 por fila
+  y las 4 tarjetas quedan en 2x2 (una columna en celular).
 
 ## Fuera de alcance
 
