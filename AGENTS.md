@@ -19,7 +19,7 @@ El bot **no publica, no modera y no usa OAuth**. Cualquier cambio que requiera e
 - `go 1.24.7` en `go.mod` (se usa `min`/`max` built-in, patrones de ruta `GET /{$}` de `net/http` 1.22+, `http.FileServerFS`).
 - Templates y JS se embeben con `//go:embed`: el binario es autocontenido. Al agregar archivos en `templates/` o `static/` revisar que las directivas `//go:embed` de `server.go` los cubran (`static/` solo embebe `htmx.min.js`).
 - Frontend: `html/template` + htmx 2.0.4 vendorizado en `static/htmx.min.js` (no editarlo; no cargar nada de CDNs). CSS inline en `templates/page.html`, sin frameworks ni JS propio.
-- Plataformas objetivo: Linux y **Windows** (se compila `yt-monitor.exe` para una PC de la oficina). Por eso `main.go` importa `time/tzdata`; no sacarlo.
+- Plataformas objetivo: Linux y **Windows** (se compila `yt-monitor.exe` para una PC de la oficina). Por eso `main.go` importa `time/tzdata` (zonas del Pacífico y de Argentina); no sacarlo.
 
 ## Mapa del código
 
@@ -27,18 +27,18 @@ Todo está en el paquete `main`, en la raíz:
 
 | Archivo | Responsabilidad |
 |---|---|
-| `main.go` | Flags, carga de `.env` (`loadDotEnv`), modo informe (`report`, `writeCSV`), columnas del CSV (`csvHeader`, `csvRow`, `programOf`), arranque del modo dashboard. |
+| `main.go` | Flags, zona horaria (`setZone`, `-zona`), carga de `.env` (`loadDotEnv`), modo informe (`report`, `writeCSV`), columnas del CSV (`csvHeader`, `csvRow`, `programOf`), arranque del modo dashboard. |
 | `youtube.go` | Cliente mínimo de la API (`YouTube`): `UploadsPlaylist` (ID o @handle), `RecentVideoIDs`, `ChannelVideos`, `Videos`, `Comments`, `LiveChatPage`, `LiveChats`, `StreamChat` (chat en tiempo real). Tipos `Video`, `Message` y `ChatBatch`. Helpers `TagProgram`, `ProgramName`, `ParseVideoID`, `ParseChannel`. Cuenta cuota en `YouTube.Units`. |
 | `classify.go` | `Classify` por reglas (listas de palabras y regex), `TopWords`, `TopAuthors`, `TopPrograms`, stopwords en español. |
-| `analyze.go` | `Analyze`: los 5 análisis por vivo del dashboard (temas con `TopTopics`, preguntas, quejas técnicas con `TechIssue`, spam e insultos repetidos, filtros para YouTube Studio). `Participation` (franjas de 5 min de las últimas 24 h con mensajes, personas por `Author`, espectadores y %) y `TopMoments` (para reels: las `maxMomentos` franjas con más % de participación, con dato de espectadores y al menos `minPersonasTop` personas, separadas `minSeparacion` entre inicios; cada momento es una franja sola para que los % se comparen entre intervalos iguales). Solo reglas. |
+| `analyze.go` | `Analyze`: los análisis por vivo del dashboard (temas con `TopTopics`, preguntas, quejas técnicas con `TechIssue`, filtros para YouTube Studio). `Participation` (franjas de 5 min de las últimas 24 h con mensajes, personas por `Author`, espectadores y %) y `TopMoments` (para reels: las `maxMomentos` franjas con más % de participación, con dato de espectadores y al menos `minPersonasTop` personas, separadas `minSeparacion` entre inicios; cada momento es una franja sola para que los % se comparen entre intervalos iguales). Solo reglas. |
 | `worker.go` | `RunWorker`: bucle infinito (tick de 1 s) que agenda videos / comentarios / chat y respeta el tope de cuota. Abre una goroutine de streaming por vivo (`StreamChat`) que le manda `chatEvent` por un canal; si el streaming no anda, lee el chat por turnos como antes. `nextChat` elige a qué vivo le toca la próxima conexión o lectura. |
 | `store.go` | `Store`: estado en memoria con `sync.RWMutex`, deduplicación por `Message.ID`, persistencia JSONL, retención de 30 días, contador de cuota diario (persistido en `datos.cuota.json`), serie de espectadores por vivo (`ViewerSample`, `AddViewers`, `Viewers`; persistida en `datos.espectadores.jsonl`). |
 | `server.go` | Rutas HTTP, parciales htmx, gráfico de participación (SVG armado en Go; `participationChart` grafica el % por franja con el top marcado, o personas si no hay dato de espectadores, y deja los textos en HTML para que no se deformen con `preserveAspectRatio="none"`; `viewersLine` arma el panel de oyentes arriba de las barras, con el mismo `viewBox`, escalones con los espectadores de cada franja que se cortan donde no hay dato, y no aparece si no hay dato en la ventana), `reelLink` (cómo ubicar un momento en YouTube según `dvrWindow`), export CSV, helper `miles`. |
 | `templates/page.html` | Página principal + CSS (tokens de color claro/oscuro). |
-| `templates/partials.html` | Bloques `resumen`, `feed`, `extra` que pide htmx. |
+| `templates/partials.html` | Bloques `resumen`, `extra` y los del vivo (`vivo`, `vivo-chat`, `vivo-analisis`) que pide htmx. |
 | `monitor_test.go` | Tests: clasificador, flujo completo contra una API falsa (`httptest`), dedup y retención del store. |
 
-Rutas del dashboard: `GET /` (`?vivo=ID` elige el vivo), `GET /parcial/resumen` (cada 5 s), `GET /parcial/vivo` (sección del vivo elegido, se pide al cargar y al tocar un botón), `GET /parcial/vivo/chat` (cada 2 s; usa `Store.Status` y `Store.LastChat` para no copiar todo el histórico), `GET /parcial/vivo/analisis` (cada 30 s), `GET /parcial/feed` (cada 5 s, filtros `fuente`, `cat`, `q`), `GET /parcial/extra` (cada 30 s), `GET /export.csv`, `GET /static/`.
+Rutas del dashboard: `GET /` (`?vivo=ID` elige el vivo), `GET /parcial/resumen` (cada 5 s), `GET /parcial/vivo` (sección del vivo elegido, se pide al cargar y al tocar un botón), `GET /parcial/vivo/chat` (cada 2 s; usa `Store.Status` y `Store.LastChat` para no copiar todo el histórico), `GET /parcial/vivo/analisis` (cada 30 s), `GET /parcial/extra` (cada 30 s), `GET /export.csv`, `GET /static/`.
 
 Botones de vivos: elegir un vivo **solo cambia lo que se ve**; el worker sigue leyendo todos los chats por turnos (lo pidió así el usuario para no perder mensajes ni datos de los análisis). No conectar la selección con el worker sin consultarlo. Si el vivo pedido ya no está en curso, `/parcial/vivo/chat` responde la sección entera con `HX-Retarget: #vivo` para pasar al primero en vivo. Las etiquetas salen de `LiveLabel`.
 
@@ -106,7 +106,7 @@ Para ver el dashboard de una rama con los datos locales sin gastar cuota: `go ru
 ### Formato de `Message` y CSV
 
 - `datos.jsonl`: un `Message` por línea, con los nombres de campo de Go (`ID`, `Source`, `VideoID`, `Author`, `Text`, `At`, `Likes`, `Replies`, `Program`). Cambiar nombres o tipos de campos rompe la carga de datos ya guardados; si hace falta, que sea compatible hacia atrás.
-- `Source` vale `"comentario"` o `"chat"` (en español; el filtro del dashboard y los informes dependen de esos valores).
+- `Source` vale `"comentario"` o `"chat"` (en español; el dashboard y los informes dependen de esos valores).
 - La categoría **no se guarda**: se calcula con `Classify` cada vez que se lee. Cambiar el clasificador re-clasifica todo el histórico, lo cual es intencional.
 - El CSV (informe y `GET /export.csv`) se arma con `csvHeader` y `csvRow` en `main.go`: `fuente, fecha, video, programa, autor, categoria, likes, respuestas, texto`. Está pensado para subirlo a Claude.
 
@@ -115,7 +115,7 @@ Para ver el dashboard de una rama con los datos locales sin gastar cuota: `go ru
 - Orden de prioridad en `Classify`: spam (links, teléfonos, palabras de spam) > insulto > pregunta > queja > elogio > mayúsculas sostenidas (insulto) > otro. El orden importa: un mensaje con link y signo de pregunta es spam.
 - Es un primer filtro barato y deliberadamente simple; el análisis fino lo hace Claude sobre el CSV. Lo mismo vale para `analyze.go`: las frases de `techIssues` se buscan como frases enteras sin tildes (`phraseText`); no agregar palabras sueltas que en una radio de noticias suelen ser tema ("audio", "corte", "retraso"). Cubrir los casos en `TestTechIssue` y `TestAnalyze`. No meter llamadas a LLMs ni dependencias de NLP acá sin pedirlo.
 - Las listas comparan contra el texto en minúsculas con `strings.Contains`, así que una palabra corta puede matchear dentro de otra (por ejemplo `"lag"`). Al agregar términos, pensar en falsos positivos en español rioplatense y cubrirlos en `TestClassify`.
-- Las constantes `Cat*` son también las claves de CSS (`.badge.spam`, etc.) y los valores del filtro `cat`. Si se agrega una categoría, sumarla a `categories` y `catLabels` en `server.go`, al bucle de `report` en `main.go` y, si corresponde, al CSS.
+- Las constantes `Cat*` son también las claves de CSS (`.badge.spam`, etc.). Si se agrega una categoría, sumarla a `categories` y `catLabels` en `server.go`, al bucle de `report` en `main.go` y, si corresponde, al CSS.
 
 ## Concurrencia
 
@@ -128,7 +128,7 @@ Para ver el dashboard de una rama con los datos locales sin gastar cuota: `go ru
 - **Todo en español**: comentarios, mensajes de log, errores al usuario, textos del dashboard, nombres de flags (`-horas`, `-cuota`) y de categorías. Identificadores de Go en inglés como hasta ahora (`Store`, `Classify`, `RunWorker`). Español rioplatense con voseo en textos para el usuario ("Abrí", "ponela").
 - Código corto y directo, como el existente: funciones chicas, structs anónimos para decodificar JSON de la API, `map[string]any` para datos de templates, comentarios breves que explican el *por qué* (cuota, políticas de YouTube), no el *qué*.
 - Errores: en el modo informe, los fatales usan `check(err)`; los recuperables (video con comentarios desactivados, chat rechazado) se loguean como `aviso:` y se sigue. En el worker, nunca terminar el proceso: loguear, guardar en `SetError`/`SetChatNotes` y reintentar más tarde.
-- Fechas visibles en hora local (`t.Local()`), formato `2006-01-02 15:04` en CSV/informes y `02/01 15:04` en el dashboard. Números con separador de miles `.` vía `miles`.
+- Fechas visibles en hora local (`t.Local()`). `main` fija `time.Local` con `-zona` (por defecto `America/Argentina/Buenos_Aires`, vía `setZone`) antes de arrancar goroutines, porque la PC o WSL pueden estar en UTC: no depender de la zona del sistema. Formato `2006-01-02 15:04` en CSV/informes y `02/01 15:04` en el dashboard. Números con separador de miles `.` vía `miles`.
 - Dashboard: usar los tokens CSS existentes (`--surface-*`, `--text-*`, `--series-1`, etc.) y definir cualquier color nuevo en ambos temas. Mantener los atributos de accesibilidad (`aria-label`, `role="img"`, `<title>` en barras). `html/template` ya escapa: no usar `template.HTML` con texto de usuarios.
 
 ## Fuera de alcance sin consultar

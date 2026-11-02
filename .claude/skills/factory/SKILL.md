@@ -91,8 +91,20 @@ no se pisa nada; mirá el más alto que exista. Si hay una nota de `rehacer`, va
    `factory/` está en `.gitignore`, así que el estado no cuenta.
 2. Elegí `tipo` y un `<slug>` de 2 a 5 palabras en minúscula con guiones.
 3. Creá la tarea: `mkdir -p factory/jobs` y después `mkdir factory/jobs/<NNN>-<slug>`,
-   con `NNN` el número siguiente al más alto que exista (tres dígitos, desde `001`). Si
-   el `mkdir` falla porque otra sesión lo tomó, probá con el número siguiente.
+   con `NNN` el número siguiente (tres dígitos) al más alto que imprima este comando; si
+   no imprime nada, arrancá en `001`:
+
+   ```bash
+   { ls -A factory/jobs 2>/dev/null | sed -nE 's/^(\.borrando-)?([0-9]{3})-.*/\2/p'
+     cat factory/events/*.jsonl 2>/dev/null | grep -oE 'factory/jobs/[0-9]{3}-' | sed -E 's/.*jobs\/([0-9]{3})-/\1/'
+   } | sort -n | tail -1
+   ```
+
+   Cuenta también las carpetas `.borrando-<id>` y los IDs de los eventos porque una
+   tarea borrada desde el tablero deja eventos con su ID hasta 30 días: si el número se
+   reusara, el tablero los mezclaría con la tarea nueva. Va con `cat` + `grep` (no
+   `grep -r`) para no depender de flags de distintas versiones de `grep`. Si el `mkdir`
+   falla porque otra sesión lo tomó, probá con el número siguiente.
 4. Escribí `job.json` con `etapa: triage`, `vuelta: 0` y `rama: <tipo>/<slug>`.
 5. Abrí la rama desde el `main` actualizado (nunca trabajes sobre `main`). Desde
    `origin/main` y sin `git switch main`, que falla si `main` está abierto en otro
@@ -263,7 +275,9 @@ contra la API real.
 
 ## Retomar una tarea
 
-1. Leé `factory/jobs/<id>/job.json`. Si no existe, listá las tareas y pará.
+1. Leé `factory/jobs/<id>/job.json`. Si no existe, avisá que la tarea puede haberse
+   borrado desde el tablero (el tacho de las tareas en `pr-abierto`, ADR 0004), listá
+   las tareas y pará.
 2. `git status --porcelain` vacío; si no, pará y preguntá. Después `git switch <rama>`.
 3. Según el comando:
    - `aprobar`: solo si la etapa es `esperando-aprobacion`. Hacé lo del paso 2 con el

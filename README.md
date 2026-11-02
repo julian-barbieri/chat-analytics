@@ -32,7 +32,7 @@ go run . -horas 72 -videos 30  # más amplio
 go run . -chat-min 30          # además, si hay un vivo, lee su chat 30 minutos
 ```
 
-Opciones: `-canal` (uno o varios canales, ver abajo), `-videos`, `-horas`, `-chat-min`, `-salida`, `-vivos`.
+Opciones: `-canal` (uno o varios canales, ver abajo), `-videos`, `-horas`, `-chat-min`, `-salida`, `-vivos`, `-zona` (zona horaria de las horas que se muestran; por defecto `America/Argentina/Buenos_Aires`, así que da la hora argentina aunque la PC o WSL estén en UTC; `-zona ""` usa la de la PC o la de la variable `TZ`).
 
 Los vivos del canal se detectan solos. Si alguno no aparece, se puede agregar a mano con `-vivos` (links o IDs separados por coma y **sin espacios**; si se escapa un espacio después de la coma, el monitor avisa y suma igual el link):
 
@@ -93,7 +93,7 @@ Arriba de todo está el **chat en vivo por programa**: un botón por cada vivo e
 
 Todo sale de reglas simples, sin IA ni costo: es una primera mirada. Los borradores de respuesta y el análisis fino se los pedís a Claude con el CSV (sección 4).
 
-El chat en vivo del dashboard se actualiza cada 2 segundos y el resto, cada 5 segundos: cada vivo en curso con su canal, espectadores y avisos de su chat, totales del día, categorías, últimos mensajes con filtros y buscador (en el chat muestra el programa), palabras más repetidas, chat por programa, quiénes más escriben, videos recientes y un botón para descargar el CSV.
+El chat en vivo del dashboard se actualiza cada 2 segundos; el resumen (cada vivo en curso con su canal, espectadores y avisos de su chat, totales del día y categorías), cada 5 segundos, y las palabras más repetidas y quiénes más escriben, cada 30. Arriba hay un botón para descargar el CSV.
 
 Cuota en este modo (por día): ~1.440 unidades por revisar videos y vivos (más ~480 por cada canal extra en `-canal`), ~500 a 1.000 por comentarios y el chat. Cada conexión de chat en tiempo real cuesta 5 unidades al abrirse y no gasta más mientras queda abierta: si YouTube la mantiene horas, el chat casi no gasta. Cuánto dura cada conexión lo decide YouTube y no está documentado, así que entre dos conexiones nuevas pasa como mínimo el mismo intervalo que entre dos lecturas comunes (`-chat-seg-pico`, `-chat-seg`): en el peor caso, si YouTube cortara cada conexión enseguida, gasta lo mismo que leyendo por turnos. Revisá el consumo real en Google Cloud Console los primeros días. Leyendo por turnos, con el vivo de 24 horas son ~5.000 de chat (300 por hora en el horario pico, 100 por hora el resto: 3.900 + 1.100), sean uno o varios vivos. Con un solo canal y el tope por defecto (`-cuota 9000`) alcanza para leer el chat todo el día. Con un canal extra se pasa por unas 400 unidades y el chat se pausa cerca de la medianoche; para que llegue al día completo, espaciá el chat fuera del horario pico con `-chat-seg 300`. Si se acelera el chat (bajar `-chat-seg-pico` o ampliar `-pico`), se pausa antes de que se reinicie la cuota; como eso pasa a las 04:00 o 05:00 de Argentina, lo primero que se pierde es la madrugada. Por ejemplo, con `-chat-seg-pico 45` el chat se pausa cerca de las 22 h. Cuando se acerca al tope, el chat se pausa solo y los comentarios siguen hasta el límite. El contador de cuota del dashboard se guarda en `datos.cuota.json`, así que sigue contando aunque lo reinicies; solo cuenta lo que gasta el dashboard (no los informes con `go run .`), y la cuota real la ves en Google Cloud Console.
 
@@ -107,7 +107,7 @@ go run . -dashboard :8080 -canal UCLAj5TzCrNbqe3LosSKHLcQ,@luzutv -vivos https:/
 
 Cuesta caro: 5 unidades cada ~10 s, unas **1.800 por hora por vivo**. Con lo que queda para el chat después de videos y comentarios (~5.000 por día) alcanza para unas 2 h 45 min de tiempo real continuo; cuando se llega al tope del chat (`-cuota` menos 1.500 de reserva), se pausa el chat de **todos** los vivos, también el de Rivadavia, hasta que se reinicia la cuota (04:00 o 05:00 de Argentina). El cartel del vivo muestra cuántas unidades quedan y para cuánto tiempo alcanzan. Usalo para un programa puntual y después reinicialo sin `-tiempo-real`.
 
-Opciones: `-tiempo-real` (ver arriba), `-pico` (horario pico en hora local, por defecto `7-20`; `-pico ""` lo desactiva), `-chat-seg-pico` (segundos entre lecturas del chat en el horario pico, o mínimo entre conexiones de tiempo real), `-chat-seg` (lo mismo el resto del día), `-comentarios-min`, `-cuota`, `-videos`, `-canal`, `-vivos`.
+Opciones: `-tiempo-real` (ver arriba), `-pico` (horario pico en hora local, por defecto `7-20`; `-pico ""` lo desactiva), `-zona` (también fija la hora del horario pico), `-chat-seg-pico` (segundos entre lecturas del chat en el horario pico, o mínimo entre conexiones de tiempo real), `-chat-seg` (lo mismo el resto del día), `-comentarios-min`, `-cuota`, `-videos`, `-canal`, `-vivos`.
 
 Para dejarlo corriendo siempre: una PC o servidor de la oficina que quede prendido. En Windows, una tarea programada "Al iniciar" que ejecute `yt-monitor.exe -dashboard :8080` (se compila con `go build`). En Linux, un servicio de systemd. Solo se ve desde esa máquina; para verlo desde otras PCs de la red, usar `-dashboard 0.0.0.0:8080` (no tiene usuario ni contraseña, así que no exponerlo a internet).
 

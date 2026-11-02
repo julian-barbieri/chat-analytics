@@ -1,6 +1,6 @@
 # ADR 0003: El tablero consulta GitHub con gh y la vista previa del PR es una herramienta aparte
 
-- **Estado:** propuesta
+- **Estado:** propuesta; modificada por ADR 0004: el tablero puede borrar tareas en `pr-abierto` y ya no es solo de lectura
 - **Fecha:** 2026-10-30
 - **Complementa:** ADR 0002
 
