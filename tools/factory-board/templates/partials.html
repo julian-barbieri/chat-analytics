@@ -26,6 +26,8 @@
   {{if .Motivo}}<p class="badge warn">{{.Motivo}}</p>{{end}}
   {{if eq .Etapa "esperando-aprobacion"}}<p class="muted">Te toca: revisá la spec y respondé en la sesión o con <code>/factory aprobar {{.ID}}</code>.</p>{{end}}
   {{if eq .Etapa "necesita-persona"}}<p class="muted">Te toca: <code>/factory rehacer {{.ID}} &lt;nota&gt;</code>.</p>{{end}}
+  {{if .MergedAt}}<p class="muted">Mergeado {{fecha .MergedAt}}</p>{{end}}
+  {{if .PRNote}}<p class="badge warn">{{.PRNote}}</p>{{end}}
   {{if .PR}}<p><a href="{{.PR}}" rel="noopener noreferrer">Ver PR</a></p>{{end}}
 </article>
 {{end}}

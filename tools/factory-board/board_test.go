@@ -31,6 +31,8 @@ func TestLoadJobs(t *testing.T) {
 	writeFile(t, root, "factory/jobs/003-rara/job.json", `{"etapa":"mergeada"}`)
 	writeFile(t, root, "factory/jobs/004-otro-id/job.json", `{"id":"999-mentira","etapa":"triage"}`)
 	os.MkdirAll(filepath.Join(root, "factory/jobs/005-vacia"), 0o755)
+	// "mergeado" la calcula el tablero con gh: escrita en job.json es un error.
+	writeFile(t, root, "factory/jobs/006-mergeado/job.json", `{"etapa":"mergeado"}`)
 	os.MkdirAll(filepath.Join(root, "factory/jobs/no-es-tarea"), 0o755)
 
 	jobs := NewBoard(root).Jobs()
@@ -40,6 +42,7 @@ func TestLoadJobs(t *testing.T) {
 		{"003-rara", "mergeada", "etapa desconocida"},
 		{"004-otro-id", "triage", ""},
 		{"005-vacia", "", "todavía no tiene job.json"},
+		{"006-mergeado", "mergeado", "etapa desconocida"},
 	}
 	if len(jobs) != len(want) {
 		t.Fatalf("tareas = %d, quiero %d: %+v", len(jobs), len(want), jobs)
@@ -52,6 +55,9 @@ func TestLoadJobs(t *testing.T) {
 	}
 	if jobs[0].Vuelta != 1 || jobs[0].Revisiones["reviewer"] != "pendiente" {
 		t.Errorf("no se leyeron vuelta y revisiones: %+v", jobs[0])
+	}
+	if _, ok := stageOf(mergedStage.Key); ok || !mergedStage.Derived {
+		t.Errorf("la etapa %q tiene que ser derivada y no aceptarse en job.json", mergedStage.Key)
 	}
 }
 
@@ -113,7 +119,7 @@ func fakeRepo(t *testing.T) string {
 }
 
 func TestRoutes(t *testing.T) {
-	srv := httptest.NewServer(NewBoard(fakeRepo(t)).Routes())
+	srv := httptest.NewServer(testBoard(t, fakeRepo(t)).Routes())
 	defer srv.Close()
 
 	cases := []struct {
@@ -123,7 +129,7 @@ func TestRoutes(t *testing.T) {
 	}{
 		{"GET", "/", 200, []string{`hx-get="/parcial/tablero"`, `hx-get="/parcial/actividad"`}, nil},
 		{"GET", "/parcial/tablero", 200,
-			[]string{"001-a", "Esperando aprobación", "/factory aprobar 001-a", "&lt;script&gt;", "Descartadas", "002-b"},
+			[]string{"001-a", "Esperando aprobación", "/factory aprobar 001-a", "&lt;script&gt;", "Descartadas", "002-b", `aria-label="Mergeado"`, "PR sin URL de GitHub válida"},
 			[]string{"<script>alert", "javascript:alert"}},
 		{"GET", "/parcial/actividad", 200, []string{"triage", "go test &lt;b&gt;", `href="/tarea/001-a"`}, []string{"<b>"}},
 		{"GET", "/parcial/actividad?tarea=001-a", 200, []string{"go test"}, nil},
@@ -172,7 +178,7 @@ func TestRoutes(t *testing.T) {
 // TestLocalOnly: sin autenticación, un Host ajeno (DNS rebinding) no puede leer nada
 // aunque el pedido llegue a localhost.
 func TestLocalOnly(t *testing.T) {
-	srv := httptest.NewServer(NewBoard(fakeRepo(t)).Routes())
+	srv := httptest.NewServer(testBoard(t, fakeRepo(t)).Routes())
 	defer srv.Close()
 	for host, code := range map[string]int{"evil.example.com": 403, "evil.example.com:8090": 403, "localhost:8090": 200, "127.0.0.1": 200, "[::1]:8090": 200} {
 		req, _ := http.NewRequest("GET", srv.URL+"/parcial/tablero", nil)

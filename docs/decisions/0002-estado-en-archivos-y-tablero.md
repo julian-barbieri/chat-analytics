@@ -1,6 +1,6 @@
 # ADR 0002: Estado de la factory en archivos y tablero aparte en Go + htmx
 
-- **Estado:** aceptada
+- **Estado:** aceptada; complementada por ADR 0003 (el tablero también consulta GitHub con `gh`)
 - **Fecha:** 2026-10-30
 
 ## Contexto

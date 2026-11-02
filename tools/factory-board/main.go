@@ -1,6 +1,7 @@
-// Command factory-board es el tablero de la software factory (ADR 0002): muestra las
-// tareas de factory/jobs/ y lo que hacen los agentes según factory/events/. Solo lee
-// archivos y escucha en localhost: no tiene autenticación.
+// Command factory-board es el tablero de la software factory (ADR 0002 y 0003): muestra
+// las tareas de factory/jobs/ y lo que hacen los agentes según factory/events/. Lee
+// archivos y consulta con gh (solo lectura) si los PR abiertos se mergearon; nunca
+// escribe. Escucha en localhost: no tiene autenticación.
 package main
 
 import (
@@ -80,11 +81,13 @@ func (b *Board) page(w http.ResponseWriter, r *http.Request) {
 // Card es una tarea tal como se muestra en el tablero.
 type Card struct {
 	Job
-	Stage   Stage
-	Live    bool // un agente se movió hace poco
-	Active  []string
-	Last    *Event
-	Reviews []Review
+	Stage    Stage
+	Live     bool // un agente se movió hace poco
+	Active   []string
+	Last     *Event
+	Reviews  []Review
+	PRNote   string // aviso sobre el estado del PR en GitHub
+	MergedAt string
 }
 
 type Review struct{ Name, Verdict, Class string }
@@ -97,9 +100,10 @@ type Column struct {
 // liveWindow: si no hubo eventos en este tiempo, la tarea no se marca "en curso".
 const liveWindow = 2 * time.Minute
 
-func (b *Board) card(j Job, acts map[string]*Activity, now time.Time) Card {
+func (b *Board) card(j Job, acts map[string]*Activity, prs map[string]prEntry, now time.Time) Card {
 	c := Card{Job: j}
 	c.Stage, _ = stageOf(j.Etapa)
+	applyPR(&c, prs)
 	if a := acts[j.ID]; a != nil {
 		c.Active, c.Last = a.Active, a.Last
 	}
@@ -125,26 +129,53 @@ func verdictClass(v string) string {
 	return "pend"
 }
 
-func (b *Board) boardPartial(w http.ResponseWriter, r *http.Request) {
-	now := b.now()
+// boardStages son las columnas: las de job.json más "Mergeado" después de "PR abierto".
+func boardStages() []Stage {
+	i := slices.IndexFunc(stages, func(s Stage) bool { return s.Key == "pr-abierto" })
+	return slices.Insert(slices.Clone(stages), i+1, mergedStage)
+}
+
+// prURLs junta los PR de las tareas en pr-abierto, las únicas que se consultan.
+func prURLs(jobs []Job) []string {
+	var urls []string
+	for _, j := range jobs {
+		if j.Err == "" && j.Etapa == "pr-abierto" {
+			urls = append(urls, j.PR)
+		}
+	}
+	return urls
+}
+
+// columns arma el tablero. Cada tarjeta va en la columna de su Stage, que puede ser la
+// derivada "Mergeado" aunque job.json diga pr-abierto.
+func (b *Board) columns(now time.Time) ([]Column, []Job) {
 	acts := activities(b.Events(), now)
-	cols := make([]Column, len(stages))
-	for i, s := range stages {
+	all := boardStages()
+	cols := make([]Column, len(all))
+	for i, s := range all {
 		cols[i].Stage = s
 	}
+	jobs := b.Jobs()
+	prs := b.prStates(prURLs(jobs), now)
 	var broken []Job
-	for _, j := range b.Jobs() {
+	for _, j := range jobs {
 		if j.Err != "" {
 			broken = append(broken, j)
 			continue
 		}
-		i := slices.IndexFunc(stages, func(s Stage) bool { return s.Key == j.Etapa })
-		cols[i].Cards = append(cols[i].Cards, b.card(j, acts, now))
+		c := b.card(j, acts, prs, now)
+		i := slices.IndexFunc(all, func(s Stage) bool { return s.Key == c.Stage.Key })
+		cols[i].Cards = append(cols[i].Cards, c)
 	}
-	// Las descartadas solo ocupan lugar si hay alguna.
+	// Las descartadas solo ocupan lugar si hay alguna; "Mergeado" se ve siempre.
 	if last := len(cols) - 1; len(cols[last].Cards) == 0 {
 		cols = cols[:last]
 	}
+	return cols, broken
+}
+
+func (b *Board) boardPartial(w http.ResponseWriter, r *http.Request) {
+	cols, broken := b.columns(b.now())
 	render(w, "tablero", map[string]any{"Columns": cols, "Broken": broken})
 }
 
@@ -197,8 +228,12 @@ func (b *Board) jobPage(w http.ResponseWriter, r *http.Request) {
 		content, _ = b.ReadFile(j, name)
 	}
 	now := b.now()
+	var prs map[string]prEntry
+	if j.Err == "" {
+		prs = b.prStates(prURLs([]Job{j}), now)
+	}
 	render(w, "tarea.html", map[string]any{
-		"Card":    b.card(j, activities(b.Events(), now), now),
+		"Card":    b.card(j, activities(b.Events(), now), prs, now),
 		"Files":   files,
 		"Archivo": name,
 		"Content": content,

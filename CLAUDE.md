@@ -35,7 +35,9 @@ solo por eso, el arreglo es actualizar Go, no el código. Decilo en el PR.
 
 Prohibido sin pedido explícito del usuario: `go run .` contra la API real (gasta cuota
 compartida, escribe `informes/` y `datos.jsonl`) y cualquier `-dashboard` que quede
-corriendo. Para probar a mano: `YT_BASE_URL=http://localhost:9999 YT_API_KEY=x go run . ...`.
+corriendo, salvo la vista previa del paso 7b de `/factory` (`go run ./tools/preview`),
+que la persona pide, usa una copia temporal y una API simulada y se corta con `-cortar`
+antes de terminar. Para probar a mano: `YT_BASE_URL=http://localhost:9999 YT_API_KEY=x go run . ...`.
 
 ## Estructura
 
@@ -49,6 +51,7 @@ docs/decisions/      ADRs numerados (plantilla: ADR_TEMPLATE.md)
 .claude/skills/      procedimientos repetibles (/factory, /fix-bug)
 .github/workflows/   CI: quality gates en cada PR
 tools/factory-board/ tablero de la factory (package main aparte, no va en el binario)
+tools/preview/       vista previa del dashboard de una rama con datos copiados y API simulada (ADR 0003)
 factory/             estado (jobs/) y actividad (events/) de la factory; en .gitignore
 ```
 
@@ -120,7 +123,14 @@ Una tarea está terminada solo si se cumple **todo**:
   orquestador) y actividad de los agentes en `factory/events/` (hook async
   `log-activity.sh`). Ver ADR 0002.
 - Tablero: `go run ./tools/factory-board` y abrir `http://localhost:8090`. Lo levanta
-  una persona; los agentes no lo dejan corriendo.
+  una persona; los agentes no lo dejan corriendo. Una tarea en `pr-abierto` pasa sola a
+  la columna "Mergeado" cuando su PR entra a `main`: el tablero lo consulta con `gh`
+  (solo lectura, cada 2 min) y no escribe `job.json` (ADR 0003).
+- Vista previa del PR (paso 7b de `/factory`, a pedido de la persona y solo si el cambio
+  toca el dashboard o lo que muestra): `go run ./tools/preview -datos <checkout
+  principal>/datos.jsonl` levanta la rama en `http://localhost:8081` con una copia
+  temporal de los datos y una API simulada; `go run ./tools/preview -cortar` la corta y
+  borra la copia. Siempre se corta antes de cerrar la tarea.
 - Modelo y esfuerzo fijos en el frontmatter de cada agente (no heredan la sesión):
   triage, implementer y reviewer en `claude-opus-5-5` con esfuerzo `high`; tester en
   `claude-sonnet-5-5` con `medium`, porque sobre todo corre comandos y suma tests

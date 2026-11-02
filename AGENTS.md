@@ -56,6 +56,8 @@ Compilar para Windows: `GOOS=windows GOARCH=amd64 go build -o yt-monitor.exe .`
 
 Para probar contra una API simulada sin gastar cuota: `YT_BASE_URL=http://localhost:9999 YT_API_KEY=x go run . ...` (`YT_BASE_URL` existe solo para pruebas).
 
+Para ver el dashboard de una rama con los datos locales sin gastar cuota: `go run ./tools/preview -datos <ruta>/datos.jsonl` (ADR 0003). Compila la rama, la levanta en `http://localhost:8081` con el directorio de trabajo en una copia temporal de los datos y una API de YouTube simulada (sin la clave real), y `go run ./tools/preview -cortar` la corta y borra la copia. `-addr` solo acepta `localhost`, `127.0.0.1` o `::1`. Es el paso 7b de `/factory`: solo a pedido de la persona y siempre cortada antes de terminar.
+
 **No correr `go run .` contra la API real sin que el usuario lo pida**: gasta cuota diaria compartida y escribe en `informes/`. El modo `-dashboard` además escribe en `datos.jsonl` y queda corriendo para siempre.
 
 ## Antes de dar algo por terminado
@@ -97,6 +99,7 @@ Para probar contra una API simulada sin gastar cuota: `YT_BASE_URL=http://localh
 - Políticas de YouTube: **no guardar datos de la API más de 30 días** (`retention` en `store.go`). `OpenStore` descarta lo vencido y reescribe el archivo. No alargar esa retención ni agregar otros almacenamientos que la salteen.
 - `datos.espectadores.jsonl` guarda cuántos miraban cada vivo en cada revisión de videos (`ViewerSample`). Son datos de la API: misma retención de 30 días al abrir (`loadViewers`, tmp + `os.Rename`) y nunca dentro de `datos.jsonl`, para no cambiar el formato de `Message`. Está en `.gitignore` (`datos.*.jsonl`).
 - `datos.jsonl` e `informes/` contienen nombres de usuarios y mensajes reales: son datos generados, no código. No editarlos a mano, no usarlos como fixtures de tests (los tests arman sus propios datos) y no subirlos a ningún lado.
+- La única copia permitida de los datos es la temporal de la vista previa (`tools/preview`): una carpeta `yt-monitor-vista-previa-*` con permisos `0700` dentro de una carpeta privada del usuario (`os.UserCacheDir()/yt-monitor-vista-previa/`, también `0700`; en Linux, `~/.cache/yt-monitor-vista-previa/`), nunca en la carpeta temporal compartida. Se borra al cortarla, y la siguiente vista previa barre al arrancar las copias huérfanas que hayan quedado (por ejemplo, si se apagó la máquina). El dashboard le aplica la misma retención de 30 días al abrirla. Nunca se usa en tests: los de `tools/preview` arman datos sintéticos en `t.TempDir()`.
 - `.env` tiene `YT_API_KEY`. **No leer, imprimir ni commitear su contenido.** La clave nunca debe aparecer en logs, errores ni en el dashboard: `YouTube.get` la reemplaza por `***` en errores de red; mantener ese cuidado en cualquier código nuevo que formatee URLs o errores.
 - El dashboard no tiene autenticación. Por defecto escucha en `localhost`; no cambiar ese default ni sugerir exponerlo a internet.
 

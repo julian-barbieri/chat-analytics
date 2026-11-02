@@ -19,6 +19,8 @@
         {{range .Reviews}}<dt>{{.Name}}</dt><dd><span class="badge {{.Class}}">{{.Verdict}}</span></dd>{{end}}
         {{if .Motivo}}<dt>Motivo</dt><dd>{{.Motivo}}</dd>{{end}}
         {{if .PR}}<dt>PR</dt><dd><a href="{{.PR}}" rel="noopener noreferrer">{{.PR}}</a></dd>{{end}}
+        {{if .MergedAt}}<dt>Mergeado</dt><dd>{{fecha .MergedAt}}</dd>{{end}}
+        {{if .PRNote}}<dt>GitHub</dt><dd><span class="badge warn">{{.PRNote}}</span></dd>{{end}}
         {{if .Actualizada}}<dt>Actualizada</dt><dd>{{fecha .Actualizada}}</dd>{{end}}
         {{range .Historial}}<dt>{{fecha .At}}</dt><dd>{{.Etapa}}</dd>{{end}}
       </dl>
