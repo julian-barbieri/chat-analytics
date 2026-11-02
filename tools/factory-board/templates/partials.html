@@ -10,6 +10,13 @@
 </div>
 {{end}}
 
+{{/* Respuesta del borrado: el tablero y, fuera de banda, el aviso en #aviso, que está
+     fuera de #tablero para que el refresco de cada 2 s no lo borre. innerHTML deja en
+     pie la región viva de la página, así el lector de pantalla anuncia el cambio. */}}
+{{define "eliminar"}}{{template "tablero" .}}
+<div id="aviso" hx-swap-oob="innerHTML"><p class="note{{if .OK}} ok{{end}}">{{.Aviso}}</p></div>
+{{end}}
+
 {{define "card"}}
 <article class="card job{{if .Stage.Human}} human{{end}}{{if eq .Etapa "descartada"}} dim{{end}}">
   <div class="top">
@@ -17,6 +24,9 @@
     <a href="/tarea/{{.ID}}">{{.ID}}</a>
     {{if .Tipo}}<span class="badge">{{.Tipo}}</span>{{end}}
     {{if .Vuelta}}<span class="badge">vuelta {{.Vuelta}}</span>{{end}}
+    {{if eq .Etapa "pr-abierto"}}<button type="button" id="borrar-{{.ID}}" class="trash" hx-post="/tarea/{{.ID}}/eliminar" hx-target="#tablero"
+      hx-confirm="¿Borrar la tarea {{.ID}}? Se borra su carpeta factory/jobs/{{.ID}}/ con todo lo que tiene y NO se puede deshacer. El PR, la rama y la spec no se tocan."
+      aria-label="Borrar la tarea {{.ID}}" title="Borrar tarea (no se puede deshacer)">{{template "tacho"}}</button>{{end}}
   </div>
   {{if .Tarea}}<p>{{.Tarea}}</p>{{end}}
   {{if .Rama}}<p class="muted"><code>{{.Rama}}</code></p>{{end}}
@@ -32,6 +42,9 @@
 </article>
 {{end}}
 
+{{/* Tacho: el nombre accesible lo da el aria-label del botón. */}}
+{{define "tacho"}}<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/></svg>{{end}}
+
 {{define "actividad"}}
 {{if .Events}}
 <ol class="feed">
@@ -39,7 +52,7 @@
   <li{{if eq .Evento "PostToolUseFailure"}} class="fail"{{end}}>
     <time datetime="{{.At.Format "2006-01-02T15:04:05Z07:00"}}">{{hora .At}}</time>
     <span class="who">{{.Who}}</span>
-    <span class="what">{{.Action}}{{if .Resumen}} <code>{{.Resumen}}</code>{{end}}{{if and .Tarea (not $.Tarea)}} · <a href="/tarea/{{.Tarea}}">{{.Tarea}}</a>{{end}}</span>
+    <span class="what">{{.Action}}{{if .Resumen}} <code>{{.Resumen}}</code>{{end}}{{if and .Tarea (not $.Tarea)}} · {{if index $.Exists .Tarea}}<a href="/tarea/{{.Tarea}}">{{.Tarea}}</a>{{else}}{{.Tarea}}{{end}}{{end}}</span>
     {{if .Detalle}}<span class="det">{{.Detalle}}</span>{{end}}
   </li>
   {{end}}

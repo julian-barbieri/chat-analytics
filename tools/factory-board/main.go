@@ -1,7 +1,9 @@
-// Command factory-board es el tablero de la software factory (ADR 0002 y 0003): muestra
-// las tareas de factory/jobs/ y lo que hacen los agentes según factory/events/. Lee
-// archivos y consulta con gh (solo lectura) si los PR abiertos se mergearon; nunca
-// escribe. Escucha en localhost: no tiene autenticación.
+// Command factory-board es el tablero de la software factory (ADR 0002, 0003 y 0004):
+// muestra las tareas de factory/jobs/ y lo que hacen los agentes según factory/events/.
+// Lee archivos y consulta con gh (solo lectura) si los PR abiertos se mergearon. Lo único
+// que escribe es el borrado de una tarea en pr-abierto que pide una persona con el tacho
+// (POST, ADR 0004); los GET no escriben nada. Escucha en localhost: no tiene
+// autenticación.
 package main
 
 import (
@@ -44,6 +46,8 @@ func (b *Board) Routes() http.Handler {
 	mux.HandleFunc("GET /parcial/tablero", b.boardPartial)
 	mux.HandleFunc("GET /parcial/actividad", b.activityPartial)
 	mux.HandleFunc("GET /tarea/{id}", b.jobPage)
+	// La única escritura (ADR 0004): sameOrigin y Delete ponen las guardas.
+	mux.HandleFunc("POST /tarea/{id}/eliminar", b.deleteJob)
 	// Solo htmx, con ruta fija: servir una carpeta del repo podría exponer otros archivos.
 	mux.HandleFunc("GET /static/htmx.min.js", func(w http.ResponseWriter, r *http.Request) {
 		http.ServeFile(w, r, filepath.Join(b.root, "static", "htmx.min.js"))
@@ -194,7 +198,7 @@ func (b *Board) activityPartial(w http.ResponseWriter, r *http.Request) {
 			feed = append(feed, evs[i])
 		}
 	}
-	render(w, "actividad", map[string]any{"Events": feed, "Tarea": job})
+	render(w, "actividad", map[string]any{"Events": feed, "Tarea": job, "Exists": b.jobIDs()})
 }
 
 func (b *Board) jobPage(w http.ResponseWriter, r *http.Request) {
@@ -250,8 +254,11 @@ func fecha(s string) string {
 	return t.Local().Format("02/01 15:04")
 }
 
-func ago(t time.Time) string {
-	d := time.Since(t)
+func ago(t time.Time) string { return agoAt(time.Now(), t) }
+
+// agoAt es ago con un "ahora" dado (el borrado usa el reloj del Board).
+func agoAt(now, t time.Time) string {
+	d := now.Sub(t)
 	switch {
 	case d < time.Minute:
 		return fmt.Sprintf("hace %d s", int(max(d, 0).Seconds()))

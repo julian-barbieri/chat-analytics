@@ -127,10 +127,11 @@ func TestRoutes(t *testing.T) {
 		code         int
 		has, hasNot  []string
 	}{
-		{"GET", "/", 200, []string{`hx-get="/parcial/tablero"`, `hx-get="/parcial/actividad"`}, nil},
+		{"GET", "/", 200, []string{`hx-get="/parcial/tablero"`, `hx-get="/parcial/actividad"`, `<meta name="htmx-config"`}, nil},
 		{"GET", "/parcial/tablero", 200,
-			[]string{"001-a", "Esperando aprobación", "/factory aprobar 001-a", "&lt;script&gt;", "Descartadas", "002-b", `aria-label="Mergeado"`, "PR sin URL de GitHub válida"},
-			[]string{"<script>alert", "javascript:alert"}},
+			[]string{"001-a", "Esperando aprobación", "/factory aprobar 001-a", "&lt;script&gt;", "Descartadas", "002-b", `aria-label="Mergeado"`, "PR sin URL de GitHub válida",
+				`hx-post="/tarea/003-c/eliminar"`, "NO se puede deshacer", `aria-label="Borrar la tarea 003-c"`, "<svg"},
+			[]string{"<script>alert", "javascript:alert", `hx-post="/tarea/001-a/eliminar"`, `hx-post="/tarea/002-b/eliminar"`}},
 		{"GET", "/parcial/actividad", 200, []string{"triage", "go test &lt;b&gt;", `href="/tarea/001-a"`}, []string{"<b>"}},
 		{"GET", "/parcial/actividad?tarea=001-a", 200, []string{"go test"}, nil},
 		{"GET", "/parcial/actividad?tarea=../x", 404, nil, nil},
@@ -149,6 +150,7 @@ func TestRoutes(t *testing.T) {
 		{"GET", "/static/../.env", 404, nil, []string{"no-se-tiene-que-ver"}},
 		{"POST", "/", 405, nil, nil},
 		{"POST", "/parcial/tablero", 405, nil, nil},
+		{"GET", "/tarea/003-c/eliminar", 405, nil, nil},
 	}
 	for _, c := range cases {
 		req, _ := http.NewRequest(c.method, srv.URL+c.path, nil)
@@ -192,6 +194,18 @@ func TestLocalOnly(t *testing.T) {
 		if res.StatusCode != code || (code == 403 && strings.Contains(string(body), "001-a")) {
 			t.Errorf("Host %s = %d, quiero %d", host, res.StatusCode, code)
 		}
+	}
+	// El borrado tampoco: con un Host ajeno da 403 aunque traiga HX-Request.
+	req, _ := http.NewRequest("POST", srv.URL+"/tarea/003-c/eliminar", nil)
+	req.Host = "evil.example.com"
+	req.Header.Set("HX-Request", "true")
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res.Body.Close()
+	if res.StatusCode != 403 {
+		t.Errorf("POST con Host ajeno = %d, quiero 403", res.StatusCode)
 	}
 }
 

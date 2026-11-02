@@ -4,6 +4,8 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{{.}}</title>
+<!-- Default de htmx 2.0.4 más el 409, para que se vea el aviso cuando no se borra una tarea. -->
+<meta name="htmx-config" content='{"responseHandling":[{"code":"204","swap":false},{"code":"[23]..","swap":true},{"code":"409","swap":true,"error":true},{"code":"[45]..","swap":false,"error":true}]}'>
 <script src="/static/htmx.min.js"></script>
 <style>
 /* Mismos tokens que templates/page.html de yt-monitor. */
@@ -57,6 +59,7 @@ code, pre { font: 12.5px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; }
 .head { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: baseline; margin-bottom: 16px; }
 .muted { color: var(--text-muted); font-size: 13px; }
 .note { padding: 8px 12px; border-radius: 8px; font-size: 13px; margin: 0 0 12px; background: var(--warn-bg); color: var(--warn-text); }
+.note.ok { background: var(--ok-bg); color: var(--ok-text); }
 .badge { font-size: 11px; padding: 1px 7px; border-radius: 99px; border: 1px solid var(--border); color: var(--text-secondary); white-space: nowrap; }
 .badge.ok { background: var(--ok-bg); color: var(--ok-text); border-color: transparent; }
 .badge.crit { background: var(--crit-bg); color: var(--crit-text); border-color: transparent; }
@@ -76,6 +79,12 @@ code, pre { font: 12.5px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; }
 .job p { margin: 6px 0 0; }
 .job .top { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
 .job .top a { font-weight: 600; text-decoration: none; }
+/* Tacho de las tareas en pr-abierto: discreto en reposo, rojo al apuntarlo. */
+.job .top .trash { margin-left: auto; display: inline-flex; align-items: center; justify-content: center;
+  min-width: 28px; min-height: 28px; padding: 0; background: none; border: 1px solid transparent;
+  border-radius: 6px; color: var(--text-muted); cursor: pointer; }
+.job .top .trash:hover, .job .top .trash:focus-visible { color: var(--crit-text); background: var(--crit-bg); }
+.job .top .trash:focus-visible { outline: 2px solid var(--series-1); outline-offset: 1px; }
 .job .chips { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 8px; }
 .job .now { color: var(--text-secondary); font-size: 13px; overflow-wrap: anywhere; }
 .pulse { width: 9px; height: 9px; border-radius: 50%; background: var(--live); animation: pulse 1.4s ease-in-out infinite; }
@@ -118,6 +127,8 @@ dl.meta dd { margin: 0; overflow-wrap: anywhere; }
     <h1>Software factory</h1>
     <span class="muted">Se actualiza solo cada 2 s. Las tareas se manejan desde Claude Code con <code>/factory</code>.</span>
   </div>
+
+  <div id="aviso" role="status" aria-live="polite"></div>
 
   <div id="tablero" hx-get="/parcial/tablero" hx-trigger="load, every 2s">
     <p class="muted">Cargando…</p>
