@@ -106,7 +106,7 @@ Para ver el dashboard de una rama con los datos locales sin gastar cuota: `go ru
 ### Formato de `Message` y CSV
 
 - `datos.jsonl`: un `Message` por línea, con los nombres de campo de Go (`ID`, `Source`, `VideoID`, `Author`, `Text`, `At`, `Likes`, `Replies`, `Program`). Cambiar nombres o tipos de campos rompe la carga de datos ya guardados; si hace falta, que sea compatible hacia atrás.
-- `Source` vale `"comentario"` o `"chat"` (en español; el filtro del dashboard y los informes dependen de esos valores).
+- `Source` vale `"comentario"` o `"chat"` (en español; el dashboard y los informes dependen de esos valores).
 - La categoría **no se guarda**: se calcula con `Classify` cada vez que se lee. Cambiar el clasificador re-clasifica todo el histórico, lo cual es intencional.
 - El CSV (informe y `GET /export.csv`) se arma con `csvHeader` y `csvRow` en `main.go`: `fuente, fecha, video, programa, autor, categoria, likes, respuestas, texto`. Está pensado para subirlo a Claude.
 

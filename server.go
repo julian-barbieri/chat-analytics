@@ -185,6 +185,12 @@ func (s *Server) liveSection(w http.ResponseWriter, r *http.Request) {
 	s.render(w, "vivo", map[string]any{"Video": sel})
 }
 
+// ChatRow es una fila del chat en vivo, con su categoría ya calculada.
+type ChatRow struct {
+	Message
+	Cat, CatLabel string
+}
+
 func (s *Server) liveChat(w http.ResponseWriter, r *http.Request) {
 	snap := s.st.Status()
 	want := r.URL.Query().Get("video")
@@ -217,11 +223,6 @@ func (s *Server) liveChat(w http.ResponseWriter, r *http.Request) {
 		"Rows": rows, "Note": snap.ChatNotes[sel], "ChatNote": snap.ChatNote,
 		"Banner": chatBanner(snap.ChatInfo, sel, time.Now()),
 	})
-}
-
-type ChatRow struct {
-	Message
-	Cat, CatLabel string
 }
 
 // Banner es el cartel del vivo elegido: si el chat está conectado en tiempo

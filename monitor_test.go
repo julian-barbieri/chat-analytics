@@ -1983,11 +1983,11 @@ func section5(t *testing.T, body string) string {
 	t.Helper()
 	i := strings.Index(body, "5. Momentos con más participación")
 	if i < 0 {
-		t.Fatalf("no está la tarjeta 6")
+		t.Fatalf("no está la tarjeta 5")
 	}
 	j := strings.Index(body[i:], "</section>")
 	if j < 0 {
-		t.Fatalf("la tarjeta 6 no cierra")
+		t.Fatalf("la tarjeta 5 no cierra")
 	}
 	return body[i : i+j]
 }
