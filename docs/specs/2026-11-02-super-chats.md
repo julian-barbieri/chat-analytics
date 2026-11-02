@@ -1,6 +1,6 @@
 # Spec: capturar Super Chats y Super Stickers del chat en vivo
 
-- **Estado:** borrador
+- **Estado:** aprobada
 - **Tipo:** mejora
 - **Rama:** `feat/super-chats`
 - **Origen:** pedido de Julian Barbieri (2026-11-02): "Capturar los Super Chats y Super
@@ -10,7 +10,10 @@
   atrás con datos.jsonl […], sin cuota extra […]. Mostrarlos en el dashboard y en el CSV con
   totales por moneda (sin convertir) y por programa. Es el monto bruto que pagó cada
   persona, no el ingreso neto del canal (eso requiere OAuth, fuera de alcance)."
-- **Aprobada por / fecha:** —
+- **Aprobada por / fecha:** Julian Barbieri, 2026-11-02 ("Sí, aprobada"), con estas
+  respuestas a las preguntas abiertas: `Text` sale de `displayMessage` (no de
+  `userComment`); el `.md` del modo informe suma una sección de Super Chats; la tarjeta
+  sin pagos se muestra con un mensaje. CA11 queda para cuando haya capturas reales.
 
 ## Contexto
 
@@ -48,8 +51,9 @@ spam por el monto. `classify.go:22` (`reLink`) no matchea códigos de moneda ni 
 `classify.go:23` (`rePhone`, `\+?\d[\d\s-]{8,}\d`) pide 10 o más caracteres seguidos entre
 dígitos, espacios ASCII y guiones, y un monto con separadores `.` o `,` ("ARS 10.000,00",
 "US$ 1,000.00") lo corta. El único caso teórico es un monto con miles separados por
-espacio ASCII ("10 000 000"); verificado leyendo el regex, no corriéndolo. Con el diseño
-de abajo el monto **nunca** entra en `Message.Text`, así que `Classify` no se toca.
+espacio ASCII ("10 000 000"); verificado leyendo el regex, no corriéndolo. Como `Text`
+sigue saliendo de `displayMessage` (decisión de la persona), el monto podría entrar en el
+texto: CA1b lo cubre con casos de `TestClassify` y `Classify` solo se toca si alguno falla.
 
 **Reproducción:** no aplica (mejora). Línea de base verificada en esta rama con Go 1.26.8:
 `go build ./...`, `go vet ./...` y
@@ -78,11 +82,13 @@ afirmaciones sobre los campos nuevos.
   devuelve, en orden:
   1. `textMessageEvent` "Grande Nelson" → `Message` igual al de hoy (`Super == ""`,
      monto, moneda, nivel y sticker en cero, `Text == "Grande Nelson"`).
-  2. `superChatEvent` con `amountMicros: "5000000"`, `currency: "ARS"`,
-     `amountDisplayString: "ARS 5,00"`, `tier: 2`, `userComment: "Gracias Nelson"` →
-     `Super == "superchat"`, `AmountMicros == 5000000`, `Currency == "ARS"`,
-     `AmountText == "ARS 5,00"`, `Tier == 2`, `Text == "Gracias Nelson"`.
-  3. `superChatEvent` sin `userComment` y con `displayMessage` no vacío → se guarda con
+  2. `superChatEvent` con `displayMessage: "Gracias Nelson"`, `amountMicros: "5000000"`,
+     `currency: "ARS"`, `amountDisplayString: "ARS 5,00"`, `tier: 2`,
+     `userComment: "Gracias Nelson"` → `Super == "superchat"`, `AmountMicros == 5000000`,
+     `Currency == "ARS"`, `AmountText == "ARS 5,00"`, `Tier == 2`,
+     `Text == "Gracias Nelson"` (sale de `displayMessage`).
+  3. `superChatEvent` con `displayMessage` vacío y `userComment: "Hola"` → se guarda con
+     `Text == "Hola"` (cae a `userComment`); con los dos vacíos → se guarda igual, con
      `Text == ""` y los datos del pago.
   4. `superStickerEvent` con `displayMessage` vacío y
      `superStickerMetadata.altText: "Perrito aplaudiendo"` → **no se descarta**:
@@ -98,6 +104,14 @@ afirmaciones sobre los campos nuevos.
 
   Además `Classify(m.Text)` del item 2 es `elogio`. — se verifica con
   `go test -count=1 -run '^TestChatPageSuper$' ./...`.
+- [ ] CA1b (el monto en el texto no cambia la categoría): como `Text` sale de
+  `displayMessage`, que podría traer el monto, `TestClassify` suma casos con montos
+  plausibles delante del comentario y comprueba que la categoría es la del comentario
+  solo: por ejemplo "ARS 5.000,00 Grande Nelson" → `elogio`, "US$ 1,000.00 ¿Vuelve el
+  programa mañana?" → `pregunta`, "$ 10 000 000 hola" → `otro` (el caso con miles por
+  espacio que podría caer en `rePhone`), "ARS 500,00" solo → `otro`. Si alguno falla, se
+  ajusta `Classify` lo mínimo y se cubre el falso positivo. — se verifica con
+  `go test -count=1 -run '^TestClassify$' ./...`.
 - [ ] CA2 (mismos endpoints, sin cuota extra): el servidor falso de
   `TestFlowAgainstFakeAPI` devuelve además un `superChatEvent` en `/liveChat/messages`;
   `LiveChats` lo entrega con `Super == "superchat"`, monto y `Program` anotado, y el
@@ -187,7 +201,16 @@ afirmaciones sobre los campos nuevos.
   `grep -n -i 'super chat' README.md`.
 - [ ] CA11 (navegador, manual): la tarjeta y los badges se ven bien en modo claro y oscuro
   y en ancho de celular (≤ 600 px), con los colores nuevos definidos en ambos temas. Lo
-  verifica la persona (ver pregunta abierta 4 sobre con qué datos).
+  verifica la persona cuando haya capturas reales (decidido al aprobar): en el PR queda
+  marcado como pendiente.
+- [ ] CA12 (informe Markdown): `report(...)` (`main.go:245`, devuelve el `.md` como
+  string) incluye una sección "## Super Chats y Super Stickers" con los totales por moneda
+  y por programa de `Supers` sobre los mensajes del informe (mismo formato de montos que el
+  dashboard, `8.500,00`), la cantidad de pagos y la nota de monto bruto. Sin pagos, la
+  sección dice "Sin Super Chats ni Super Stickers en este período." Un informe sin pagos
+  no cambia el resto del texto. — se verifica con
+  `go test -count=1 -run '^TestReportSuper$' ./...`, que llama a `report` con mensajes
+  armados en el test (sin red ni archivos).
 - [ ] Gates de `CLAUDE.md` → "Definición de terminado" en verde: `gofmt -l .` vacío,
   `go vet ./...`, `staticcheck`, `go build ./...` y
   `GOOS=windows GOARCH=amd64 go build ./...`, `go test -race -count=1 ./...` y
@@ -252,18 +275,17 @@ los pagos se cuentan desde que se actualizó el monitor.
    la página entera (en el streaming eso cortaría la conexión y perdería el pedazo).
 2. En `chatPage.messages` (`youtube.go:444`):
    - `superChatEvent` → `Super = SuperChat`, datos de `superChatDetails`,
-     `Text = userComment` (puede ser `""`).
+     `Text = displayMessage` y, si viene vacío, `userComment` (puede quedar `""`).
    - `superStickerEvent` → `Super = SuperSticker`, datos de `superStickerDetails`,
-     `Sticker = altText`, `Text = ""`.
+     `Sticker = altText`, `Text = displayMessage` (puede ser `""`).
    - Cualquier otro tipo (o sin `type`, como en los tests de hoy) → igual que hoy,
      incluido descartar si `displayMessage` está vacío.
    - Los dos tipos pagos **nunca** se descartan por texto vacío.
 
-   Por qué `Text` sale de `userComment` y no de `displayMessage`: `userComment` está
-   documentado como el comentario de la persona; `displayMessage` es lo que arma YouTube
-   para mostrar y podría incluir el monto o el nombre (no verificado, ver supuestos). Así
-   el monto nunca contamina temas, palabras, preguntas ni `Classify`, y no hace falta tocar
-   el clasificador.
+   Por qué `Text` sale de `displayMessage`: lo decidió la persona al aprobar. Mantiene el
+   mismo criterio que los Super Chats ya guardados como chat común, así el histórico y lo
+   nuevo se leen igual. A cambio, si YouTube pone el monto en `displayMessage`, puede
+   aparecer en temas o palabras; CA1b cubre que no cambie la categoría.
 
 ### Formato de montos
 
@@ -308,7 +330,9 @@ En `newMoment` (`analyze.go:390-401`) saltear mensajes con
 ### Modo informe
 
 `LiveChats` pasa por la misma decodificación, así que el CSV del informe trae las columnas
-nuevas sin más. El Markdown del informe no cambia (ver pregunta abierta 2).
+nuevas sin más. El Markdown del informe (`report`, `main.go:245`) suma una sección
+"Super Chats y Super Stickers" con los totales de `Supers` por moneda y por programa y la
+nota de monto bruto (CA12). Reusa el helper de formato de montos del dashboard.
 
 ### Orden sugerido
 
@@ -329,7 +353,8 @@ nuevas sin más. El Markdown del informe no cambia (ver pregunta abierta 2).
 - Recuperar los Super Chats ya guardados como chat común o los stickers ya perdidos.
 - Totales globales de todos los vivos o de más de 24 h en el dashboard (el CSV ya trae todo
   el histórico de 30 días).
-- Cambios en `Classify`, en el worker, en `Store`, en la cuota o en `tools/preview`.
+- Cambios en el worker, en `Store`, en la cuota o en `tools/preview`. `Classify` solo se
+  toca si falla algún caso de CA1b.
 - El desfasaje que ya existe entre la numeración de tarjetas del README (incluye
   "usuarios que mandaron spam o insultos") y la del template: se ajusta solo lo necesario
   para sumar la tarjeta nueva.
@@ -378,17 +403,13 @@ confirmados contra una respuesta real porque no se puede usar la API ni `datos.j
 Se confirma con la primera captura real: que la persona (no un agente) revise una línea
 con `"Super":"superchat"` en su `datos.jsonl` después de unos días de uso.
 
-## Preguntas abiertas
+## Decisiones al aprobar
 
-1. **Texto del Super Chat:** la spec usa `userComment` como `Text` (el monto nunca entra en
-   el texto). ¿Preferís conservar `displayMessage` como hasta ahora, a costa de que pueda
-   traer el monto o el nombre?
-2. **Informe Markdown:** ¿sumar una sección "Super Chats" con totales por moneda y por
-   programa al `.md` del modo informe? La spec solo cambia su CSV.
-3. **Tarjeta vacía:** la spec la muestra siempre con "Sin Super Chats ni Super Stickers en
-   las últimas 24 h." (como las demás tarjetas). ¿O preferís ocultarla cuando no hay
-   pagos, para no sumar espacio en canales sin Super Chat?
-4. **Verificación en el navegador (CA11):** `tools/preview` no simula chat y el
-   `datos.jsonl` local todavía no tiene pagos. ¿Alcanza con verificar después de que haya
-   capturas reales, o querés que se sume (en otra tarea) un modo de datos sintéticos a la
-   vista previa?
+1. **Texto del Super Chat:** `Text` sale de `displayMessage` (con `userComment` si viene
+   vacío), no de `userComment`. Cubierto por CA1 y CA1b.
+2. **Informe Markdown:** suma una sección de Super Chats con totales por moneda y por
+   programa (CA12).
+3. **Tarjeta vacía:** se muestra con "Sin Super Chats ni Super Stickers en las últimas
+   24 h." (CA6).
+4. **Verificación en el navegador (CA11):** queda para cuando haya capturas reales; se
+   aclara en el PR.
