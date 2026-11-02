@@ -41,7 +41,6 @@ func (s *Server) Routes() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /{$}", s.page)
 	mux.HandleFunc("GET /parcial/resumen", s.summary)
-	mux.HandleFunc("GET /parcial/feed", s.feed)
 	mux.HandleFunc("GET /parcial/extra", s.extra)
 	mux.HandleFunc("GET /parcial/vivo", s.liveSection)
 	mux.HandleFunc("GET /parcial/vivo/chat", s.liveChat)
@@ -60,7 +59,7 @@ func (s *Server) render(w http.ResponseWriter, name string, data any) {
 
 func (s *Server) page(w http.ResponseWriter, r *http.Request) {
 	snap := s.st.Snapshot()
-	s.render(w, "page.html", map[string]any{"Channel": snap.Channel, "Cats": catOptions(), "Vivo": r.URL.Query().Get("vivo")})
+	s.render(w, "page.html", map[string]any{"Channel": snap.Channel, "Vivo": r.URL.Query().Get("vivo")})
 }
 
 type Tile struct {
@@ -141,38 +140,6 @@ func (s *Server) summary(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-type FeedRow struct {
-	Message
-	Cat, CatLabel, Video string
-}
-
-func (s *Server) feed(w http.ResponseWriter, r *http.Request) {
-	snap := s.st.Snapshot()
-	src, cat := r.URL.Query().Get("fuente"), r.URL.Query().Get("cat")
-	q := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("q")))
-	titles := videoTitles(snap.Videos)
-
-	msgs := snap.Msgs
-	sort.SliceStable(msgs, func(i, j int) bool { return msgs[i].At.After(msgs[j].At) })
-	var rows []FeedRow
-	for _, m := range msgs {
-		c := Classify(m.Text)
-		if (src != "" && m.Source != src) || (cat != "" && c != cat) ||
-			(q != "" && !strings.Contains(strings.ToLower(m.Text+" "+m.Author), q)) {
-			continue
-		}
-		video := programOf(m, titles)
-		if video == "" {
-			video = titles[m.VideoID]
-		}
-		rows = append(rows, FeedRow{m, c, catLabels[c], video})
-		if len(rows) == 60 {
-			break
-		}
-	}
-	s.render(w, "feed", map[string]any{"Rows": rows})
-}
-
 // LiveButton es un botón para elegir qué chat en vivo se ve.
 type LiveButton struct {
 	ID, Label string
@@ -218,6 +185,12 @@ func (s *Server) liveSection(w http.ResponseWriter, r *http.Request) {
 	s.render(w, "vivo", map[string]any{"Video": sel})
 }
 
+// ChatRow es una fila del chat en vivo, con su categoría ya calculada.
+type ChatRow struct {
+	Message
+	Cat, CatLabel string
+}
+
 func (s *Server) liveChat(w http.ResponseWriter, r *http.Request) {
 	snap := s.st.Status()
 	want := r.URL.Query().Get("video")
@@ -239,10 +212,10 @@ func (s *Server) liveChat(w http.ResponseWriter, r *http.Request) {
 			paused = append(paused, b.Label)
 		}
 	}
-	var rows []FeedRow
+	var rows []ChatRow
 	for _, m := range s.st.LastChat(sel, 60) {
 		c := Classify(m.Text)
-		rows = append(rows, FeedRow{m, c, catLabels[c], ""})
+		rows = append(rows, ChatRow{m, c, catLabels[c]})
 	}
 	sort.SliceStable(rows, func(i, j int) bool { return rows[i].At.After(rows[j].At) })
 	s.render(w, "vivo-chat", map[string]any{
@@ -348,17 +321,6 @@ func (s *Server) liveAnalysis(w http.ResponseWriter, r *http.Request) {
 	now := time.Now()
 	msgs := sinceFor(snap.Msgs, id, now.Add(-24*time.Hour))
 	a := Analyze(msgs)
-	var offenders []CatRow
-	peak := 1
-	for _, o := range a.Offenders {
-		peak = max(peak, o.Total())
-	}
-	for _, o := range a.Offenders {
-		offenders = append(offenders, CatRow{
-			Key: fmt.Sprintf("%d spam · %d insultos", o.Spam, o.Insultos), Label: o.Author,
-			N: o.Total(), Pct: float64(o.Total()) * 100 / float64(peak),
-		})
-	}
 	var filterLine []string
 	for _, f := range a.Filters {
 		filterLine = append(filterLine, f.Key)
@@ -366,8 +328,8 @@ func (s *Server) liveAnalysis(w http.ResponseWriter, r *http.Request) {
 	viewers := s.st.Viewers(id, now.Add(-24*time.Hour))
 	s.render(w, "vivo-analisis", map[string]any{
 		"Video": id, "Hours": hours, "Label": label, "A": a, "Topics": bars(a.Topics), "Tech": bars(a.Tech),
-		"Offenders": offenders, "FilterLine": strings.Join(filterLine, ", "),
-		"Part": participationView(video, msgs, viewers, videoTitles(snap.Videos), now, hours),
+		"FilterLine": strings.Join(filterLine, ", "),
+		"Part":       participationView(video, msgs, viewers, videoTitles(snap.Videos), now, hours),
 	})
 }
 
@@ -622,11 +584,8 @@ func (s *Server) extra(w http.ResponseWriter, r *http.Request) {
 	snap := s.st.Snapshot()
 	day := since(snap.Msgs, time.Now().Add(-24*time.Hour))
 	s.render(w, "extra", map[string]any{
-		"Words":    TopWords(day, 20),
-		"Authors":  TopAuthors(day, 10),
-		"Programs": TopPrograms(day, snap.Videos, 10),
-		"Videos":   snap.Videos,
-		"Channel":  snap.Channel,
+		"Words":   TopWords(day, 20),
+		"Authors": TopAuthors(day, 10),
 	})
 }
 
@@ -657,14 +616,6 @@ func videoTitles(v []Video) map[string]string {
 	out := map[string]string{}
 	for _, x := range v {
 		out[x.ID] = x.Title
-	}
-	return out
-}
-
-func catOptions() []CatRow {
-	var out []CatRow
-	for _, c := range categories {
-		out = append(out, CatRow{Key: c, Label: catLabels[c]})
 	}
 	return out
 }

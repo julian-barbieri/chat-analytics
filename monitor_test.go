@@ -494,9 +494,6 @@ func TestAnalyze(t *testing.T) {
 	if len(a.Tech) != 1 || a.Tech[0] != (Count{"Audio", 1}) || len(a.TechMsgs) != 1 {
 		t.Errorf("quejas técnicas = %v", a.Tech)
 	}
-	if len(a.Offenders) != 1 || a.Offenders[0] != (Offender{"Troll", 0, 2}) {
-		t.Errorf("repetidos = %+v", a.Offenders)
-	}
 	if !strings.Contains(fmt.Sprint(a.Filters), "pelotudo") || !strings.Contains(fmt.Sprint(a.Filters), "corrupto") || a.Links != 1 {
 		t.Errorf("filtros = %v, links = %d", a.Filters, a.Links)
 	}
@@ -556,6 +553,53 @@ func TestSummaryWithoutActivityChart(t *testing.T) {
 	body := w.Body.String()
 	if w.Code != 200 || strings.Contains(body, "Mensajes cada 5 minutos") || !strings.Contains(body, "Categorías de hoy") {
 		t.Errorf("resumen (%d):\n%s", w.Code, body)
+	}
+}
+
+// El usuario pidió sacar del dashboard el feed de últimos mensajes, el chat por
+// programa, los videos recientes y la tarjeta de spam e insultos repetidos.
+func TestDashboardWithoutRemovedSections(t *testing.T) {
+	st, err := OpenStore(t.TempDir() + "/datos.jsonl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	st.SetVideos("Radio Test", []Video{{ID: "v1", Title: "RADIO TEST en VIVO | MAÑANA", Channel: "Radio Test", LiveStatus: "live"}})
+	st.Add([]Message{
+		{ID: "a", Source: "chat", VideoID: "v1", Author: "Troll", Text: "sos un pelotudo", At: now, Program: "MAÑANA"},
+		{ID: "b", Source: "chat", VideoID: "v1", Author: "Troll", Text: "pelotudo otra vez", At: now, Program: "MAÑANA"},
+	})
+	h := (&Server{st: st, budget: 9000}).Routes()
+	get := func(path string) *httptest.ResponseRecorder {
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, httptest.NewRequest("GET", path, nil))
+		return w
+	}
+	cases := []struct {
+		path      string
+		want, not []string
+	}{
+		{"/", []string{"/parcial/extra"}, []string{"Últimos mensajes", "/parcial/feed", `name="fuente"`}},
+		{"/parcial/extra", []string{"Palabras más repetidas", "Quiénes más escriben"}, []string{"Chat por programa", "Videos recientes"}},
+		{"/parcial/vivo/analisis?video=v1", []string{"4. Filtros para YouTube Studio", "5. Momentos con más participación"},
+			[]string{"Spam e insultos repetidos", "6. Momentos"}},
+	}
+	for _, c := range cases {
+		w := get(c.path)
+		body := w.Body.String()
+		for _, s := range c.want {
+			if w.Code != 200 || !strings.Contains(body, s) {
+				t.Errorf("%s (%d): falta %q", c.path, w.Code, s)
+			}
+		}
+		for _, s := range c.not {
+			if strings.Contains(body, s) {
+				t.Errorf("%s: sigue apareciendo %q", c.path, s)
+			}
+		}
+	}
+	if w := get("/parcial/feed"); w.Code != 404 {
+		t.Errorf("/parcial/feed = %d, quería 404", w.Code)
 	}
 }
 
@@ -1935,16 +1979,16 @@ func TestParticipationChart(t *testing.T) {
 	})
 }
 
-// section6 recorta la tarjeta 6 del parcial de análisis.
-func section6(t *testing.T, body string) string {
+// section5 recorta la tarjeta 5 del parcial de análisis.
+func section5(t *testing.T, body string) string {
 	t.Helper()
-	i := strings.Index(body, "6. Momentos con más participación")
+	i := strings.Index(body, "5. Momentos con más participación")
 	if i < 0 {
-		t.Fatalf("no está la tarjeta 6")
+		t.Fatalf("no está la tarjeta 5")
 	}
 	j := strings.Index(body[i:], "</section>")
 	if j < 0 {
-		t.Fatalf("la tarjeta 6 no cierra")
+		t.Fatalf("la tarjeta 5 no cierra")
 	}
 	return body[i : i+j]
 }
@@ -1996,7 +2040,7 @@ func TestLiveParticipationView(t *testing.T) {
 	get := func(url string) string {
 		w := httptest.NewRecorder()
 		h.ServeHTTP(w, httptest.NewRequest("GET", url, nil))
-		return section6(t, w.Body.String())
+		return section5(t, w.Body.String())
 	}
 	const (
 		e0 = "Sin registro de cuántos miraban en las últimas 24 h: todavía no se puede armar el ranking por %."
@@ -2339,7 +2383,7 @@ func TestLiveParticipationViewEdges(t *testing.T) {
 		}
 	}
 
-	body := section6(t, get("/parcial/vivo/analisis?video=x1"))
+	body := section5(t, get("/parcial/vivo/analisis?video=x1"))
 	common("x1", body)
 	for _, want := range []string{
 		"&lt;script&gt;alert(1)&lt;/script&gt;</div>",           // programa en la tabla
@@ -2358,7 +2402,7 @@ func TestLiveParticipationViewEdges(t *testing.T) {
 		t.Errorf("x1: un vivo en curso no lleva t= (YouTube lo ignora)")
 	}
 
-	body = section6(t, get("/parcial/vivo/analisis?video=x2"))
+	body = section5(t, get("/parcial/vivo/analisis?video=x2"))
 	common("x2", body)
 	if !strings.Contains(body, "Solo 4 de 5: el resto de las franjas") || strings.Count(body, `<tr class="main">`) != 4 {
 		t.Errorf("x2: E2 con 4 momentos")
@@ -2379,7 +2423,7 @@ func TestLiveParticipationViewEdges(t *testing.T) {
 		}
 	}
 
-	body = section6(t, get("/parcial/vivo/analisis?video=x3"))
+	body = section5(t, get("/parcial/vivo/analisis?video=x3"))
 	common("x3", body)
 	for _, want := range []string{"Ninguna franja con dato de espectadores tuvo al menos 3 personas escribiendo.",
 		"todavía sin franjas con dato de espectadores y al menos 3 personas"} {
@@ -2400,7 +2444,7 @@ func TestLiveParticipationViewEdges(t *testing.T) {
 			}
 		}
 	}
-	for _, want := range []string{"minmax(min(300px, 100%), 1fr)", "height: 240px", "height: 180px", ".bar.top { fill: var(--warn-text); }",
+	for _, want := range []string{"minmax(min(400px, 100%), 1fr)", "height: 240px", "height: 180px", ".bar.top { fill: var(--warn-text); }",
 		"vector-effect: non-scaling-stroke", "overflow-wrap: anywhere", ".pticks span:nth-child(even) { display: none; }"} {
 		if !strings.Contains(page, want) {
 			t.Errorf("CSS: falta %q", want)
@@ -2556,7 +2600,7 @@ func TestParticipationWindowView(t *testing.T) {
 		if !before(body) {
 			t.Errorf("%q: falta el aviso %q", q, note)
 		}
-		if n := strings.Count(section6(t, body), "<g><title>"); n != 72 {
+		if n := strings.Count(section5(t, body), "<g><title>"); n != 72 {
 			t.Errorf("%q: %d franjas, quería 72 (6 h)", q, n)
 		}
 	}
@@ -2572,7 +2616,7 @@ func TestParticipationWindowView(t *testing.T) {
 	}
 	// Desde la franja del chat viejo (10 h) hasta ahora: 121 franjas, o una más
 	// si entre el test y el handler se pasó a la franja siguiente.
-	if n := strings.Count(section6(t, body), "<g><title>"); n != 121 && n != 122 {
+	if n := strings.Count(section5(t, body), "<g><title>"); n != 121 && n != 122 {
 		t.Errorf("24 h: %d franjas, quería 121", n)
 	}
 

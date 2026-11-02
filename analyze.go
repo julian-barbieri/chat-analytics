@@ -51,14 +51,6 @@ func TechIssue(text string) string {
 // Preguntas que son saludos y no hace falta responder al aire.
 var greetings = []string{"como estas", "como andan", "como anda", "como va", "como le va", "todo bien", "que tal"}
 
-// Offender es alguien que mandó spam o insultos más de una vez.
-type Offender struct {
-	Author         string
-	Spam, Insultos int
-}
-
-func (o Offender) Total() int { return o.Spam + o.Insultos }
-
 // Analysis es lo que muestra el dashboard de cada vivo.
 type Analysis struct {
 	Total      int
@@ -66,7 +58,6 @@ type Analysis struct {
 	Questions  []Message // preguntas que vale la pena mirar
 	Tech       []Count   // quejas técnicas por tipo
 	TechMsgs   []Message
-	Offenders  []Offender
 	Filters    []Count // palabras de las listas de spam e insultos que aparecieron
 	Candidates []Count // palabras que casi solo aparecen en spam e insultos: revisarlas antes de cargarlas
 	Links      int     // mensajes con links
@@ -75,7 +66,6 @@ type Analysis struct {
 func Analyze(msgs []Message) Analysis {
 	a := Analysis{Total: len(msgs), Topics: TopTopics(msgs, 5)}
 	tech := map[string]int{}
-	byAuthor := map[string]*Offender{}
 	filters := map[string]int{}
 	seenQ := map[string]bool{}
 	var bad []Message
@@ -99,16 +89,6 @@ func Analyze(msgs []Message) Analysis {
 			continue
 		}
 		bad = append(bad, m)
-		o := byAuthor[m.Author]
-		if o == nil {
-			o = &Offender{Author: m.Author}
-			byAuthor[m.Author] = o
-		}
-		if cat == CatSpam {
-			o.Spam++
-		} else {
-			o.Insultos++
-		}
 		if reLink.MatchString(t) {
 			a.Links++
 		}
@@ -136,19 +116,6 @@ func Analyze(msgs []Message) Analysis {
 	}
 	sort.SliceStable(a.TechMsgs, func(i, j int) bool { return a.TechMsgs[i].At.After(a.TechMsgs[j].At) })
 	a.TechMsgs = a.TechMsgs[:min(len(a.TechMsgs), 5)]
-
-	for _, o := range byAuthor {
-		if o.Total() >= 2 {
-			a.Offenders = append(a.Offenders, *o)
-		}
-	}
-	sort.Slice(a.Offenders, func(i, j int) bool {
-		if a.Offenders[i].Total() != a.Offenders[j].Total() {
-			return a.Offenders[i].Total() > a.Offenders[j].Total()
-		}
-		return a.Offenders[i].Author < a.Offenders[j].Author
-	})
-	a.Offenders = a.Offenders[:min(len(a.Offenders), 10)]
 
 	a.Filters = topN(filters, 12)
 	a.Candidates = candidates(bad, msgs, 8)
