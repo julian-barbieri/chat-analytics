@@ -434,6 +434,51 @@ type Tick struct {
 	End   bool // está en el borde derecho: se alinea a la derecha para no desbordar
 }
 
+// ViewersLine es el panel de oyentes arriba de las barras: escalones con el
+// promedio de espectadores de cada franja, cortados donde no hay dato.
+type ViewersLine struct{ Path, Max, Aria string }
+
+// viewersLine arma el panel de oyentes de la ventana graficada, con su propia
+// escala desde 0 (para comparar "muchos" contra "pocos"). Son escalones y no
+// una línea entre centros: cada valor es el promedio de toda la franja y una
+// franja aislada igual se ve. Sin dato en la ventana no hay panel.
+func viewersLine(slots []Slot, span string) (ViewersLine, bool) {
+	var peak Slot
+	missing := 0
+	for _, s := range slots {
+		if s.Viewers > peak.Viewers {
+			peak = s
+		}
+		if s.Viewers == 0 {
+			missing++
+		}
+	}
+	if peak.Viewers == 0 {
+		return ViewersLine{}, false
+	}
+	var path strings.Builder
+	for i, s := range slots {
+		if s.Viewers == 0 {
+			continue // corta el tramo: el siguiente arranca con otro M, no baja a 0
+		}
+		y := 100 - float64(s.Viewers)/float64(peak.Viewers)*100
+		if i == 0 || slots[i-1].Viewers == 0 {
+			fmt.Fprintf(&path, "M%d %.2fH%d", i, y, i+1)
+		} else {
+			fmt.Fprintf(&path, "V%.2fH%d", y, i+1)
+		}
+	}
+	aria := fmt.Sprintf("Cuántos miraban el vivo cada 5 minutos %s (promedio de lo que informa YouTube); máximo de %s a las %s",
+		span, miles(peak.Viewers), peak.Start.Local().Format("15:04"))
+	switch {
+	case missing == 1:
+		aria += "; sin dato en 1 franja"
+	case missing > 1:
+		aria += fmt.Sprintf("; sin dato en %d franjas", missing)
+	}
+	return ViewersLine{Path: path.String(), Max: "máx. " + miles(peak.Viewers) + " mirando", Aria: aria}, true
+}
+
 // participationChart arma las barras del % de participación cada 5 minutos,
 // con los momentos del top marcados y la línea de la participación típica.
 // Si no hay ningún dato de espectadores (ok false), muestra personas para no
@@ -512,6 +557,10 @@ func participationChart(slots []Slot, moments []Moment, typical float64, ok bool
 		out["Aria"] = aria
 		return out
 	}
+	// La escala del panel es el máximo de la ventana recibida: cambia con 6 h / 24 h.
+	if line, has := viewersLine(slots, span); has {
+		out["Viewers"] = line
+	}
 	out["TypicalY"] = 100.0
 	if scale > 0 {
 		out["TypicalY"] = 100 - typical/scale*100
@@ -534,13 +583,14 @@ func slotTitle(s Slot, titles map[string]string) string {
 		label += " · " + p
 	}
 	label += fmt.Sprintf(" · %s mensajes · %s personas", miles(s.N), miles(s.Authors))
-	switch {
-	case s.Viewers == 0:
-		label += " · sin dato de espectadores"
-	case s.Authors < minPersonasTop:
+	if s.Viewers == 0 {
+		return label + " · sin dato de espectadores"
+	}
+	// Cuántos miraban va siempre que haya dato: el panel de oyentes remite a
+	// este tooltip también en las franjas que no entran en el ranking.
+	label += fmt.Sprintf(" · %s mirando (%s)", miles(s.Viewers), pct(s.Pct))
+	if s.Authors < minPersonasTop {
 		label += fmt.Sprintf(" · menos de %d personas: no entra en el ranking", minPersonasTop)
-	default:
-		label += fmt.Sprintf(" · %s mirando (%s)", miles(s.Viewers), pct(s.Pct))
 	}
 	return label
 }
