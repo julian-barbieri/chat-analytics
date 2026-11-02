@@ -34,45 +34,14 @@
 </section>
 {{end}}
 
-{{define "feed"}}
-{{if not .Rows}}<p class="muted">Todavía no hay mensajes con estos filtros.</p>{{end}}
-<ul class="feed">
-  {{range .Rows}}<li>
-    <div class="meta">
-      <span class="badge {{.Cat}}">{{.CatLabel}}</span>
-      <span>{{if eq .Source "chat"}}Chat{{else}}Comentario{{end}}</span>
-      <strong>{{.Author}}</strong>
-      <span>{{fecha .At}}</span>
-      {{if .Likes}}<span>{{.Likes}} likes</span>{{end}}
-      {{if .Video}}<span>· {{.Video}}</span>{{end}}
-    </div>
-    <div>{{.Text}}</div>
-  </li>{{end}}
-</ul>
-{{end}}
-
 {{define "extra"}}
-<section class="card" style="margin-bottom:16px">
+<section class="card">
   <h2>Palabras más repetidas (24 h)</h2>
   <div class="words">{{range .Words}}<span>{{.Key}} · {{.N}}</span>{{else}}<span class="muted">Sin datos todavía</span>{{end}}</div>
 </section>
-<section class="card" style="margin-bottom:16px">
-  <h2>Chat por programa (24 h)</h2>
-  <table>{{range .Programs}}<tr><td>{{.Key}}</td><td class="n">{{miles .N}}</td></tr>{{else}}<tr><td class="muted">Sin datos todavía</td></tr>{{end}}</table>
-</section>
-<section class="card" style="margin-bottom:16px">
+<section class="card">
   <h2>Quiénes más escriben (24 h)</h2>
   <table>{{range .Authors}}<tr><td>{{.Key}}</td><td class="n">{{.N}}</td></tr>{{else}}<tr><td class="muted">Sin datos todavía</td></tr>{{end}}</table>
-</section>
-<section class="card">
-  <h2>Videos recientes</h2>
-  <div class="scroll"><table>
-    <tr><th>Video</th><th class="n">Vistas</th><th class="n">Coment.</th></tr>
-    {{range .Videos}}<tr>
-      <td>{{if eq .LiveStatus "live"}}<span class="live">VIVO</span> {{end}}<a href="https://youtu.be/{{.ID}}" target="_blank" rel="noopener">{{.Title}}</a>{{if and .Channel (ne .Channel $.Channel)}} <span class="muted">· {{.Channel}}</span>{{end}}</td>
-      <td class="n">{{miles .Views}}</td><td class="n">{{miles .Comments}}</td>
-    </tr>{{end}}
-  </table></div>
 </section>
 {{end}}
 
@@ -147,17 +116,7 @@
   </section>
 
   <section class="card">
-    <h2>4. Spam e insultos repetidos</h2>
-    {{range .Offenders}}<div class="catrow wide" title="{{.Label}}: {{.Key}}">
-      <span>{{.Label}}</span>
-      <div class="track"><div class="fill crit" style="width: {{printf "%.1f" .Pct}}%"></div></div>
-      <span class="num">{{.N}}</span>
-    </div>
-    <div class="muted sub">{{.Key}}</div>{{else}}<p class="muted">Nadie repitió spam ni insultos.</p>{{end}}
-  </section>
-
-  <section class="card">
-    <h2>5. Filtros para YouTube Studio</h2>
+    <h2>4. Filtros para YouTube Studio</h2>
     {{if .A.Filters}}
     <div class="words">{{range .A.Filters}}<span>{{.Key}} · {{.N}}</span>{{end}}</div>
     <label class="muted sub" for="filtros">Para copiar en Configuración › Comunidad › Palabras bloqueadas:</label>
@@ -171,7 +130,7 @@
   </section>
 
   {{with .Part}}<section class="card full">
-    <h2>6. Momentos con más participación (para reels)</h2>
+    <h2>5. Momentos con más participación (para reels)</h2>
     {{if .ByPct}}<p class="muted">Los 5 momentos de 5 minutos en que escribió el mayor % de los que miraban (con al menos 3 personas). Participación típica del vivo: {{.Typical}} (línea punteada){{if .Concurrent}} · {{miles .Concurrent}} mirando ahora{{end}}</p>
     {{else}}<p class="muted">Sin dato de cuántos miraban: el gráfico muestra personas que escribieron y no hay ranking por %{{if .Concurrent}} · {{miles .Concurrent}} mirando ahora{{end}}</p>{{end}}
     {{if not .Concurrent}}<div class="note">YouTube no informa cuántos miran este vivo (el canal oculta el contador): sin ese dato no se puede calcular el % de participación.</div>{{end}}

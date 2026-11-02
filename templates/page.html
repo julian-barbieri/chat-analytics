@@ -70,8 +70,8 @@ a { color: var(--series-1); }
 .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin-bottom: 16px; }
 .tile .v { font-size: 26px; font-weight: 650; font-variant-numeric: tabular-nums; }
 .tile .l { font-size: 13px; color: var(--text-secondary); }
-.grid2 { display: grid; grid-template-columns: 2fr 1fr; gap: 16px; margin-bottom: 16px; }
-@media (max-width: 800px) { .grid2 { grid-template-columns: 1fr; } }
+.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px; }
+@media (max-width: 600px) { .grid2 { grid-template-columns: 1fr; } }
 .mb { margin-bottom: 16px; }
 .bar { fill: var(--series-1); }
 .hit { fill: transparent; }
@@ -80,9 +80,6 @@ a { color: var(--series-1); }
 .track { background: var(--grid); border-radius: 4px; height: 12px; overflow: hidden; }
 .fill { background: var(--series-1); height: 100%; border-radius: 0 4px 4px 0; }
 .num { text-align: right; font-variant-numeric: tabular-nums; color: var(--text-secondary); }
-.filters { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
-select, input[type=search] { font: inherit; padding: 6px 8px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface-1); color: var(--text-primary); }
-input[type=search] { flex: 1; min-width: 160px; }
 .feed { list-style: none; margin: 0; padding: 0; max-height: 560px; overflow-y: auto; }
 .feed li { padding: 8px 0; border-bottom: 1px solid var(--border); }
 .feed .meta { font-size: 12px; color: var(--text-muted); display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
@@ -95,7 +92,6 @@ input[type=search] { flex: 1; min-width: 160px; }
 table { width: 100%; border-collapse: collapse; font-size: 13px; }
 td, th { text-align: left; padding: 6px 4px; border-bottom: 1px solid var(--border); }
 td.n, th.n { text-align: right; font-variant-numeric: tabular-nums; }
-.scroll { overflow-x: auto; }
 .vivo { margin-bottom: 16px; }
 .vhead { margin-bottom: 8px; }
 .vhead h2 { margin: 0; }
@@ -113,7 +109,6 @@ td.n, th.n { text-align: right; font-variant-numeric: tabular-nums; }
 .catrow.wide { grid-template-columns: minmax(0, 40%) 1fr 44px; }
 .catrow.wide span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .fill.warn { background: var(--warn-text); }
-.fill.crit { background: var(--crit-text); }
 .vgrid .full { grid-column: 1 / -1; }
 /* Gráfico de participación: el SVG se estira a un alto fijo (no depende del
    ancho) y los textos van en HTML para que midan siempre 12 px. */
@@ -156,25 +151,7 @@ td.n, th.n { text-align: right; font-variant-numeric: tabular-nums; }
 
   <div id="vivo" hx-get="/parcial/vivo?video={{.Vivo}}" hx-trigger="load" hx-swap="outerHTML"></div>
 
-  <div class="grid2">
-    <section class="card">
-      <h2>Últimos mensajes</h2>
-      <form class="filters" hx-get="/parcial/feed" hx-target="#feed" hx-trigger="change, keyup changed delay:400ms from:input">
-        <select name="fuente" aria-label="Fuente">
-          <option value="">Chat y comentarios</option>
-          <option value="chat">Solo chat</option>
-          <option value="comentario">Solo comentarios</option>
-        </select>
-        <select name="cat" aria-label="Categoría">
-          <option value="">Todas las categorías</option>
-          {{range .Cats}}<option value="{{.Key}}">{{.Label}}</option>{{end}}
-        </select>
-        <input type="search" name="q" placeholder="Buscar texto o autor" aria-label="Buscar">
-      </form>
-      <div id="feed" hx-get="/parcial/feed" hx-trigger="load, every 5s" hx-include=".filters"></div>
-    </section>
-    <div id="extra" hx-get="/parcial/extra" hx-trigger="load, every 30s"></div>
-  </div>
+  <div id="extra" class="grid2" hx-get="/parcial/extra" hx-trigger="load, every 30s"></div>
 </main>
 </body>
 </html>
