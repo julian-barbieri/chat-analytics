@@ -1,6 +1,6 @@
 # Spec: borrar desde el tablero una tarea con el PR abierto (botón de tacho)
 
-- **Estado:** aprobada
+- **Estado:** implementada
 - **Tipo:** mejora
 - **Rama:** `feat/borrar-tarea-pr-abierto`
 - **Origen:** pedido de Julian Barbieri por `/factory` (tarea `004-borrar-tarea-pr-abierto`),
@@ -111,25 +111,34 @@ abierto o mergeado. Borrar es sacar el estado de la factory, no deshacer el trab
 
 ## Criterios de aceptación
 
-- [ ] CA1: `POST /tarea/{id}/eliminar` con `HX-Request: true`, `Host` local y una tarea
+- [x] CA1: `POST /tarea/{id}/eliminar` con `HX-Request: true`, `Host` local y una tarea
   cuyo `job.json` es válido y tiene `etapa: pr-abierto` responde 200 con el parcial del
   tablero sin esa tarjeta, y después no existe ni `factory/jobs/<id>/` ni
   `factory/jobs/.borrando-<id>/`; las demás tareas y `factory/events/` quedan iguales.
   Vale también para una tarea que el tablero muestra en "Mergeado". — `TestDeleteJob`
   (caso feliz y caso mergeado con `prQuery` falso, comparando con `snapTree`)
-- [ ] CA2: no borra si la etapa no es `pr-abierto` (por ejemplo `esperando-aprobacion`,
+- [x] CA2: no borra si la etapa no es `pr-abierto` (por ejemplo `esperando-aprobacion`,
   `descartada`), si `job.json` falta, está roto o tiene una etapa desconocida, o si la
   tarea tuvo actividad hace menos de `liveWindow` (2 min) o tiene un subagente activo
   según `activities`. En todos esos casos responde **409** con el parcial del tablero
-  más un aviso `role="alert"` que dice por qué, y ningún archivo de `factory/` cambia. —
-  `TestDeleteJob` (un caso por motivo, con `snapTree` antes y después)
-- [ ] CA3: protección contra pedidos de otros sitios (CSRF) y de otros hosts: responde
+  más un aviso que dice por qué, y ningún archivo de `factory/` cambia. El aviso va en un
+  bloque fuera de banda (`<div id="aviso" hx-swap-oob="innerHTML">`) que htmx pone en
+  `<div id="aviso" role="status" aria-live="polite">` de `page.html`, **fuera de
+  `#tablero`**: `#tablero` se reemplaza cada 2 s y el aviso desaparecería. Los `GET` del
+  tablero no traen ese bloque, así el aviso queda hasta el próximo borrado; un borrado
+  exitoso lo reemplaza por "Se borró la tarea <id>." (`.note.ok`). Se usa una región
+  viva `role="status"` que persiste en la página en vez de un `role="alert"` que se
+  inserta: el cambio se anuncia igual, sin anunciarse dos veces. — `TestDeleteJob` (un
+  caso por motivo, con `snapTree` antes y después, aviso en el bloque fuera de banda y
+  no dentro del tablero) y `TestDeleteNotice` (`#aviso` antes de `#tablero` en `GET /`
+  y sin `hx-swap-oob` en `GET /parcial/tablero`)
+- [x] CA3: protección contra pedidos de otros sitios (CSRF) y de otros hosts: responde
   **403** y no borra nada si falta `HX-Request: true`, si hay `Origin` y su host no es
   igual a `r.Host`, si hay `Sec-Fetch-Site` distinto de `same-origin`, o si el `Host` no
   es local (`localOnly`). Un `Origin` igual al host local con `Sec-Fetch-Site:
   same-origin` pasa. — `TestDeleteJob` (casos 403) y `TestLocalOnly` extendido con el
   `POST`
-- [ ] CA4: un `id` que no cumple `idRe` (por ejemplo `..%2F..%2F.env`, `.borrando-003-c`,
+- [x] CA4: un `id` que no cumple `idRe` (por ejemplo `..%2F..%2F.env`, `.borrando-003-c`,
   `001-A`, `1-a`) o que no existe en `factory/jobs/` da **404**; si `factory/jobs/<id>`
   es un enlace simbólico (aunque apunte a una carpeta con un `job.json` en
   `pr-abierto`) o un archivo, también 404 y el destino del enlace queda intacto. Un
@@ -137,16 +146,17 @@ abierto o mergeado. Borrar es sacar el estado de la factory, no deshacer el trab
   como enlace y el archivo de afuera queda intacto. `GET /tarea/{id}/eliminar` da 405. —
   `TestDeleteJob` (los casos de enlaces se saltean en Windows con `t.Skip`) y
   `TestRoutes` (405)
-- [ ] CA5: si el borrado falla después del rename, la tarea ya no aparece, la respuesta
-  es 200 con un aviso `role="alert"` que nombra `factory/jobs/.borrando-<id>/`, y el
+- [x] CA5: si el borrado falla después del rename, la tarea ya no aparece, la respuesta
+  es 200 con un aviso (en `#aviso`, como en CA2) que nombra `factory/jobs/.borrando-<id>/`, y el
   próximo `POST` de borrado (de cualquier tarea) reintenta y borra esa carpeta antes de
   seguir. Si ya existe `factory/jobs/.borrando-<id>` y el barrido no la pudo borrar, el
   pedido responde 409 sin tocar `factory/jobs/<id>/`. — `TestDeleteJob` con el borrado
   inyectable (campo `removeAll func(string) error` en `Board`, `os.RemoveAll` por
   defecto) que falla una vez
-- [ ] CA6: solo las tarjetas con `Etapa == "pr-abierto"` (columnas "PR abierto" y
-  "Mergeado") tienen el botón: un `<button type="button">` con
-  `hx-post="/tarea/<id>/eliminar"`, `hx-target="#tablero"`, `hx-confirm` con el texto
+- [x] CA6: solo las tarjetas con `Etapa == "pr-abierto"` (columnas "PR abierto" y
+  "Mergeado") tienen el botón: un `<button type="button" id="borrar-<id>">` (con `id`
+  porque htmx 2.0.4 solo le devuelve el foco tras el refresco de cada 2 s a elementos con
+  `id`) con `hx-post="/tarea/<id>/eliminar"`, `hx-target="#tablero"`, `hx-confirm` con el texto
   "¿Borrar la tarea <id>? Se borra su carpeta factory/jobs/<id>/ con todo lo que tiene y
   NO se puede deshacer. El PR, la rama y la spec no se tocan.",
   `aria-label="Borrar la tarea <id>"` y `title="Borrar tarea (no se puede deshacer)"`,
@@ -154,37 +164,37 @@ abierto o mergeado. Borrar es sacar el estado de la factory, no deshacer el trab
   `currentColor`). Las tarjetas en otras etapas y las tareas rotas no lo tienen. —
   `TestRoutes` (busca `hx-post`, `hx-confirm` con "no se puede deshacer", `aria-label` y
   el `<svg` en `003-c`, y su ausencia en `001-a` y `002-b`)
-- [ ] CA7: `templates/page.html` declara `<meta name="htmx-config">` con
+- [x] CA7: `templates/page.html` declara `<meta name="htmx-config">` con
   `responseHandling` igual al default de htmx 2.0.4 más `409` con `swap: true` antes de
   `[45]..`, para que el aviso de CA2 se vea. El JSON del meta es válido. — `TestRoutes`
   (`GET /` contiene el meta) y un test que extrae el `content` y lo pasa por
   `json.Unmarshal`
-- [ ] CA8: el botón usa solo tokens que ya existen en los dos temas: color
+- [x] CA8: el botón usa solo tokens que ya existen en los dos temas: color
   `--text-muted` en reposo y `--crit-text` sobre `--crit-bg` en `:hover` y
   `:focus-visible`, con contorno `--series-1` en `:focus-visible`; área táctil de al
   menos 28×28 px; no se agregan colores sueltos. — lectura del diff de `page.html` y
   verificación en el navegador en modo claro, oscuro y ancho de celular, con un
   `factory/` armado a mano en una carpeta temporal (`-repo`), anotada en el PR
-- [ ] CA9: en `/parcial/actividad`, un evento cuya tarea ya no está en `factory/jobs/`
+- [x] CA9: en `/parcial/actividad`, un evento cuya tarea ya no está en `factory/jobs/`
   muestra el ID como texto y no como `href="/tarea/<id>"`; las tareas que siguen
   existiendo mantienen el link. — `TestDeleteJob` (pide el feed después de borrar) o
   caso nuevo en `TestRoutes`
-- [ ] CA10: los `GET` siguen sin escribir nada: `TestBoardWritesNothing` pasa sin cambios
+- [x] CA10: los `GET` siguen sin escribir nada: `TestBoardWritesNothing` pasa sin cambios
   en lo que comprueba, también con una carpeta `factory/jobs/.borrando-x/` presente (el
   barrido no corre en los `GET`). —
   `go test -count=1 -run '^TestBoardWritesNothing$' ./tools/factory-board/`
-- [ ] CA11: el paso 0.3 del skill `/factory` elige `NNN` como el siguiente al más alto
+- [x] CA11: el paso 0.3 del skill `/factory` elige `NNN` como el siguiente al más alto
   entre (a) las carpetas de `factory/jobs/`, incluidas las `.borrando-<id>`, y (b) los
   IDs que aparecen como `factory/jobs/<NNN>-` en `factory/events/*.jsonl`. El skill trae
   el comando exacto (ver Diseño). — verificación manual anotada en el PR: en una carpeta
   temporal con `factory/jobs/001-a/`, `factory/jobs/.borrando-002-b/` y un evento que
   nombra `factory/jobs/005-c/job.json`, el comando imprime `005` (el siguiente es 006);
   sin eventos, imprime `002`
-- [ ] CA12: el tablero sigue escuchando en `localhost:8090` por defecto y sin
+- [x] CA12: el tablero sigue escuchando en `localhost:8090` por defecto y sin
   autenticación nueva; cada borrado queda en el log del proceso
   (`tarea <id> borrada`, o el error si quedó algo en `.borrando-<id>`). — lectura de
   `main.go` en el diff
-- [ ] CA13: documentación: ADR 0004 nuevo
+- [x] CA13: documentación: ADR 0004 nuevo
   (`docs/decisions/0004-tablero-borra-tareas-pr-abierto.md`, estado `propuesta`) que dice
   que el tablero deja de ser de solo lectura, qué borra, con qué guardas y que **no se
   puede deshacer**; la línea de estado de ADR 0002 y la de ADR 0003 lo referencian;
@@ -193,7 +203,7 @@ abierto o mergeado. Borrar es sacar el estado de la factory, no deshacer el trab
   flujo que el tablero puede borrar tareas en `pr-abierto` con el tacho (ADR 0004); el
   skill `/factory` en "Retomar una tarea" dice que si no existe la carpeta puede haberse
   borrado desde el tablero. — lectura del diff
-- [ ] CA14: gates de `CLAUDE.md` → "Definición de terminado" en verde (`gofmt -l .`
+- [x] CA14: gates de `CLAUDE.md` → "Definición de terminado" en verde (`gofmt -l .`
   vacío, `go vet ./...`, `staticcheck`, build Linux y Windows,
   `go test -race -count=1 ./...`, `go test -count=5 ./...`), revisión del `reviewer`
   sin bloqueantes y PR con la spec enlazada.
@@ -256,19 +266,25 @@ están). Todo en `tools/factory-board/` más docs y skill; nada del binario de
       `factory/jobs/.borrando-<id>` sigue existiendo → 409 ("quedó un borrado anterior
       sin terminar en factory/jobs/.borrando-<id>/"). Hace falta porque en Linux
       `rename(2)` reemplaza una carpeta destino vacía.
-   5. `os.Rename(<id>, .borrando-<id>)`. Si falla → 409 con el error recortado con `cut`.
+   5. `os.Rename(<id>, .borrando-<id>)`. Si falla → 409 con el motivo (`LinkError.Err`,
+      sin las dos rutas que lo tapaban) recortado con `cut`; el error entero va al log.
    6. `b.removeAll(.borrando-<id>)`. Si falla → sin error, con `aviso` ("se sacó del
       tablero pero quedaron archivos en factory/jobs/.borrando-<id>/; se reintenta en el
       próximo borrado") y log.
    Errores sentinela (`errNoJob`) y un tipo con mensaje para el 409, así el handler elige
    el código sin comparar textos.
 4. **Handler `deleteJob`** (`main.go`): `sameOrigin` → 403 en texto plano; `errNoJob` →
-   404 en texto plano; 409 o 200 → `render(w, "tablero", ...)` con lo mismo que
-   `boardPartial` más `"Aviso"`. `w.WriteHeader(409)` antes de renderizar en el rechazo.
+   404 en texto plano; 409 o 200 → `render(w, "eliminar", ...)` con lo mismo que
+   `boardPartial` más `"Aviso"` y `"OK"` (true en el borrado completo, con "Se borró la
+   tarea <id>."). `w.WriteHeader(409)` antes de renderizar en el rechazo.
    `log.Printf` en el éxito y en el aviso.
-5. **Template `tablero`** (`partials.html`): `{{with .Aviso}}<p class="note"
-   role="alert">{{.}}</p>{{end}}` arriba de los rotos (el texto ya dice si se borró o
-   no).
+5. **Template `eliminar`** (`partials.html`): `{{template "tablero" .}}` más
+   `<div id="aviso" hx-swap-oob="innerHTML"><p class="note{{if .OK}} ok{{end}}">{{.Aviso}}</p></div>`.
+   En `page.html`, `<div id="aviso" role="status" aria-live="polite"></div>` antes de
+   `#tablero` y `.note.ok` con `--ok-bg`/`--ok-text` (tokens que ya existen en los dos
+   temas). `innerHTML` deja en pie la región viva, que es la que anuncia el cambio. El
+   meta de htmx (punto 8) hace que el 409 haga el swap, y en htmx 2.0.4 el fuera de
+   banda se procesa dentro de ese swap.
 6. **Template `card`** (`partials.html:15-20`): dentro de `.top`, al final,
    `{{if eq .Etapa "pr-abierto"}}<button type="button" class="trash" …>{{template
    "tacho"}}</button>{{end}}` con los atributos de CA6. `{{define "tacho"}}` con un SVG

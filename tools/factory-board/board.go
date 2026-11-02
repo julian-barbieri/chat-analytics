@@ -57,7 +57,8 @@ var (
 )
 
 // Job es factory/jobs/<id>/job.json. Lo escribe solo el orquestador (/factory); acá
-// solo se lee. Las fechas quedan como texto para que una mal escrita no tire la tarea.
+// solo se lee: el tablero puede borrar la carpeta entera, nunca editarlo (ADR 0004).
+// Las fechas quedan como texto para que una mal escrita no tire la tarea.
 type Job struct {
 	ID, Tipo, Tarea, Etapa, Rama, Spec, PR, Motivo string
 	Vuelta                                         int
@@ -106,7 +107,7 @@ func (e Event) Action() string {
 }
 
 // Board lee factory/ del repo y consulta con gh el estado de los PR abiertos (ADR 0003).
-// No escribe nada: ni job.json ni la caché de PR van a disco.
+// Ni job.json ni la caché de PR van a disco; lo único que escribe es Delete (ADR 0004).
 type Board struct {
 	root string
 	now  func() time.Time
@@ -119,6 +120,9 @@ type Board struct {
 	prs     map[string]prEntry
 	prBusy  bool           // hay una ronda de consultas en vuelo
 	prWG    sync.WaitGroup // para esperar la ronda (tests)
+
+	delMu     sync.Mutex         // un borrado a la vez
+	removeAll func(string) error // os.RemoveAll; los tests simulan fallas
 }
 
 type dayFile struct {
@@ -128,7 +132,7 @@ type dayFile struct {
 }
 
 func NewBoard(root string) *Board {
-	return &Board{root: root, now: time.Now, cache: map[string]dayFile{}, prQuery: ghPRStatus, prs: map[string]prEntry{}}
+	return &Board{root: root, now: time.Now, cache: map[string]dayFile{}, prQuery: ghPRStatus, prs: map[string]prEntry{}, removeAll: os.RemoveAll}
 }
 
 func (b *Board) jobsDir() string   { return filepath.Join(b.root, "factory", "jobs") }
@@ -145,6 +149,18 @@ func (b *Board) Jobs() []Job {
 		}
 	}
 	return jobs
+}
+
+// jobIDs son las tareas que existen, para no enlazar en el feed las que se borraron.
+func (b *Board) jobIDs() map[string]bool {
+	entries, _ := os.ReadDir(b.jobsDir())
+	ids := map[string]bool{}
+	for _, e := range entries {
+		if e.IsDir() && idRe.MatchString(e.Name()) {
+			ids[e.Name()] = true
+		}
+	}
+	return ids
 }
 
 func (b *Board) readJob(id string) Job {

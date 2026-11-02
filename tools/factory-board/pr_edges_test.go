@@ -373,6 +373,8 @@ func TestBoardWritesNothing(t *testing.T) {
 		writeFile(t, root, "factory/jobs/"+id+"/triage.md", "estado "+s)
 	}
 	writeFile(t, root, "factory/events/2026-10-30.jsonl", `{"at":"2026-10-30T20:00:00Z","evento":"PreToolUse","sesion":"s","tool":"Bash","resumen":"x"}`+"\n")
+	// Un borrado a medias (ADR 0004): los GET no lo barren, eso lo hace solo el POST.
+	writeFile(t, root, "factory/jobs/.borrando-x/job.json", prJob("009-x", "https://github.com/a/b/pull/9"))
 	old := time.Now().Add(-time.Hour).Truncate(time.Second)
 	filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
 		return os.Chtimes(p, old, old)
