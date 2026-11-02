@@ -390,6 +390,11 @@ func newMoment(s Slot, rank int, titles map[string]string) Moment {
 		if len(m.Examples) == 2 {
 			break
 		}
+		// Un Super Sticker (o un Super Chat sin comentario) no tiene texto: cuenta
+		// como participación pero no sirve de ejemplo.
+		if strings.TrimSpace(msg.Text) == "" {
+			continue
+		}
 		if c := Classify(msg.Text); c == CatSpam || c == CatInsulto {
 			continue
 		}
@@ -415,4 +420,78 @@ func mainProgram(msgs []Message, titles map[string]string) string {
 		}
 	}
 	return best
+}
+
+// SuperTotal es la cantidad y la suma de pagos de una moneda (y, en
+// ByProgram, de un programa). La suma va en micros y nunca mezcla monedas.
+type SuperTotal struct {
+	Program  string
+	Currency string
+	N        int
+	Micros   int64
+}
+
+// SuperSummary son los totales de Super Chats y Super Stickers.
+type SuperSummary struct {
+	ByCurrency []SuperTotal // más pagos primero, después código de moneda
+	ByProgram  []SuperTotal // programa con más pagos primero; adentro, por moneda
+	Last       []Message    // los últimos 10, del más nuevo al más viejo
+}
+
+// Supers suma los pagos por moneda y por programa. Son los montos brutos que
+// pagó cada persona, en su moneda y sin convertir: no es lo que cobra el canal.
+func Supers(msgs []Message, titles map[string]string) SuperSummary {
+	var sum SuperSummary
+	byCur := map[string]*SuperTotal{}
+	byProg := map[[2]string]*SuperTotal{}
+	perProg := map[string]int{}
+	for _, m := range msgs {
+		if m.Super == "" {
+			continue
+		}
+		c := byCur[m.Currency]
+		if c == nil {
+			c = &SuperTotal{Currency: m.Currency}
+			byCur[m.Currency] = c
+		}
+		c.N++
+		c.Micros += m.AmountMicros
+		p := programOf(m, titles)
+		k := [2]string{p, m.Currency}
+		pc := byProg[k]
+		if pc == nil {
+			pc = &SuperTotal{Program: p, Currency: m.Currency}
+			byProg[k] = pc
+		}
+		pc.N++
+		pc.Micros += m.AmountMicros
+		perProg[p]++
+		sum.Last = append(sum.Last, m)
+	}
+	for _, c := range byCur {
+		sum.ByCurrency = append(sum.ByCurrency, *c)
+	}
+	sort.Slice(sum.ByCurrency, func(i, j int) bool {
+		a, b := sum.ByCurrency[i], sum.ByCurrency[j]
+		if a.N != b.N {
+			return a.N > b.N
+		}
+		return a.Currency < b.Currency
+	})
+	for _, c := range byProg {
+		sum.ByProgram = append(sum.ByProgram, *c)
+	}
+	sort.Slice(sum.ByProgram, func(i, j int) bool {
+		a, b := sum.ByProgram[i], sum.ByProgram[j]
+		if perProg[a.Program] != perProg[b.Program] {
+			return perProg[a.Program] > perProg[b.Program]
+		}
+		if a.Program != b.Program {
+			return a.Program < b.Program
+		}
+		return a.Currency < b.Currency
+	})
+	sort.SliceStable(sum.Last, func(i, j int) bool { return sum.Last[i].At.After(sum.Last[j].At) })
+	sum.Last = sum.Last[:min(len(sum.Last), 10)]
+	return sum
 }

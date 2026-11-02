@@ -189,7 +189,10 @@ func (s *Server) liveSection(w http.ResponseWriter, r *http.Request) {
 type ChatRow struct {
 	Message
 	Cat, CatLabel string
+	SuperLabel    string // "Super Chat" o "Super Sticker"; vacío en mensajes comunes
 }
+
+var superLabels = map[string]string{SuperChat: "Super Chat", SuperSticker: "Super Sticker"}
 
 func (s *Server) liveChat(w http.ResponseWriter, r *http.Request) {
 	snap := s.st.Status()
@@ -215,7 +218,7 @@ func (s *Server) liveChat(w http.ResponseWriter, r *http.Request) {
 	var rows []ChatRow
 	for _, m := range s.st.LastChat(sel, 60) {
 		c := Classify(m.Text)
-		rows = append(rows, ChatRow{m, c, catLabels[c]})
+		rows = append(rows, ChatRow{m, c, catLabels[c], superLabels[m.Super]})
 	}
 	sort.SliceStable(rows, func(i, j int) bool { return rows[i].At.After(rows[j].At) })
 	s.render(w, "vivo-chat", map[string]any{
@@ -330,7 +333,71 @@ func (s *Server) liveAnalysis(w http.ResponseWriter, r *http.Request) {
 		"Video": id, "Hours": hours, "Label": label, "A": a, "Topics": bars(a.Topics), "Tech": bars(a.Tech),
 		"FilterLine": strings.Join(filterLine, ", "),
 		"Part":       participationView(video, msgs, viewers, videoTitles(snap.Videos), now, hours),
+		"Super":      superView(Supers(msgs, videoTitles(snap.Videos))),
 	})
+}
+
+// Nota fija de la tarjeta y del informe para que nadie lea los totales como ingresos.
+const superNote = "Montos brutos que pagó cada persona, en su moneda y sin convertir: no es lo que cobra el canal."
+
+// SuperRow es una fila de las tablas de Super Chats con los números ya escritos.
+type SuperRow struct {
+	Program, Currency, Total string
+	N                        int
+}
+
+// SuperItem es uno de los últimos pagos de la tarjeta.
+type SuperItem struct {
+	At                         time.Time
+	Author, Kind, Amount, Text string
+}
+
+// superView arma la tarjeta de Super Chats y Super Stickers. Los textos van
+// como string: html/template escapa los comentarios y los nombres.
+func superView(sum SuperSummary) map[string]any {
+	row := func(c SuperTotal) SuperRow {
+		return SuperRow{programLabel(c.Program), currencyLabel(c.Currency), money(c.Micros), c.N}
+	}
+	var cur, prog []SuperRow
+	for _, c := range sum.ByCurrency {
+		cur = append(cur, row(c))
+	}
+	for _, c := range sum.ByProgram {
+		prog = append(prog, row(c))
+	}
+	var last []SuperItem
+	for _, m := range sum.Last {
+		text := m.Text
+		if strings.TrimSpace(text) == "" && m.Sticker != "" {
+			text = "Super Sticker: " + m.Sticker
+		}
+		last = append(last, SuperItem{m.At, m.Author, superLabels[m.Super], m.AmountText, text})
+	}
+	return map[string]any{"ByCurrency": cur, "ByProgram": prog, "Last": last, "Note": superNote}
+}
+
+// money escribe un total en micros con separador de miles y dos decimales con
+// coma, como se lee en Argentina (8500000000 → "8.500,00"). Los centavos se truncan.
+func money(micros int64) string {
+	sign := ""
+	if micros < 0 {
+		sign, micros = "-", -micros
+	}
+	return fmt.Sprintf("%s%s,%02d", sign, miles(micros/1_000_000), micros%1_000_000/10_000)
+}
+
+func currencyLabel(c string) string {
+	if c == "" {
+		return "sin moneda"
+	}
+	return c
+}
+
+func programLabel(p string) string {
+	if p == "" {
+		return "sin programa"
+	}
+	return p
 }
 
 // MomentRow es una fila de la tabla de los momentos con más participación,

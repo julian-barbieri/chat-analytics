@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 	"unicode"
@@ -235,7 +236,22 @@ type Message struct {
 	Likes   int64
 	Replies int64
 	Program string // en el chat, programa al aire cuando llegó el mensaje
+
+	// Solo en Super Chats y Super Stickers. Con omitempty las líneas de los
+	// mensajes comunes de datos.jsonl quedan iguales que antes.
+	Super        string `json:",omitempty"` // SuperChat, SuperSticker o "" (mensaje común)
+	AmountMicros int64  `json:",omitempty"` // monto bruto en millonésimas de la moneda
+	Currency     string `json:",omitempty"` // código ISO 4217, por ejemplo "ARS"
+	AmountText   string `json:",omitempty"` // el monto como lo muestra YouTube (amountDisplayString)
+	Tier         int    `json:",omitempty"`
+	Sticker      string `json:",omitempty"` // descripción del Super Sticker (altText)
 }
+
+// Valores de Message.Super.
+const (
+	SuperChat    = "superchat"
+	SuperSticker = "supersticker"
+)
 
 // TagProgram anota en cada mensaje de chat el programa según el título del vivo.
 // En un vivo de 24 horas el título cambia con cada programa, así que hay que
@@ -428,8 +444,19 @@ type chatPage struct {
 	Items                 []struct {
 		ID      string `json:"id"`
 		Snippet struct {
-			DisplayMessage string    `json:"displayMessage"`
-			PublishedAt    time.Time `json:"publishedAt"`
+			Type             string    `json:"type"`
+			DisplayMessage   string    `json:"displayMessage"`
+			PublishedAt      time.Time `json:"publishedAt"`
+			SuperChatDetails struct {
+				superPaid
+				UserComment string `json:"userComment"`
+			} `json:"superChatDetails"`
+			SuperStickerDetails struct {
+				superPaid
+				SuperStickerMetadata struct {
+					AltText string `json:"altText"`
+				} `json:"superStickerMetadata"`
+			} `json:"superStickerDetails"`
 		} `json:"snippet"`
 		AuthorDetails struct {
 			DisplayName string `json:"displayName"`
@@ -441,16 +468,65 @@ type chatPage struct {
 	} `json:"error"`
 }
 
+// superPaid son los datos del pago, iguales en Super Chats y Super Stickers.
+// amountMicros y tier se decodifican a mano: si YouTube los manda con otro
+// tipo, un Unmarshal estricto tiraría la página entera (en el streaming,
+// cortaría la conexión y se perdería el pedazo).
+type superPaid struct {
+	AmountMicros        json.RawMessage `json:"amountMicros"`
+	Currency            string          `json:"currency"`
+	AmountDisplayString string          `json:"amountDisplayString"`
+	Tier                json.RawMessage `json:"tier"`
+}
+
+func (p superPaid) fill(m *Message) {
+	m.AmountMicros = apiInt(p.AmountMicros)
+	m.Currency = p.Currency
+	m.AmountText = p.AmountDisplayString
+	m.Tier = int(apiInt(p.Tier))
+}
+
+// apiInt lee un entero que la API puede mandar como "5000000" o 5000000.
+// Cualquier otra cosa vale 0, también un negativo: restaría en los totales.
+func apiInt(raw json.RawMessage) int64 {
+	var s string
+	if json.Unmarshal(raw, &s) == nil {
+		raw = json.RawMessage(s)
+	}
+	n, err := strconv.ParseInt(strings.TrimSpace(string(raw)), 10, 64)
+	if err != nil || n < 0 {
+		return 0
+	}
+	return n
+}
+
 func (r chatPage) messages(videoID string) []Message {
 	var out []Message
 	for _, it := range r.Items {
-		if it.Snippet.DisplayMessage == "" {
-			continue
-		}
-		out = append(out, Message{
+		sn := it.Snippet
+		m := Message{
 			ID: it.ID, Source: "chat", VideoID: videoID, Author: it.AuthorDetails.DisplayName,
-			Text: it.Snippet.DisplayMessage, At: it.Snippet.PublishedAt,
-		})
+			Text: sn.DisplayMessage, At: sn.PublishedAt,
+		}
+		// Los pagos se guardan aunque no traigan texto (un Super Sticker no
+		// tiene): lo que importa es el monto.
+		switch sn.Type {
+		case "superChatEvent":
+			m.Super = SuperChat
+			sn.SuperChatDetails.fill(&m)
+			if m.Text == "" {
+				m.Text = sn.SuperChatDetails.UserComment
+			}
+		case "superStickerEvent":
+			m.Super = SuperSticker
+			sn.SuperStickerDetails.fill(&m)
+			m.Sticker = sn.SuperStickerDetails.SuperStickerMetadata.AltText
+		default:
+			if m.Text == "" {
+				continue
+			}
+		}
+		out = append(out, m)
 	}
 	return out
 }

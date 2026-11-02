@@ -24,6 +24,8 @@
   --ok-bg: #e6f4ea;
   --ok-text: #1e5b2e;
   --on-live: #ffffff;
+  --paid-bg: #efe7fb;
+  --paid-text: #5b2d91;
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
@@ -44,6 +46,8 @@
     --ok-bg: #16301e;
     --ok-text: #8fd3a2;
     --on-live: #1a0505;
+    --paid-bg: #2c2140;
+    --paid-text: #cdb1f5;
   }
 }
 * { box-sizing: border-box; }
@@ -87,6 +91,11 @@ a { color: var(--series-1); }
 .badge.spam, .badge.insulto { background: var(--crit-bg); color: var(--crit-text); border-color: transparent; }
 .badge.pregunta { background: var(--ok-bg); color: var(--ok-text); border-color: transparent; }
 .badge.queja { background: var(--warn-bg); color: var(--warn-text); border-color: transparent; }
+/* Pagos (Super Chat y Super Sticker): "super" no choca con ninguna categoría. */
+.badge.super { background: var(--paid-bg); color: var(--paid-text); border-color: transparent; }
+.supers table { margin-bottom: 12px; }
+.supers td { overflow-wrap: anywhere; }
+.supers td.n, .supers th.n { white-space: nowrap; }
 .words { display: flex; flex-wrap: wrap; gap: 6px; }
 .words span { font-size: 13px; padding: 2px 8px; border-radius: 6px; background: var(--grid); }
 table { width: 100%; border-collapse: collapse; font-size: 13px; }

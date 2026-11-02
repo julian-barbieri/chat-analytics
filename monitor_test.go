@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"encoding/csv"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -30,6 +32,21 @@ func TestClassify(t *testing.T) {
 		"Genio Nelson, saludos desde Rosario":    CatElogio,
 		"sos un corrupto":                        CatInsulto,
 		"opino distinto sobre el tema":           CatOtro,
+		// Super Chats: el monto puede venir delante del comentario en
+		// displayMessage y no tiene que cambiar la categoría (CA1b).
+		"ARS 5.000,00 Grande Nelson":               CatElogio,
+		"US$ 1,000.00 ¿Vuelve el programa mañana?": CatPregunta,
+		"$ 10 000 000 hola":                        CatOtro,
+		"ARS 500,00":                               CatOtro,
+		"USD 10 000 000 gracias":                   CatElogio,
+		"Llamame al 11 5555 5555":                  CatSpam, // sin moneda sigue siendo un teléfono
+		"con 11 5555 5555 te contesto":             CatSpam,
+		// Un teléfono detrás de una moneda sigue siendo spam: solo se ignoran
+		// los números con forma de monto (miles de 3 dígitos).
+		"$ 1155556666":             CatSpam,
+		"ars 1155556666 hablame":   CatSpam,
+		"usd 11 5555 5555":         CatSpam,
+		"hablame al $11 5555 5555": CatSpam,
 	}
 	for in, want := range cases {
 		if got := Classify(in); got != want {
@@ -85,7 +102,13 @@ func TestFlowAgainstFakeAPI(t *testing.T) {
 			 {"id":"c2","snippet":{"totalReplyCount":0,"topLevelComment":{"snippet":{"authorDisplayName":"Viejo","textOriginal":"viejo","publishedAt":"` + old + `","likeCount":0}}}}]}`))
 		case "/liveChat/messages":
 			text := map[string]string{"chat1": "Grande Nelson", "chat2": "Hoy hablan del dólar"}[q.Get("liveChatId")]
-			w.Write([]byte(`{"pollingIntervalMillis":1,"items":[{"id":"m-` + q.Get("liveChatId") + `","snippet":{"displayMessage":"` + text + `","publishedAt":"` + now + `"},"authorDetails":{"displayName":"Beto"}}]}`))
+			// El Super Chat viene en la misma respuesta que ya se paga: no hay pedido extra.
+			super := ""
+			if q.Get("liveChatId") == "chat1" {
+				super = `,{"id":"sc-chat1","snippet":{"type":"superChatEvent","displayMessage":"Vamos","publishedAt":"` + now +
+					`","superChatDetails":{"amountMicros":"5000000","currency":"ARS","amountDisplayString":"ARS 5,00","userComment":"Vamos","tier":2}},"authorDetails":{"displayName":"Caro"}}`
+			}
+			w.Write([]byte(`{"pollingIntervalMillis":1,"items":[{"id":"m-` + q.Get("liveChatId") + `","snippet":{"displayMessage":"` + text + `","publishedAt":"` + now + `"},"authorDetails":{"displayName":"Beto"}}` + super + `]}`))
 		default:
 			w.WriteHeader(404)
 		}
@@ -119,14 +142,19 @@ func TestFlowAgainstFakeAPI(t *testing.T) {
 	}
 	// Dos lecturas, una de cada vivo, con el programa de cada uno.
 	chat, err := yt.LiveChats(vids[:2], 5*time.Second, 2)
-	if err != nil || len(chat) != 2 {
+	if err != nil || len(chat) != 3 {
 		t.Fatalf("LiveChats: %v %+v", err, chat)
 	}
-	if chat[0].Program != "LA MAÑANA" || chat[1].Program != "La tarde de Otra" || chat[1].VideoID != "v3" {
-		t.Errorf("programas del chat = %q, %q", chat[0].Program, chat[1].Program)
+	if chat[0].Program != "LA MAÑANA" || chat[2].Program != "La tarde de Otra" || chat[2].VideoID != "v3" {
+		t.Errorf("programas del chat = %q, %q", chat[0].Program, chat[2].Program)
+	}
+	if sc := chat[1]; sc.ID != "sc-chat1" || sc.Super != SuperChat || sc.AmountMicros != 5000000 || sc.Currency != "ARS" ||
+		sc.AmountText != "ARS 5,00" || sc.Tier != 2 || sc.Program != "LA MAÑANA" || sc.Text != "Vamos" {
+		t.Errorf("Super Chat = %+v", sc)
 	}
 	md := report(title+", "+title2, vids, append(cs, chat...), time.Now(), yt.Units, nil, 1)
-	for _, want := range []string{"EN VIVO (40 mirando)", "| Otra Radio | EN VIVO (7 mirando)", "| pregunta | 1 |", "| elogio | 1 |", "- LA MAÑANA: 1", "- La tarde de Otra: 1"} {
+	for _, want := range []string{"EN VIVO (40 mirando)", "| Otra Radio | EN VIVO (7 mirando)", "| pregunta | 1 |", "| elogio | 1 |", "- LA MAÑANA: 2", "- La tarde de Otra: 1",
+		"## Super Chats y Super Stickers", "| ARS | 1 | 5,00 |", "| LA MAÑANA | ARS | 1 | 5,00 |"} {
 		if !strings.Contains(md, want) {
 			t.Errorf("el informe no contiene %q", want)
 		}
@@ -631,6 +659,10 @@ func TestStreamChat(t *testing.T) {
 			w.Write([]byte(`[{"error":{"code":403,"message":"The caller does not have permission"}}]`))
 		case "terminado":
 			w.Write([]byte(`[{"error":{"code":403,"message":"The live chat is no longer live."}}]`))
+		case "sticker":
+			w.Write([]byte(`[{"nextPageToken":"t4","items":[{"id":"st1","snippet":{"type":"superStickerEvent","displayMessage":"","publishedAt":"` +
+				time.Now().UTC().Format(time.RFC3339) + `","superStickerDetails":{"superStickerMetadata":{"altText":"Perrito aplaudiendo"},` +
+				`"amountMicros":"3000000","currency":"ARS","amountDisplayString":"ARS 3,00","tier":1}},"authorDetails":{"displayName":"Eva"}}]}]`))
 		case "colgado":
 			w.Write([]byte("[" + streamItem("t3", "m3", "y después nada")))
 			f.Flush()
@@ -652,6 +684,22 @@ func TestStreamChat(t *testing.T) {
 	}
 	if yt.Units != 0 {
 		t.Errorf("StreamChat no debe tocar Units (corre en otra goroutine): %d", yt.Units)
+	}
+
+	// Un Super Sticker sin texto llega por el streaming con sus datos, sin cuota extra.
+	got = nil
+	if err := yt.StreamChat(context.Background(), "v1", "chat1", "sticker", collect); err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || got[0].Units != 5 || got[1].Units != 0 || len(got[1].Msgs) != 1 {
+		t.Fatalf("sticker: pedazos = %+v", got)
+	}
+	if m := got[1].Msgs[0]; m.Super != SuperSticker || m.Sticker != "Perrito aplaudiendo" || m.AmountMicros != 3000000 ||
+		m.Currency != "ARS" || m.AmountText != "ARS 3,00" || m.Tier != 1 || m.Text != "" || m.VideoID != "v1" {
+		t.Errorf("sticker: %+v", m)
+	}
+	if yt.Units != 0 {
+		t.Errorf("sticker: Units = %d", yt.Units)
 	}
 
 	for _, token := range []string{"rechazado", "terminado"} {
@@ -2481,6 +2529,26 @@ func TestTopMomentsEdges(t *testing.T) {
 	if fmt.Sprint(slots[0].Msgs) != before {
 		t.Errorf("TopMoments modificó los mensajes de la franja")
 	}
+
+	// Super Stickers y Super Chats sin comentario: cuentan como participación
+	// pero no se eligen como ejemplo, aunque la franja no tenga temas (CA8).
+	var paid []Message
+	for j, text := range []string{"", "", "  ", "uno", "dos"} {
+		m := Message{ID: fmt.Sprint("p", j), Source: "chat", VideoID: "v", Author: fmt.Sprint("a", j), Text: text,
+			At: now.Add(-time.Hour).Truncate(step).Add(time.Duration(j) * time.Second)}
+		if text == "" {
+			m.Super, m.Sticker = SuperSticker, "Perrito"
+		} else if j == 2 {
+			m.Super = SuperChat
+		}
+		paid = append(paid, m)
+	}
+	slots, _, _ = Participation(paid, []ViewerSample{{"v", now.Add(-time.Hour), 50}}, "v", now)
+	ms := TopMoments(slots, nil)
+	if len(ms) != 1 || ms[0].N != 5 || ms[0].Authors != 5 || len(ms[0].Topics) != 0 ||
+		len(ms[0].Examples) != 2 || ms[0].Examples[0].ID != "p3" || ms[0].Examples[1].ID != "p4" {
+		t.Errorf("pagos sin texto: %+v", ms)
+	}
 }
 
 // TestParticipationChartEdges: % mayor a 100, primera y última franja del
@@ -2969,5 +3037,456 @@ func TestSetZone(t *testing.T) {
 	}
 	if err := setZone("Marte/Olympus"); err == nil {
 		t.Error("setZone aceptó una zona que no existe")
+	}
+}
+
+// superPage es una respuesta de liveChat/messages con Super Chats y Super
+// Stickers en todas las formas que contempla la spec (CA1).
+const superPage = `{"nextPageToken":"t","items":[
+ {"id":"s1","snippet":{"type":"textMessageEvent","displayMessage":"Grande Nelson","publishedAt":"2026-11-02T12:00:00Z"},"authorDetails":{"displayName":"Ana"}},
+ {"id":"s2","snippet":{"type":"superChatEvent","displayMessage":"Gracias Nelson","publishedAt":"2026-11-02T12:01:00Z",
+  "superChatDetails":{"amountMicros":"5000000","currency":"ARS","amountDisplayString":"ARS 5,00","userComment":"Gracias Nelson","tier":2}},"authorDetails":{"displayName":"Beto"}},
+ {"id":"s3","snippet":{"type":"superChatEvent","displayMessage":"","publishedAt":"2026-11-02T12:02:00Z",
+  "superChatDetails":{"amountMicros":"1000000","currency":"USD","amountDisplayString":"US$ 1.00","userComment":"Hola","tier":1}},"authorDetails":{"displayName":"Caro"}},
+ {"id":"s3b","snippet":{"type":"superChatEvent","publishedAt":"2026-11-02T12:03:00Z",
+  "superChatDetails":{"amountMicros":"2000000","currency":"ARS","amountDisplayString":"ARS 2,00","tier":1}},"authorDetails":{"displayName":"Dani"}},
+ {"id":"s4","snippet":{"type":"superStickerEvent","displayMessage":"","publishedAt":"2026-11-02T12:04:00Z",
+  "superStickerDetails":{"superStickerMetadata":{"stickerId":"x","altText":"Perrito aplaudiendo","language":"es"},"amountMicros":"3000000","currency":"ARS","amountDisplayString":"ARS 3,00","tier":1}},"authorDetails":{"displayName":"Eva"}},
+ {"id":"s5","snippet":{"type":"superChatEvent","displayMessage":"número","publishedAt":"2026-11-02T12:05:00Z",
+  "superChatDetails":{"amountMicros":5000000,"currency":"ARS","amountDisplayString":"ARS 5,00","tier":"2"}},"authorDetails":{"displayName":"Fede"}},
+ {"id":"s6","snippet":{"type":"superChatEvent","displayMessage":"raro","publishedAt":"2026-11-02T12:06:00Z",
+  "superChatDetails":{"amountMicros":"basura","currency":"ARS","amountDisplayString":"ARS 9,99","tier":{"x":1}}},"authorDetails":{"displayName":"Gabi"}},
+ {"id":"s7","snippet":{"type":"messageDeletedEvent","displayMessage":"","publishedAt":"2026-11-02T12:07:00Z"},"authorDetails":{"displayName":"Hugo"}},
+ {"id":"s8","snippet":{"type":"textMessageEvent","displayMessage":"","publishedAt":"2026-11-02T12:08:00Z"},"authorDetails":{"displayName":"Iris"}},
+ {"id":"s9","snippet":{"type":"textMessageEvent","displayMessage":"sigue la página","publishedAt":"2026-11-02T12:09:00Z"},"authorDetails":{"displayName":"Juan"}}]}`
+
+// TestChatPageSuper: los Super Chats y Super Stickers se decodifican con sus
+// datos, el sticker sin texto no se descarta y un campo raro no tira la página.
+func TestChatPageSuper(t *testing.T) {
+	var r chatPage
+	if err := json.Unmarshal([]byte(superPage), &r); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	msgs := r.messages("v1")
+	var ids []string
+	for _, m := range msgs {
+		ids = append(ids, m.ID)
+	}
+	if got := strings.Join(ids, ","); got != "s1,s2,s3,s3b,s4,s5,s6,s9" {
+		t.Fatalf("IDs = %s, quería s1,s2,s3,s3b,s4,s5,s6,s9 (el Super Sticker sin texto no se descarta)", got)
+	}
+	msg := func(id, author, text string) Message {
+		return Message{ID: id, Source: "chat", VideoID: "v1", Author: author, Text: text}
+	}
+	paid := func(m Message, super string, micros int64, cur, shown string, tier int, sticker string) Message {
+		m.Super, m.AmountMicros, m.Currency, m.AmountText, m.Tier, m.Sticker = super, micros, cur, shown, tier, sticker
+		return m
+	}
+	want := []Message{
+		msg("s1", "Ana", "Grande Nelson"),
+		paid(msg("s2", "Beto", "Gracias Nelson"), SuperChat, 5000000, "ARS", "ARS 5,00", 2, ""),
+		paid(msg("s3", "Caro", "Hola"), SuperChat, 1000000, "USD", "US$ 1.00", 1, ""), // cae a userComment
+		paid(msg("s3b", "Dani", ""), SuperChat, 2000000, "ARS", "ARS 2,00", 1, ""),
+		paid(msg("s4", "Eva", ""), SuperSticker, 3000000, "ARS", "ARS 3,00", 1, "Perrito aplaudiendo"),
+		paid(msg("s5", "Fede", "número"), SuperChat, 5000000, "ARS", "ARS 5,00", 2, ""), // número sin comillas
+		paid(msg("s6", "Gabi", "raro"), SuperChat, 0, "ARS", "ARS 9,99", 0, ""),         // valores raros: 0
+		msg("s9", "Juan", "sigue la página"),
+	}
+	for i, m := range msgs {
+		if m.At.IsZero() {
+			t.Errorf("%s: sin fecha", m.ID)
+		}
+		m.At = time.Time{}
+		if m != want[i] {
+			t.Errorf("mensaje %d:\n got %+v\nquería %+v", i, m, want[i])
+		}
+	}
+	if c := Classify(msgs[1].Text); c != CatElogio {
+		t.Errorf("Classify del Super Chat = %s, quería elogio", c)
+	}
+}
+
+// TestStoreSuper: los campos nuevos de Message no cambian las líneas de los
+// mensajes comunes de datos.jsonl, se leen las viejas y un binario anterior
+// puede leer las nuevas (CA3).
+func TestStoreSuper(t *testing.T) {
+	now := time.Now().UTC().Truncate(time.Second)
+	common := Message{ID: "c1", Source: "chat", VideoID: "v1", Author: "Ana", Text: "hola", At: now, Program: "LA MAÑANA"}
+	b, err := json.Marshal(common)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var keys map[string]any
+	if err := json.Unmarshal(b, &keys); err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for k := range keys {
+		got = append(got, k)
+	}
+	sort.Strings(got)
+	if g := strings.Join(got, ","); g != "At,Author,ID,Likes,Program,Replies,Source,Text,VideoID" {
+		t.Errorf("claves de un mensaje común = %s", g)
+	}
+
+	path := t.TempDir() + "/datos.jsonl"
+	old := `{"ID":"viejo","Source":"chat","VideoID":"v1","Author":"Beto","Text":"línea vieja","At":"` +
+		now.Format(time.RFC3339) + `","Likes":0,"Replies":0,"Program":"LA MAÑANA"}` + "\n"
+	if err := os.WriteFile(path, []byte(old), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	st, err := OpenStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ms := st.Snapshot().Msgs; len(ms) != 1 || ms[0].Text != "línea vieja" || ms[0].Super != "" ||
+		ms[0].AmountMicros != 0 || ms[0].Currency != "" || ms[0].AmountText != "" || ms[0].Tier != 0 || ms[0].Sticker != "" {
+		t.Fatalf("línea vieja: %+v", ms)
+	}
+	sc := Message{ID: "p1", Source: "chat", VideoID: "v1", Author: "Caro", Text: "Gracias", At: now, Program: "LA MAÑANA",
+		Super: SuperChat, AmountMicros: 5000000, Currency: "ARS", AmountText: "ARS 5,00", Tier: 2}
+	ss := Message{ID: "p2", Source: "chat", VideoID: "v1", Author: "Dani", At: now,
+		Super: SuperSticker, AmountMicros: 1990000, Currency: "USD", AmountText: "US$ 1.99", Tier: 1, Sticker: "Perrito"}
+	if n := st.Add([]Message{common, sc, ss}); n != 3 {
+		t.Fatalf("Add = %d, quería 3", n)
+	}
+	// Un pago con el ID de un mensaje común ya guardado no se re-agrega.
+	dup := sc
+	dup.ID = "c1"
+	if n := st.Add([]Message{dup}); n != 0 {
+		t.Errorf("Add de un pago con ID repetido = %d, quería 0", n)
+	}
+	st2, err := OpenStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	byID := map[string]Message{}
+	for _, m := range st2.Snapshot().Msgs {
+		m.At = m.At.UTC()
+		byID[m.ID] = m
+	}
+	for _, w := range []Message{common, sc, ss} {
+		if byID[w.ID] != w {
+			t.Errorf("ida y vuelta de %s:\n got %+v\nquería %+v", w.ID, byID[w.ID], w)
+		}
+	}
+	if byID["c1"].Super != "" {
+		t.Errorf("el pago con ID repetido pisó al mensaje común: %+v", byID["c1"])
+	}
+
+	// Un binario anterior (con el Message de antes) lee la línea nueva sin error.
+	type oldMessage struct {
+		ID, Source, VideoID, Author, Text string
+		At                                time.Time
+		Likes, Replies                    int64
+		Program                           string
+	}
+	line, err := json.Marshal(sc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var om oldMessage
+	if err := json.Unmarshal(line, &om); err != nil || om.ID != "p1" || om.Text != "Gracias" || om.Program != "LA MAÑANA" {
+		t.Errorf("binario anterior: %v %+v", err, om)
+	}
+}
+
+// TestCSVSuper: las 6 columnas de pagos van al final y los montos son exactos (CA4).
+func TestCSVSuper(t *testing.T) {
+	head := []string{"fuente", "fecha", "video", "programa", "autor", "categoria", "likes", "respuestas", "texto",
+		"pago", "monto", "moneda", "monto_youtube", "nivel", "sticker"}
+	if strings.Join(csvHeader, ",") != strings.Join(head, ",") {
+		t.Fatalf("csvHeader = %v", csvHeader)
+	}
+	at := time.Now()
+	common := Message{ID: "c", Source: "chat", VideoID: "v1", Author: "Ana", Text: "Grande Nelson", At: at, Program: "LA MAÑANA"}
+	sc := Message{ID: "p", Source: "chat", VideoID: "v1", Author: "Beto", Text: "¿Vuelve mañana?", At: at,
+		Super: SuperChat, AmountMicros: 5500000, Currency: "ARS", AmountText: "ARS 5,50", Tier: 2}
+	ss := Message{ID: "s", Source: "chat", VideoID: "v1", Author: "Caro", At: at,
+		Super: SuperSticker, AmountMicros: 3000000, Currency: "ARS", AmountText: "ARS 3,00", Tier: 1, Sticker: "Perrito"}
+	cases := []struct {
+		m    Message
+		tail string
+	}{
+		{common, ",,,,,"},
+		{sc, "superchat,5.5,ARS,ARS 5,50,2,"},
+		{ss, "supersticker,3,ARS,ARS 3,00,1,Perrito"},
+	}
+	for _, c := range cases {
+		row := csvRow(c.m, nil)
+		if len(row) != 15 || strings.Join(row[9:], ",") != c.tail || row[5] != Classify(c.m.Text) || row[8] != c.m.Text {
+			t.Errorf("%s: fila = %q", c.m.ID, row)
+		}
+	}
+	for micros, want := range map[int64]string{1000000000: "1000", 1990000: "1.99", 5500000: "5.5", 1: "0.000001", 0: "0"} {
+		if got := csvAmount(micros); got != want {
+			t.Errorf("csvAmount(%d) = %q, quería %q", micros, got, want)
+		}
+	}
+	if row := csvRow(Message{Super: SuperChat, AmountMicros: 1000000}, nil); row[13] != "" {
+		t.Errorf("nivel 0 = %q, quería vacío", row[13])
+	}
+
+	st, err := OpenStore(t.TempDir() + "/datos.jsonl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	st.Add([]Message{common, sc})
+	w := httptest.NewRecorder()
+	(&Server{st: st, budget: 9000}).Routes().ServeHTTP(w, httptest.NewRequest("GET", "/export.csv", nil))
+	recs, err := csv.NewReader(w.Body).ReadAll()
+	if err != nil || len(recs) != 3 {
+		t.Fatalf("export.csv: %v %q", err, recs)
+	}
+	if strings.Join(recs[0], ",") != strings.Join(head, ",") || strings.Join(recs[1][9:], "|") != "|||||" ||
+		strings.Join(recs[2][9:], "|") != "superchat|5.5|ARS|ARS 5,50|2|" || recs[2][5] != CatPregunta {
+		t.Errorf("export.csv = %q", recs)
+	}
+}
+
+// TestSupers: totales por moneda (sin convertir) y por programa, y los últimos (CA5).
+func TestSupers(t *testing.T) {
+	base := time.Date(2026, 11, 2, 12, 0, 0, 0, time.UTC)
+	pay := func(i int, video, program, cur string, micros int64) Message {
+		return Message{ID: fmt.Sprint("p", i), Source: "chat", VideoID: video, Program: program, At: base.Add(time.Duration(i) * time.Minute),
+			Super: SuperChat, Currency: cur, AmountMicros: micros}
+	}
+	titles := map[string]string{"vt": "🔴RADIO TEST en VIVO | LA TARDE"}
+	msgs := []Message{
+		pay(1, "vm", "LA MAÑANA", "ARS", 5000000),
+		{ID: "comun", Source: "chat", VideoID: "vm", Program: "LA MAÑANA", Text: "no cuenta", At: base},
+		pay(2, "vm", "LA MAÑANA", "USD", 1990000),
+		pay(3, "vm", "LA MAÑANA", "ARS", 2500000),
+		pay(4, "vt", "", "ARS", 1000000), // sin Program guardado: cae al título del vivo
+	}
+	sum := Supers(msgs, titles)
+	if got := fmt.Sprint(sum.ByCurrency); got != "[{ ARS 3 8500000} { USD 1 1990000}]" {
+		t.Errorf("ByCurrency = %s", got)
+	}
+	if got := fmt.Sprint(sum.ByProgram); got != "[{LA MAÑANA ARS 2 7500000} {LA MAÑANA USD 1 1990000} {LA TARDE ARS 1 1000000}]" {
+		t.Errorf("ByProgram = %s", got)
+	}
+	if len(sum.Last) != 4 || sum.Last[0].ID != "p4" || sum.Last[3].ID != "p1" {
+		t.Errorf("Last = %+v", sum.Last)
+	}
+
+	// Moneda vacía cuenta aparte; empate de cantidad: por código de moneda.
+	sum = Supers([]Message{pay(1, "vm", "A", "", 1), pay(2, "vm", "B", "USD", 2), pay(3, "vm", "B", "ARS", 3)}, nil)
+	if got := fmt.Sprint(sum.ByCurrency); got != "[{  1 1} { ARS 1 3} { USD 1 2}]" {
+		t.Errorf("moneda vacía: ByCurrency = %s", got)
+	}
+	if got := fmt.Sprint(sum.ByProgram); got != "[{B ARS 1 3} {B USD 1 2} {A  1 1}]" {
+		t.Errorf("moneda vacía: ByProgram = %s", got)
+	}
+
+	var many []Message
+	for i := range 12 {
+		many = append(many, pay(i, "vm", "X", "ARS", 1))
+	}
+	if sum := Supers(many, nil); len(sum.Last) != 10 || sum.Last[0].ID != "p11" || sum.Last[9].ID != "p2" {
+		t.Errorf("12 pagos: Last = %+v", sum.Last)
+	}
+	if sum := Supers([]Message{{ID: "x", Source: "chat", Text: "hola"}}, nil); sum.ByCurrency != nil || sum.ByProgram != nil || sum.Last != nil {
+		t.Errorf("sin pagos: %+v", sum)
+	}
+}
+
+// superStore arma un Store con un vivo y sus mensajes para los tests del dashboard.
+func superStore(t *testing.T, msgs ...Message) http.Handler {
+	t.Helper()
+	st, err := OpenStore(t.TempDir() + "/datos.jsonl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	st.SetVideos("Radio Test", []Video{
+		{ID: "v1", Title: "🔴RADIO TEST en VIVO | LA MAÑANA", Channel: "Radio Test", LiveStatus: "live"},
+		{ID: "v2", Title: "🔴RADIO TEST en VIVO | OTRO", Channel: "Radio Test", LiveStatus: "live"},
+	})
+	st.Add(msgs)
+	return (&Server{st: st, budget: 9000}).Routes()
+}
+
+func getBody(h http.Handler, path string) string {
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, httptest.NewRequest("GET", path, nil))
+	return w.Body.String()
+}
+
+// TestLiveAnalysisSuper: la tarjeta 6 con los totales del vivo elegido en 24 h (CA6).
+func TestLiveAnalysisSuper(t *testing.T) {
+	now := time.Now()
+	paid := Message{ID: "p1", Source: "chat", VideoID: "v1", Author: "Beto", Text: "<b>gracias</b>", At: now.Add(-time.Hour),
+		Program: "LA MAÑANA", Super: SuperChat, AmountMicros: 5000000000, Currency: "ARS", AmountText: "ARS 5.000,00", Tier: 3}
+	h := superStore(t,
+		Message{ID: "c1", Source: "chat", VideoID: "v1", Author: "Ana", Text: "hola", At: now},
+		paid,
+		Message{ID: "p2", Source: "chat", VideoID: "v1", Author: "Caro", At: now.Add(-2 * time.Hour), Program: "LA MAÑANA",
+			Super: SuperChat, AmountMicros: 3500000000, Currency: "ARS", AmountText: "ARS 3.500,00"},
+		Message{ID: "p3", Source: "chat", VideoID: "v1", Author: "Dani", At: now.Add(-3 * time.Hour), Program: "LA MAÑANA",
+			Super: SuperSticker, AmountMicros: 1990000, Currency: "USD", AmountText: "US$ 1.99", Sticker: "Perrito aplaudiendo"},
+		Message{ID: "p4", Source: "chat", VideoID: "v2", Author: "Eva", Text: "de otro vivo", At: now, Program: "OTRO",
+			Super: SuperChat, AmountMicros: 7000000, Currency: "EUR", AmountText: "€7,00"},
+		Message{ID: "p5", Source: "chat", VideoID: "v1", Author: "Fede", Text: "viejo", At: now.Add(-25 * time.Hour), Program: "LA MAÑANA",
+			Super: SuperChat, AmountMicros: 9000000, Currency: "BRL", AmountText: "R$ 9,00"},
+	)
+	body := getBody(h, "/parcial/vivo/analisis?video=v1")
+	for _, want := range []string{
+		"6. Super Chats y Super Stickers",
+		"<th>Moneda</th><th class=\"n\">Cantidad</th><th class=\"n\">Total</th>",
+		"<th>Programa</th><th>Moneda</th><th class=\"n\">Cantidad</th><th class=\"n\">Total</th>",
+		"<td>ARS</td><td class=\"n\">2</td><td class=\"n\">8.500,00</td>",
+		"<td>USD</td><td class=\"n\">1</td><td class=\"n\">1,99</td>",
+		"<td>LA MAÑANA</td><td>ARS</td><td class=\"n\">2</td><td class=\"n\">8.500,00</td>",
+		paid.At.Local().Format("02/01 15:04"), "<strong>Beto</strong>", "Super Chat · ARS 5.000,00",
+		"&lt;b&gt;gracias&lt;/b&gt;", "Super Sticker · US$ 1.99", "Super Sticker: Perrito aplaudiendo",
+		"Montos brutos que pagó cada persona, en su moneda y sin convertir: no es lo que cobra el canal.",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("falta %q", want)
+		}
+	}
+	for _, not := range []string{"<b>gracias", "EUR", "de otro vivo", "BRL", "R$ 9,00", "Sin Super Chats"} {
+		if strings.Contains(body, not) {
+			t.Errorf("no debería aparecer %q", not)
+		}
+	}
+	if t.Failed() {
+		t.Logf("cuerpo:\n%s", body)
+	}
+
+	empty := getBody(superStore(t, Message{ID: "c1", Source: "chat", VideoID: "v1", Author: "Ana", Text: "hola", At: now}),
+		"/parcial/vivo/analisis?video=v1")
+	if !strings.Contains(empty, "6. Super Chats y Super Stickers") ||
+		!strings.Contains(empty, "Sin Super Chats ni Super Stickers en las últimas 24 h.") || strings.Contains(empty, "<th>Moneda</th>") {
+		t.Errorf("sin pagos:\n%s", empty)
+	}
+}
+
+// TestLiveChatSuper: el feed del chat marca los pagos con su monto (CA7).
+func TestLiveChatSuper(t *testing.T) {
+	now := time.Now()
+	h := superStore(t,
+		Message{ID: "c1", Source: "chat", VideoID: "v1", Author: "Ana", Text: "mensaje común", At: now.Add(-3 * time.Second)},
+		Message{ID: "p1", Source: "chat", VideoID: "v1", Author: "Beto", Text: "Gracias Nelson", At: now.Add(-2 * time.Second),
+			Super: SuperChat, AmountMicros: 5000000, Currency: "ARS", AmountText: "ARS 5,00"},
+		Message{ID: "p2", Source: "chat", VideoID: "v1", Author: "Caro", At: now.Add(-time.Second),
+			Super: SuperSticker, AmountMicros: 3000000, Currency: "ARS", AmountText: "ARS 3,00", Sticker: "Perrito <aplaudiendo>"},
+	)
+	body := getBody(h, "/parcial/vivo/chat?video=v1")
+	for _, want := range []string{
+		`<span class="badge super">Super Chat · ARS 5,00</span>`,
+		`<span class="badge super">Super Sticker · ARS 3,00</span>`,
+		"<div>Super Sticker: Perrito &lt;aplaudiendo&gt;</div>",
+		"<div>Gracias Nelson</div>", "<div>mensaje común</div>",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("falta %q", want)
+		}
+	}
+	if n := strings.Count(body, "badge super"); n != 2 {
+		t.Errorf("%d badges de pago, quería 2 (las filas comunes no cambian)", n)
+	}
+	if t.Failed() {
+		t.Logf("cuerpo:\n%s", body)
+	}
+}
+
+// TestReportSuper: la sección de Super Chats del informe Markdown (CA12).
+func TestReportSuper(t *testing.T) {
+	now := time.Now()
+	vids := []Video{{ID: "v1", Title: "🔴RADIO TEST en VIVO | LA MAÑANA", Channel: "Radio Test", LiveStatus: "live"}}
+	common := []Message{
+		{ID: "c1", Source: "chat", VideoID: "v1", Author: "Ana", Text: "¿A qué hora vuelve?", At: now, Program: "LA MAÑANA"},
+		{ID: "c2", Source: "comentario", VideoID: "v1", Author: "Beto", Text: "Grande", At: now},
+	}
+	md := report("Radio Test", vids, common, now.Add(-time.Hour), 0, nil, 0)
+	const none = "\n## Super Chats y Super Stickers\n\nSin Super Chats ni Super Stickers en este período.\n"
+	if strings.Count(md, none) != 1 {
+		t.Fatalf("sin pagos, falta la sección vacía:\n%s", md)
+	}
+	// El resto del informe no cambia: mismas secciones en el mismo orden.
+	rest := strings.Replace(md, none, "", 1)
+	var heads []string
+	for _, l := range strings.Split(rest, "\n") {
+		if strings.HasPrefix(l, "## ") {
+			heads = append(heads, l)
+		}
+	}
+	if got := strings.Join(heads, "|"); got != "## Números|## Videos revisados|## Palabras más repetidas|## Chat por programa|## Quiénes más escriben|## Ejemplos: pregunta" ||
+		strings.Contains(rest, "Super") {
+		t.Errorf("secciones sin pagos = %s", got)
+	}
+
+	paid := append(common,
+		Message{ID: "p1", Source: "chat", VideoID: "v1", Author: "Caro", Text: "Gracias", At: now, Program: "LA MAÑANA",
+			Super: SuperChat, AmountMicros: 5000000000, Currency: "ARS", AmountText: "ARS 5.000,00"},
+		Message{ID: "p2", Source: "chat", VideoID: "v1", Author: "Dani", At: now, Program: "LA MAÑANA",
+			Super: SuperSticker, AmountMicros: 3500000000, Currency: "ARS", AmountText: "ARS 3.500,00", Sticker: "Perrito"},
+		Message{ID: "p3", Source: "chat", VideoID: "v1", Author: "Eva", Text: "Hola", At: now, Program: "LA TARDE",
+			Super: SuperChat, AmountMicros: 1990000, Currency: "USD", AmountText: "US$ 1.99"},
+	)
+	md = report("Radio Test", vids, paid, now.Add(-time.Hour), 0, nil, 0)
+	for _, want := range []string{
+		"## Super Chats y Super Stickers", "Pagos: **3**.", superNote,
+		"| Moneda | Cantidad | Total |", "| ARS | 2 | 8.500,00 |", "| USD | 1 | 1,99 |",
+		"| Programa | Moneda | Cantidad | Total |", "| LA MAÑANA | ARS | 2 | 8.500,00 |", "| LA TARDE | USD | 1 | 1,99 |",
+	} {
+		if !strings.Contains(md, want) {
+			t.Errorf("el informe no contiene %q", want)
+		}
+	}
+	if strings.Contains(md, "Sin Super Chats") {
+		t.Errorf("con pagos no debería decir que no hay")
+	}
+}
+
+// TestAPIIntEdges: apiInt tolera valores raros sin romper (devuelve 0 o el número).
+func TestAPIIntEdges(t *testing.T) {
+	cases := []struct {
+		raw  string
+		want int64
+	}{
+		{`"5000000"`, 5000000}, {`5000000`, 5000000}, {`" 7 "`, 7}, {`"-5"`, 0}, {`-5`, 0}, // un monto negativo restaría en los totales
+		{`5.5`, 0}, {`"5.5"`, 0}, {`""`, 0}, {`null`, 0}, {``, 0}, {`{"x":1}`, 0},
+		{`[1]`, 0}, {`true`, 0}, {`"99999999999999999999"`, 0}, {`1e6`, 0},
+	}
+	for _, c := range cases {
+		if got := apiInt(json.RawMessage(c.raw)); got != c.want {
+			t.Errorf("apiInt(%q) = %d, quería %d", c.raw, got, c.want)
+		}
+	}
+	// Una página con valores raros en los pagos se decodifica entera.
+	page := `{"items":[
+	 {"id":"a","snippet":{"type":"superChatEvent","displayMessage":"x","superChatDetails":{"amountMicros":null,"tier":null}}},
+	 {"id":"b","snippet":{"type":"superChatEvent","displayMessage":"y","superChatDetails":{"amountMicros":-5,"tier":2.5}}},
+	 {"id":"c","snippet":{"type":"superStickerEvent","superStickerDetails":{}}},
+	 {"id":"d","snippet":{"type":"textMessageEvent","displayMessage":"ok"}}]}`
+	var r chatPage
+	if err := json.Unmarshal([]byte(page), &r); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	if n := len(r.messages("v")); n != 4 {
+		t.Errorf("%d mensajes, quería 4", n)
+	}
+}
+
+// TestClassifyAmountSpam: ignorar los montos al buscar teléfonos no debe
+// dejar pasar spam obvio.
+func TestClassifyAmountSpam(t *testing.T) {
+	cases := map[string]string{
+		"11 5555 5555":                         CatSpam,
+		"+54 9 11 5555-5555 escribime":         CatSpam,
+		"ARS 500 ganá plata en bit.ly/abc":     CatSpam,
+		"$ 10 000 000 mirá https://estafa.com": CatSpam,
+		"USD 5,00 www.estafa.com":              CatSpam,
+		"ARS 5,00 escribime al 11 5555 5555":   CatSpam,
+		"$ 5000 whatsapp 11 5555 5555 gratis":  CatSpam,
+		"€ 10 hola":                            CatOtro,
+		"usd 1 000 000 ¿vuelve Nelson mañana?": CatPregunta,
+	}
+	for in, want := range cases {
+		if got := Classify(in); got != want {
+			t.Errorf("Classify(%q) = %s, quería %s", in, got, want)
+		}
 	}
 }

@@ -31,6 +31,27 @@ var (
 	stopwords  = map[string]bool{}
 )
 
+// Montos de Super Chat ("$ 10 000 000", "usd 1 000 000"): con los miles
+// separados por espacio parecen un teléfono. hasPhone ignora un número solo si
+// va detrás de una moneda (reCurrency) y tiene forma de monto (reAmount, grupos
+// de 3 dígitos): un teléfono detrás de una moneda ("$ 11 5555 5555") sigue
+// siendo spam.
+var (
+	reCurrency = regexp.MustCompile(`(?:[a-z]{0,3}\$|[€£¥₹]|\b(?:ars|usd|eur|brl|clp|uyu|mxn|cop|pen|pyg|bob|gbp|cad|aud|jpy)\b)\s?$`)
+	reAmount   = regexp.MustCompile(`^\d{1,3}(?:[\s.,]\d{3})+(?:[.,]\d{1,2})?$`)
+)
+
+// hasPhone dice si el texto (en minúsculas) tiene algo con forma de teléfono
+// que no sea un monto.
+func hasPhone(t string) bool {
+	for _, loc := range rePhone.FindAllStringIndex(t, -1) {
+		if !reAmount.MatchString(t[loc[0]:loc[1]]) || !reCurrency.MatchString(t[:loc[0]]) {
+			return true
+		}
+	}
+	return false
+}
+
 func init() {
 	for _, w := range strings.Fields(`de la que el en y a los se del las un por con no una su para es al lo como más mas pero sus le ya o este sí si porque esta entre cuando muy sin sobre también me hasta hay donde quien desde todo nos durante todos uno les ni contra otros ese eso ante ellos e esto mí antes algunos qué unos yo otro otras otra él tanto esa estos mucho quienes nada muchos cual poco ella estar estas algunas algo nosotros mi mis tú te ti tu tus ellas nosotras vosotros vosotras os mío mía míos mías tuyo tuya tuyos tuyas suyo suya suyos suyas nuestro nuestra nuestros nuestras vuestro vuestra vuestros vuestras esos esas estoy estás está estamos estáis están ser es son fue era hace hoy ahora bien va van tiene tienen hay jaja jajaja jajajaja q x k che hola buenas buenos buen tardes noches días dias saludos abrazo gracias`) {
 		stopwords[w] = true
@@ -40,7 +61,7 @@ func init() {
 func Classify(text string) string {
 	t := strings.ToLower(text)
 	switch {
-	case reLink.MatchString(t) || rePhone.MatchString(t) || containsAny(t, spamWords):
+	case reLink.MatchString(t) || hasPhone(t) || containsAny(t, spamWords):
 		return CatSpam
 	case containsAny(t, insultos):
 		return CatInsulto
