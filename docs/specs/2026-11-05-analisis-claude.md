@@ -1,6 +1,6 @@
 # Spec: análisis con Claude por canal y por programa (parte 2 de "canales en continuo")
 
-- **Estado:** implementada (etapa A; falta CA18 en el navegador, la revisión y el PR). **Depende de la etapa 1 de canales en continuo**
+- **Estado:** implementada (etapa A, PR 21). **Depende de la etapa 1 de canales en continuo**
   (`feat/canales-continuos`, spec `docs/specs/2026-11-05-canales-continuos.md`), que ya
   entró a `main` (PR 20). Antes de implementar se rebasa `feat/analisis-claude` sobre
   `origin/main` y se revisan las citas a archivo:línea de esa etapa. La etapa 2
@@ -275,15 +275,18 @@ PR.
   ADR 0006" — se verifica con `git diff --stat main`, `grep -n "CLAUDE_API_KEY" README.md
   AGENTS.md CLAUDE.md`, `grep -n "datos.analisis.jsonl" README.md AGENTS.md`,
   `grep -n "claude-usd 2" README.md` y `grep -n "0006" docs/decisions/0003-*.md`.
-- [ ] CA18: revisado en el navegador con la vista previa (`go run ./tools/preview`, paso
+- [x] CA18: revisado en el navegador con la vista previa (`go run ./tools/preview`, paso
   7b, con la API de Claude simulada de CA14) en claro, oscuro y ancho de celular (AGENTS.md,
   "Antes de dar algo por terminado", punto 4): estados "sin análisis" (al arrancar), "En
   cola" / "Analizando…" (al tocar el botón) y con resultado. El estado apagado lo cubre
   `TestClaudeCardOff`. Verificación manual, anotada en el PR; la vista previa se corta con
-  `-cortar` antes de cerrar.
-- [ ] Gates de `CLAUDE.md` → "Definición de terminado" en verde (`gofmt -l .` vacío,
+  `-cortar` antes de cerrar. Revisado por Julian Barbieri el 2026-11-05 (claro, oscuro y
+  celular); el estado con resultado no se alcanza en la vista previa (no copia
+  `datos.vivos.jsonl`) y lo cubre `TestClaudeCard`.
+- [x] Gates de `CLAUDE.md` → "Definición de terminado" en verde (`gofmt -l .` vacío,
   `go vet ./...`, `staticcheck`, build Linux y Windows, `go test -race -count=1 ./...`,
-  `go test -count=5 ./...`, reviewer sin bloqueantes, PR con CI verde).
+  `go test -count=5 ./...`, reviewer sin bloqueantes, PR con CI verde). En verde en local;
+  el CI de GitHub no corrió por un bloqueo de facturación de la cuenta (PR 21).
 
 ## Diseño propuesto (etapa A)
 
