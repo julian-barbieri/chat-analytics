@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -59,7 +60,8 @@ func (s *Server) render(w http.ResponseWriter, name string, data any) {
 
 func (s *Server) page(w http.ResponseWriter, r *http.Request) {
 	snap := s.st.Snapshot()
-	s.render(w, "page.html", map[string]any{"Channel": snap.Channel, "Vivo": r.URL.Query().Get("vivo")})
+	q := r.URL.Query()
+	s.render(w, "page.html", map[string]any{"Channel": snap.Channel, "Canal": q.Get("canal"), "Vivo": q.Get("vivo")})
 }
 
 type Tile struct {
@@ -140,49 +142,187 @@ func (s *Server) summary(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// LiveButton es un botón para elegir qué chat en vivo se ve.
+// LiveButton es un botón para elegir qué se ve: un canal de -canal (Canal) o
+// un vivo suelto de -vivos (Canal vacío).
 type LiveButton struct {
-	ID, Label string
-	Active    bool
+	Canal, Video, Label string // Video: el vivo en curso del canal, si tiene
+	Active              bool
 }
 
-// pickLive arma los botones de los vivos en curso y decide cuál se muestra: el
-// pedido si sigue en vivo, si no el primero. Solo cambia lo que se ve: el
-// worker sigue leyendo todos los chats por turnos.
-func pickLive(snap Snapshot, want string) (string, []LiveButton) {
-	var lives []Video
+// liveSel es lo que muestra la sección del vivo.
+type liveSel struct {
+	Canal string        // ID del canal; vacío si es un vivo suelto o no hay nada
+	Ch    ChannelStatus // el canal elegido
+	Video string        // vivo en curso del canal (el primero) o el vivo suelto; vacío si el canal espera
+	Label string
+}
+
+// pickChannel arma un botón por canal de -canal (con o sin vivo, en ese orden)
+// y uno por vivo suelto en curso, y decide qué se muestra: el canal pedido, o
+// el canal del vivo pedido (chanOf traduce vivo → canal, también de vivos que
+// ya terminaron), o el vivo suelto pedido, o el primer canal en vivo. Solo
+// cambia lo que se ve: el worker sigue leyendo todos los chats.
+func pickChannel(snap Snapshot, canal, video string, chanOf map[string]string) (liveSel, []LiveButton) {
+	known := map[string]bool{}
+	for _, c := range snap.Channels {
+		known[c.ID] = true
+	}
+	byChan := map[string][]Video{}
+	var loose []Video
 	for _, v := range snap.Videos {
-		if v.LiveStatus == "live" {
-			lives = append(lives, v)
+		switch {
+		case v.LiveStatus != "live":
+		case known[v.ChannelID]:
+			byChan[v.ChannelID] = append(byChan[v.ChannelID], v)
+		default:
+			loose = append(loose, v)
 		}
-	}
-	sel := ""
-	for _, v := range lives {
-		if v.ID == want {
-			sel = want
-		}
-	}
-	if sel == "" && len(lives) > 0 {
-		sel = lives[0].ID
-	}
-	labels := map[string]int{}
-	for _, v := range lives {
-		labels[LiveLabel(v.Title, v.Channel)]++
 	}
 	var btns []LiveButton
-	for _, v := range lives {
+	for _, c := range snap.Channels {
+		b := LiveButton{Canal: c.ID, Label: channelName(c) + " · esperando el próximo vivo"}
+		if lv := byChan[c.ID]; len(lv) > 0 {
+			b.Video, b.Label = lv[0].ID, channelName(c)+" · en vivo"
+		}
+		btns = append(btns, b)
+	}
+	labels := map[string]int{}
+	for _, v := range loose {
+		labels[LiveLabel(v.Title, v.Channel)]++
+	}
+	for _, v := range loose {
 		l := LiveLabel(v.Title, v.Channel)
-		if labels[l] > 1 { // dos vivos del mismo canal: se distinguen por el programa
+		if labels[l] > 1 { // dos vivos sueltos del mismo canal: se distinguen por el programa
 			l += " · " + ProgramName(v.Title, v.Channel)
 		}
-		btns = append(btns, LiveButton{v.ID, l, v.ID == sel})
+		btns = append(btns, LiveButton{Video: v.ID, Label: l})
+	}
+	pick := -1
+	find := func(ok func(LiveButton) bool) {
+		for i, b := range btns {
+			if pick < 0 && ok(b) {
+				pick = i
+			}
+		}
+	}
+	if canal != "" {
+		find(func(b LiveButton) bool { return b.Canal == canal })
+	}
+	if ch := chanOf[video]; video != "" && ch != "" {
+		find(func(b LiveButton) bool { return b.Canal == ch })
+	}
+	if video != "" {
+		find(func(b LiveButton) bool { return b.Canal == "" && b.Video == video })
+	}
+	find(func(b LiveButton) bool { return b.Canal != "" && b.Video != "" }) // un canal en vivo
+	find(func(b LiveButton) bool { return b.Canal == "" })                  // un vivo suelto
+	find(func(LiveButton) bool { return true })
+	if pick < 0 {
+		return liveSel{}, nil
+	}
+	btns[pick].Active = true
+	b := btns[pick]
+	sel := liveSel{Canal: b.Canal, Video: b.Video, Label: b.Label}
+	for _, c := range snap.Channels {
+		if c.ID == b.Canal {
+			sel.Ch = c
+		}
+	}
+	// Con varios vivos del canal a la vez, el pedido (si sigue en curso) es el que se mira.
+	for _, v := range byChan[b.Canal] {
+		if v.ID == video {
+			sel.Video = video
+		}
 	}
 	return sel, btns
 }
 
+func channelName(c ChannelStatus) string {
+	if c.Name != "" {
+		return c.Name
+	}
+	return c.ID
+}
+
+// dayLives dice de qué canal de -canal es cada vivo. chanOf sirve para
+// traducir ?vivo= y tiene todos los videos de la lista más los vivos de hoy de
+// datos.vivos.jsonl (un vivo terminado de un canal extra ya no está en la
+// lista). today, para el feed, tiene solo los vivos en curso y los de hoy: no
+// los videos viejos de la lista (subidas, vivos de otros días).
+func (s *Server) dayLives(snap Snapshot, now time.Time) (chanOf, today map[string]string) {
+	known := map[string]bool{}
+	for _, c := range snap.Channels {
+		known[c.ID] = true
+	}
+	chanOf, today = map[string]string{}, map[string]string{}
+	for _, l := range s.st.Lives(dayStart(now)) {
+		if known[l.ChannelID] {
+			chanOf[l.VideoID], today[l.VideoID] = l.ChannelID, l.ChannelID
+		}
+	}
+	for _, v := range snap.Videos {
+		if !known[v.ChannelID] {
+			continue
+		}
+		chanOf[v.ID] = v.ChannelID
+		if v.LiveStatus == "live" {
+			today[v.ID] = v.ChannelID
+		}
+	}
+	return chanOf, today
+}
+
+// channelVideos son los vivos de hoy de un canal, o el vivo suelto.
+func channelVideos(sel liveSel, today map[string]string) map[string]bool {
+	ids := map[string]bool{}
+	if sel.Video != "" {
+		ids[sel.Video] = true
+	}
+	for id, ch := range today {
+		if sel.Canal != "" && ch == sel.Canal {
+			ids[id] = true
+		}
+	}
+	return ids
+}
+
+// searchText dice cómo se está buscando el próximo vivo de un canal. Con el
+// tope de cuota alcanzado (paused) el worker no revisa nada.
+func searchText(c ChannelStatus, now time.Time, paused bool) string {
+	if paused {
+		return "en pausa por el tope de cuota"
+	}
+	if now.Before(c.FastUntil) {
+		return "buscando cada " + humanDur(fastEvery) + " hasta " + c.FastUntil.Local().Format("15:04")
+	}
+	every := c.Every
+	if every <= 0 {
+		every = 3 * time.Minute
+	}
+	return "buscando cada " + humanDur(every)
+}
+
 func (s *Server) liveSection(w http.ResponseWriter, r *http.Request) {
-	sel, _ := pickLive(s.st.Status(), r.URL.Query().Get("video"))
-	s.render(w, "vivo", map[string]any{"Video": sel})
+	snap := s.st.Status()
+	q := r.URL.Query()
+	chanOf, _ := s.dayLives(snap, time.Now())
+	sel, _ := pickChannel(snap, q.Get("canal"), q.Get("video"), chanOf)
+	s.render(w, "vivo", map[string]any{"Canal": sel.Canal, "Video": sel.Video})
+}
+
+// quotaPaused dice si se llegó al tope de cuota: el worker no revisa videos ni busca vivos.
+func (s *Server) quotaPaused(snap Snapshot) bool { return s.budget > 0 && snap.Units >= s.budget }
+
+// keepView son el "ver" y las "horas" del análisis que manda el chat (con
+// hx-include), para no perderlos cuando se recarga la sección.
+func keepView(q url.Values) (ver, hours string) {
+	if v := q.Get("ver"); v == "dia" || v == "programa" {
+		ver = v
+	}
+	if h := q.Get("horas"); h == "24" || h == strconv.Itoa(chartHours) {
+		hours = h
+	}
+	return ver, hours
 }
 
 // ChatRow es una fila del chat en vivo, con su categoría ya calculada.
@@ -196,14 +336,23 @@ var superLabels = map[string]string{SuperChat: "Super Chat", SuperSticker: "Supe
 
 func (s *Server) liveChat(w http.ResponseWriter, r *http.Request) {
 	snap := s.st.Status()
-	want := r.URL.Query().Get("video")
-	sel, btns := pickLive(snap, want)
-	if sel != want {
-		// El vivo elegido terminó o empezó uno: se recarga toda la sección,
-		// también el análisis, con el vivo que corresponde.
+	now := time.Now()
+	q := r.URL.Query()
+	chanOf, today := s.dayLives(snap, now)
+	sel, btns := pickChannel(snap, q.Get("canal"), q.Get("video"), chanOf)
+	// Sin canal en el pedido pero con un vivo (un link de antes, solo con
+	// video=) basta con que ese vivo siga siendo el que se muestra. Sin canal
+	// ni vivo (la página se abrió antes de la primera revisión), el canal
+	// también cuenta: así aparecen la tira y el selector apenas hay canales.
+	checkChannel := q.Get("canal") != "" || q.Get("video") == ""
+	if (checkChannel && sel.Canal != q.Get("canal")) || sel.Video != q.Get("video") {
+		// Cambió el vivo en curso del canal (o terminó el vivo suelto): se
+		// recarga toda la sección, también el análisis. Nunca se pasa a otro
+		// canal: pickChannel se queda con el pedido mientras exista.
 		w.Header().Set("HX-Retarget", "#vivo")
 		w.Header().Set("HX-Reswap", "outerHTML")
-		s.render(w, "vivo", map[string]any{"Video": sel})
+		ver, hours := keepView(q)
+		s.render(w, "vivo", map[string]any{"Canal": sel.Canal, "Video": sel.Video, "Ver": ver, "Horas": hours})
 		return
 	}
 	var label string
@@ -215,16 +364,22 @@ func (s *Server) liveChat(w http.ResponseWriter, r *http.Request) {
 			paused = append(paused, b.Label)
 		}
 	}
+	// El feed es del canal: los vivos de hoy, así al cambiar de vivo no se
+	// pierde lo anterior.
 	var rows []ChatRow
-	for _, m := range s.st.LastChat(sel, 60) {
+	for _, m := range s.st.LastChatOf(channelVideos(sel, today), 60) {
 		c := Classify(m.Text)
 		rows = append(rows, ChatRow{m, c, catLabels[c], superLabels[m.Super]})
 	}
 	sort.SliceStable(rows, func(i, j int) bool { return rows[i].At.After(rows[j].At) })
+	var waiting string
+	if sel.Canal != "" && sel.Video == "" {
+		waiting = fmt.Sprintf("Esperando el próximo vivo de %s (%s). Mientras tanto queda lo de hoy.", channelName(sel.Ch), searchText(sel.Ch, now, s.quotaPaused(snap)))
+	}
 	s.render(w, "vivo-chat", map[string]any{
 		"Buttons": btns, "Label": label, "Paused": strings.Join(paused, ", "),
-		"Rows": rows, "Note": snap.ChatNotes[sel], "ChatNote": snap.ChatNote,
-		"Banner": chatBanner(snap.ChatInfo, sel, time.Now()),
+		"Rows": rows, "Note": snap.ChatNotes[sel.Video], "ChatNote": snap.ChatNote,
+		"Banner": chatBanner(snap.ChatInfo, sel.Video, now), "Waiting": waiting,
 	})
 }
 
@@ -303,17 +458,24 @@ func bars(counts []Count) []CatRow {
 
 func (s *Server) liveAnalysis(w http.ResponseWriter, r *http.Request) {
 	snap := s.st.Snapshot()
-	id := r.URL.Query().Get("video")
+	q := r.URL.Query()
+	hours := chartHours
+	if q.Get("horas") == "24" {
+		hours = 24
+	}
+	for _, c := range snap.Channels {
+		if c.ID == q.Get("canal") && c.ID != "" {
+			s.channelAnalysis(w, snap, c, q.Get("video"), q.Get("ver"), hours)
+			return
+		}
+	}
+	id := q.Get("video")
 	var video Video
 	var label string
 	for _, v := range snap.Videos {
 		if v.ID == id {
 			video, label = v, LiveLabel(v.Title, v.Channel)
 		}
-	}
-	hours := chartHours
-	if r.URL.Query().Get("horas") == "24" {
-		hours = 24
 	}
 	// El wrapper se reemplaza entero en cada refresco para que conserve la
 	// ventana del gráfico elegida (va en su hx-get).
@@ -323,18 +485,167 @@ func (s *Server) liveAnalysis(w http.ResponseWriter, r *http.Request) {
 	}
 	now := time.Now()
 	msgs := sinceFor(snap.Msgs, id, now.Add(-24*time.Hour))
+	viewers := s.st.Viewers(id, now.Add(-24*time.Hour))
+	data := analysisData(msgs, viewers, []string{id}, snap.Videos, video.Concurrent, now, hours, scopeLast24)
+	data["Video"], data["Label"] = id, label
+	s.render(w, "vivo-analisis", data)
+}
+
+// scope es de qué mensajes habla el análisis, para los textos de las tarjetas.
+type scope struct{ of, in, window string }
+
+var (
+	scopeLast24  = scope{"de las últimas 24 h", "en las últimas 24 h", "las últimas 24 h"}
+	scopeDay     = scope{"de hoy", "hoy", "lo de hoy (desde las 00:00)"}
+	scopeProgram = scope{"del programa en curso", "en el programa en curso", "el programa en curso"}
+)
+
+// analysisData arma las tarjetas del análisis con los mensajes ya filtrados
+// (de un vivo, del día del canal o del programa en curso).
+func analysisData(msgs []Message, viewers []ViewerSample, ids []string, videos []Video, concurrent int64, now time.Time, hours int, sc scope) map[string]any {
 	a := Analyze(msgs)
 	var filterLine []string
 	for _, f := range a.Filters {
 		filterLine = append(filterLine, f.Key)
 	}
-	viewers := s.st.Viewers(id, now.Add(-24*time.Hour))
-	s.render(w, "vivo-analisis", map[string]any{
-		"Video": id, "Hours": hours, "Label": label, "A": a, "Topics": bars(a.Topics), "Tech": bars(a.Tech),
-		"FilterLine": strings.Join(filterLine, ", "),
-		"Part":       participationView(video, msgs, viewers, videoTitles(snap.Videos), now, hours),
-		"Super":      superView(Supers(msgs, videoTitles(snap.Videos))),
-	})
+	titles := videoTitles(videos)
+	part := participationView(msgs, viewers, ids, videos, concurrent, titles, now, hours)
+	part["Window"] = sc.window
+	sup := superView(Supers(msgs, titles))
+	sup["Of"], sup["In"] = sc.of, sc.in
+	return map[string]any{
+		"Hours": hours, "A": a, "Topics": bars(a.Topics), "Tech": bars(a.Tech),
+		"FilterLine": strings.Join(filterLine, ", "), "Part": part, "Super": sup,
+	}
+}
+
+// channelAnalysis es el análisis de un canal: "Programa en curso" (el vivo
+// actual con el programa actual, desde el inicio del tramo menos 5 min) o
+// "Todo el día del canal" (sus vivos desde las 00:00 locales). Nunca entran
+// mensajes de otro canal.
+func (s *Server) channelAnalysis(w http.ResponseWriter, snap Snapshot, ch ChannelStatus, want, ver string, hours int) {
+	now := time.Now()
+	from := dayStart(now)
+	samples := s.st.Lives(from)
+	var lives []Video
+	ids, live := map[string]bool{}, map[string]bool{}
+	for _, v := range snap.Videos {
+		if v.ChannelID == ch.ID && v.LiveStatus == "live" {
+			lives = append(lives, v)
+			ids[v.ID], live[v.ID] = true, true
+		}
+	}
+	// El vivo que se mira va primero: es el del "programa en curso".
+	sort.SliceStable(lives, func(i, j int) bool { return lives[i].ID == want && lives[j].ID != want })
+	for _, l := range samples {
+		if l.ChannelID == ch.ID {
+			ids[l.VideoID] = true
+		}
+	}
+	segs := ProgramSegments(samples, ch.ID, live, from, now)
+	if ver != "dia" && ver != "programa" {
+		ver = "dia"
+		if len(lives) > 0 {
+			ver = "programa"
+		}
+	}
+	titles := videoTitles(snap.Videos)
+	var (
+		msgs       []Message
+		viewers    []ViewerSample
+		pids       []string
+		concurrent int64
+		span, note string
+		sc         = scopeDay
+	)
+	if ver == "programa" && len(lives) > 0 {
+		v := lives[0]
+		prog := ProgramName(v.Title, v.Channel)
+		start := from
+		for _, sg := range segs {
+			if sg.VideoID == v.ID && sg.Program == prog {
+				start = sg.Start // el último tramo de ese programa
+			}
+		}
+		// 5 min antes: el cambio de título se ve hasta 3 min tarde.
+		start = start.Add(-5 * time.Minute)
+		for _, m := range snap.Msgs {
+			if m.VideoID == v.ID && !m.At.Before(start) && programOf(m, titles) == prog {
+				msgs = append(msgs, m)
+			}
+		}
+		viewers, pids, concurrent = s.st.Viewers(v.ID, start), []string{v.ID}, v.Concurrent
+		span, sc = prog+" (programa en curso)", scopeProgram
+	} else {
+		if ver == "programa" {
+			note = "No hay un programa al aire ahora: se muestra todo el día del canal."
+		}
+		for _, m := range snap.Msgs {
+			if ids[m.VideoID] && !m.At.Before(from) {
+				msgs = append(msgs, m)
+			}
+		}
+		for id := range ids {
+			pids = append(pids, id)
+		}
+		sort.Strings(pids)
+		for _, id := range pids {
+			viewers = append(viewers, s.st.Viewers(id, from)...)
+		}
+		for _, v := range lives {
+			concurrent += v.Concurrent
+		}
+		span = "hoy"
+	}
+	video := ""
+	if len(lives) > 0 {
+		video = lives[0].ID
+	}
+	data := analysisData(msgs, viewers, pids, snap.Videos, concurrent, now, hours, sc)
+	data["Canal"], data["Video"], data["Ver"], data["Label"], data["Span"], data["Note"] = ch.ID, video, ver, channelName(ch), span, note
+	data["Day"] = dayStrip(segs, ch, from, now, s.quotaPaused(snap))
+	s.render(w, "vivo-analisis", data)
+}
+
+// StripBlock es un tramo de la tira "Hoy en el canal". Text va en el
+// aria-label y en el <title> del bloque.
+type StripBlock struct {
+	Class, Program, Range, State, Note, Text string
+	X, W                                     float64 // en minutos desde las 00:00, para el SVG
+}
+
+var stripClass = map[string]string{SegEnded: "fin", SegLive: "aire", SegNone: "sin"}
+
+// dayStrip arma la tira "Hoy en el canal" y el cartel de continuidad.
+func dayStrip(segs []Segment, ch ChannelStatus, from, now time.Time, paused bool) map[string]any {
+	var blocks []StripBlock
+	for i, sg := range segs {
+		end := sg.End
+		current := sg.State == SegLive || sg.State == SegNone && i == len(segs)-1
+		r := sg.Start.Local().Format("15:04") + " a " + end.Local().Format("15:04")
+		if current {
+			end, r = now, sg.Start.Local().Format("15:04")+" a ahora"
+		}
+		b := StripBlock{Class: stripClass[sg.State], Program: sg.Program, Range: r, State: sg.State,
+			X: sg.Start.Sub(from).Minutes(), W: max(end.Sub(sg.Start).Minutes(), 1)}
+		if sg.State == SegNone && current {
+			b.Note = searchText(ch, now, paused)
+		}
+		parts := []string{r}
+		if sg.Program != "" {
+			parts = append(parts, sg.Program)
+		}
+		parts = append(parts, sg.State)
+		if b.Note != "" {
+			parts = append(parts, b.Note)
+		}
+		b.Text = strings.Join(parts, " · ")
+		blocks = append(blocks, b)
+	}
+	return map[string]any{
+		"Blocks": blocks, "W": max(now.Sub(from).Minutes(), 1), "Banner": ContinuityBanner(segs, now),
+		"Aria": fmt.Sprintf("Hoy en el canal desde las %s: %d tramos", from.Local().Format("15:04"), len(blocks)),
+	}
 }
 
 // Nota fija de la tarjeta y del informe para que nadie lea los totales como ingresos.
@@ -430,9 +741,10 @@ func chartWindow(slots []Slot, hours int) []Slot {
 	return slots[max(min(from, len(slots)-minChartSlots), 0):]
 }
 
-// participationView arma la sección de momentos con más participación del vivo.
-func participationView(v Video, msgs []Message, viewers []ViewerSample, titles map[string]string, now time.Time, hours int) map[string]any {
-	slots, typical, ok := Participation(msgs, viewers, v.ID, now)
+// participationView arma la sección de momentos con más participación de uno
+// o varios vivos (los de un canal). concurrent es cuántos miran ahora.
+func participationView(msgs []Message, viewers []ViewerSample, ids []string, videos []Video, concurrent int64, titles map[string]string, now time.Time, hours int) map[string]any {
+	slots, typical, ok := Participation(msgs, viewers, ids, now)
 	moments := TopMoments(slots, titles)
 	shown := chartWindow(slots, hours)
 	// Momentos del top que quedan antes de la ventana: se avisa para que no
@@ -460,7 +772,7 @@ func participationView(v Video, msgs []Message, viewers []ViewerSample, titles m
 			topics = append(topics, t.Key)
 		}
 		row.TopicText = strings.Join(topics, ", ")
-		row.Href, row.Hint = reelLink(v, m.Start, now)
+		row.Href, row.Hint = momentLink(videos, m.VideoID, m.Start, now)
 		rows = append(rows, row)
 	}
 	// Por qué hay menos de 5, para que no parezca un error.
@@ -483,7 +795,7 @@ func participationView(v Video, msgs []Message, viewers []ViewerSample, titles m
 	return map[string]any{
 		"Chart": participationChart(shown, moments, typical, ok, titles), "Moments": rows, "Why": why,
 		"Windows": []int{chartHours, 24}, "Outside": outsideNote,
-		"ByPct": ok, "Typical": pct(typical), "Concurrent": v.Concurrent, "Missing": v.Concurrent > 0 && missing,
+		"ByPct": ok, "Typical": pct(typical), "Concurrent": concurrent, "Missing": concurrent > 0 && missing,
 	}
 }
 
@@ -688,6 +1000,19 @@ func reelLink(v Video, slotStart, now time.Time) (href, hint string) {
 	// En un vivo de días (como el de 24 h de Rivadavia) t= caería fuera de lo
 	// que se puede retroceder: se dice cuánto ir para atrás desde el directo.
 	return "", "Retrocedé " + back + " en el reproductor del vivo"
+}
+
+// momentLink linkea el momento en el vivo del que es. Si ese vivo ya no está
+// en la lista de videos (un vivo terminado de un canal extra) no se sabe
+// cuándo empezó: se linkea sin t= y se dice la hora.
+func momentLink(videos []Video, id string, slotStart, now time.Time) (href, hint string) {
+	for _, v := range videos {
+		if v.ID == id {
+			return reelLink(v, slotStart, now)
+		}
+	}
+	return "https://www.youtube.com/watch?v=" + url.QueryEscape(id),
+		"Ese vivo ya no está en la lista de videos: abrilo y buscá el momento de las " + slotStart.Local().Format("15:04") + " (hora local)"
 }
 
 // decimal escribe un número con un decimal y coma, como se lee en Argentina.

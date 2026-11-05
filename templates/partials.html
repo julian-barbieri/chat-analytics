@@ -46,25 +46,28 @@
 {{end}}
 
 {{define "vivo"}}
-<section id="vivo" class="card vivo" aria-label="Chat en vivo por programa">
-  <div id="vivo-chat" hx-get="/parcial/vivo/chat?video={{.Video}}" hx-trigger="load, every 2s"><p class="muted">Cargando…</p></div>
-  {{if .Video}}<div id="vivo-analisis" hx-get="/parcial/vivo/analisis?video={{.Video}}" hx-trigger="load, every 30s" hx-swap="outerHTML"></div>{{end}}
+<section id="vivo" class="card vivo" aria-label="Chat en vivo por canal">
+  {{/* El chat manda con hx-include el "ver" y las "horas" del análisis: si cambia el vivo y se recarga la sección, se conservan. */}}
+  <div id="vivo-chat" hx-get="/parcial/vivo/chat?{{if .Canal}}canal={{.Canal}}&{{end}}video={{.Video}}" hx-include=".vq" hx-trigger="load, every 2s"><p class="muted">Cargando…</p></div>
+  {{if or .Canal .Video}}<div id="vivo-analisis" hx-get="/parcial/vivo/analisis?{{if .Canal}}canal={{.Canal}}&{{end}}video={{.Video}}{{if .Ver}}&ver={{.Ver}}{{end}}{{if .Horas}}&horas={{.Horas}}{{end}}" hx-trigger="load, every 30s" hx-swap="outerHTML"></div>{{end}}
 </section>
 {{end}}
 
 {{define "vivo-chat"}}
 <div class="head vhead">
   <h2>Chat en vivo</h2>
-  {{if .Buttons}}<div class="vbtns" role="group" aria-label="Elegí qué vivo ver">
-    {{range .Buttons}}<button type="button" class="vbtn" aria-pressed="{{.Active}}"
-      hx-get="/parcial/vivo?video={{.ID}}" hx-target="#vivo" hx-swap="outerHTML" hx-push-url="/?vivo={{.ID}}">{{.Label}}</button>{{end}}
+  {{if .Buttons}}<div class="vbtns" role="group" aria-label="Elegí qué canal ver">
+    {{range .Buttons}}{{if .Canal}}<button type="button" class="vbtn" aria-pressed="{{.Active}}"
+      hx-get="/parcial/vivo?canal={{.Canal}}" hx-target="#vivo" hx-swap="outerHTML" hx-push-url="/?canal={{.Canal}}">{{.Label}}</button>{{else}}<button type="button" class="vbtn" aria-pressed="{{.Active}}"
+      hx-get="/parcial/vivo?video={{.Video}}" hx-target="#vivo" hx-swap="outerHTML" hx-push-url="/?vivo={{.Video}}">{{.Label}}</button>{{end}}{{end}}
   </div>{{end}}
 </div>
 {{if .Buttons}}
 <p class="muted"><span class="live">Mostrando {{.Label}}</span>{{if .Paused}} · En pausa: {{.Paused}} (se sigue guardando; elegilo para verlo){{end}}</p>
+{{if .Waiting}}<div class="cartel warn"><strong>{{.Waiting}}</strong></div>{{end}}
 {{with .Banner}}<div class="cartel {{.Class}}"><strong>{{.Title}}</strong>{{range .Lines}}<span>{{.}}</span>{{end}}</div>{{end}}
-{{if .Note}}<div class="note">{{.Note}}</div>{{else if and .ChatNote (not .Banner)}}<p class="muted">{{.ChatNote}}</p>{{end}}
-{{if not .Rows}}<p class="muted">Todavía no llegaron mensajes de este chat.</p>{{end}}
+{{if .Note}}<div class="note">{{.Note}}</div>{{else if and .ChatNote (not .Banner) (not .Waiting)}}<p class="muted">{{.ChatNote}}</p>{{end}}
+{{if not .Rows}}<p class="muted">{{if .Waiting}}Todavía no hay mensajes de hoy en este canal.{{else}}Todavía no llegaron mensajes de este chat.{{end}}</p>{{end}}
 <ul class="feed vfeed" aria-live="off">
   {{range .Rows}}<li>
     <div class="meta">
@@ -80,10 +83,32 @@
 {{else}}<p class="muted">No hay vivos en este momento. Cuando empiece uno, aparece acá solo.</p>{{end}}
 {{end}}
 
+{{define "vivo-q"}}{{if .Canal}}canal={{.Canal}}&video={{.Video}}&ver={{.Ver}}{{else}}video={{.Video}}{{end}}{{end}}
+
 {{define "vivo-analisis"}}
-<div id="vivo-analisis" hx-get="/parcial/vivo/analisis?video={{.Video}}&horas={{.Hours}}" hx-trigger="every 30s" hx-swap="outerHTML">
+<div id="vivo-analisis" hx-get="/parcial/vivo/analisis?{{template "vivo-q" .}}&horas={{.Hours}}" hx-trigger="every 30s" hx-swap="outerHTML">
+{{if .Canal}}<input type="hidden" class="vq" name="ver" value="{{.Ver}}">{{end}}<input type="hidden" class="vq" name="horas" value="{{.Hours}}">
 {{if .Label}}
-<h2 class="vtitle">Análisis de {{.Label}} · últimas 24 h · {{miles .A.Total}} mensajes</h2>
+{{with .Day}}<section class="card tira" aria-label="Hoy en el canal">
+  <h2>Hoy en el canal</h2>
+  {{if .Banner}}<div class="cartel ok"><strong>{{.Banner}}</strong></div>{{end}}
+  <svg viewBox="0 0 {{printf "%.0f" .W}} 10" preserveAspectRatio="none" role="img" aria-label="{{.Aria}}">
+    {{range .Blocks}}<rect class="tb {{.Class}}" x="{{printf "%.1f" .X}}" y="0" width="{{printf "%.1f" .W}}" height="10"><title>{{.Text}}</title></rect>{{end}}
+  </svg>
+  <ol class="tbloques">{{range .Blocks}}<li class="{{.Class}}" aria-label="{{.Text}}">
+    <strong>{{if .Program}}{{.Program}}{{else}}Sin vivo{{end}}</strong>
+    <span class="muted">{{.Range}} · {{.State}}{{if .Note}} · {{.Note}}{{end}}</span>
+  </li>{{end}}</ol>
+</section>{{end}}
+{{if .Canal}}<div class="vbtns pwin" role="group" aria-label="Qué parte del canal analizar">
+  <button type="button" id="ver-programa" class="vbtn" aria-pressed="{{eq .Ver "programa"}}"
+    hx-get="/parcial/vivo/analisis?canal={{.Canal}}&video={{.Video}}&ver=programa&horas={{.Hours}}" hx-target="#vivo-analisis" hx-swap="outerHTML">Programa en curso</button>
+  <button type="button" id="ver-dia" class="vbtn" aria-pressed="{{eq .Ver "dia"}}"
+    hx-get="/parcial/vivo/analisis?canal={{.Canal}}&video={{.Video}}&ver=dia&horas={{.Hours}}" hx-target="#vivo-analisis" hx-swap="outerHTML">Todo el día del canal</button>
+</div>
+{{if .Note}}<p class="muted">{{.Note}}</p>{{end}}
+<h2 class="vtitle">Análisis de {{.Label}} · {{.Span}} · {{miles .A.Total}} mensajes</h2>
+{{else}}<h2 class="vtitle">Análisis de {{.Label}} · últimas 24 h · {{miles .A.Total}} mensajes</h2>{{end}}
 <div class="vgrid">
   <section class="card">
     <h2>1. Temas de los que más se habla</h2>
@@ -137,7 +162,7 @@
     {{if .Missing}}<p class="muted">Las franjas sin muestra de espectadores (de antes de que se empezaran a guardar o de cuando se cortó la revisión de videos) dicen «sin dato» y quedan fuera del ranking y de la participación típica.</p>{{end}}
     <div class="vbtns pwin" role="group" aria-label="Horas que muestra el gráfico">
       {{range $h := .Windows}}<button type="button" id="pwin-{{$h}}" class="vbtn" aria-pressed="{{eq $h $.Hours}}"
-        hx-get="/parcial/vivo/analisis?video={{$.Video}}&horas={{$h}}" hx-target="#vivo-analisis" hx-swap="outerHTML">Últimas {{$h}} h</button>{{end}}
+        hx-get="/parcial/vivo/analisis?{{template "vivo-q" $}}&horas={{$h}}" hx-target="#vivo-analisis" hx-swap="outerHTML">Últimas {{$h}} h</button>{{end}}
     </div>
     {{with .Chart}}
     {{if .Viewers}}<div class="pmax" aria-hidden="true">{{.Viewers.Max}}</div>
@@ -171,10 +196,10 @@
         {{if .TopicText}}<div>Temas: {{.TopicText}}</div>{{end}}{{range .Examples}}<div class="muted"><strong>{{.Author}}</strong>: {{.Text}}</div>{{end}}</td></tr>{{end}}
     </table>{{end}}
     {{if .Why}}<p class="muted">{{.Why}}</p>{{end}}
-    <p class="muted">Franjas de 5 minutos: el ranking y la participación típica usan las últimas 24 h; el gráfico, las horas elegidas (sin el tramo del principio que no tiene datos). Personas = nombres distintos que escribieron; mirando = lo que informa YouTube en ese momento (promedio de las lecturas de la franja). Es una aproximación: sirve para elegir qué mirar, no como medición exacta.</p>
+    <p class="muted">Franjas de 5 minutos: el ranking y la participación típica usan {{.Window}}; el gráfico, las horas elegidas (sin el tramo del principio que no tiene datos). Personas = nombres distintos que escribieron; mirando = lo que informa YouTube en ese momento (promedio de las lecturas de la franja). Es una aproximación: sirve para elegir qué mirar, no como medición exacta.</p>
   </section>{{end}}
 
-  {{with .Super}}<section class="card full supers" aria-label="Super Chats y Super Stickers de las últimas 24 h">
+  {{with .Super}}<section class="card full supers" aria-label="Super Chats y Super Stickers {{.Of}}">
     <h2>6. Super Chats y Super Stickers</h2>
     {{if .ByCurrency}}
     <table>
@@ -190,7 +215,7 @@
       <div class="meta">{{fecha .At}} · <strong>{{.Author}}</strong> · <span class="badge super">{{.Kind}} · {{.Amount}}</span></div>
       <div>{{if .Text}}{{.Text}}{{else}}<span class="muted">Sin comentario.</span>{{end}}</div>
     </li>{{end}}</ul>
-    {{else}}<p class="muted">Sin Super Chats ni Super Stickers en las últimas 24 h.</p>{{end}}
+    {{else}}<p class="muted">Sin Super Chats ni Super Stickers {{.In}}.</p>{{end}}
     <p class="muted">{{.Note}} Se cuentan desde que se actualizó el monitor para guardarlos.</p>
   </section>{{end}}
 </div>

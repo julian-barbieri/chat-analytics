@@ -30,6 +30,16 @@ type WorkerConfig struct {
 // conexión, unas 1.800 por hora y por vivo.
 var realTimeGap = time.Second
 
+// Cuando un canal se queda sin vivo, se revisa solo ese canal (ChannelLives,
+// 2 unidades) cada fastEvery durante fastFor, para enganchar el programa
+// siguiente sin esperar la revisión completa: a lo sumo 40 unidades por corte.
+// Son var para que los tests las achiquen, igual que workerTick (el bucle).
+var (
+	fastEvery  = time.Minute
+	fastFor    = 20 * time.Minute
+	workerTick = time.Second
+)
+
 // Unidades por hora de un vivo en tiempo real continuo, para estimar cuánto alcanza la cuota.
 const realTimeUnitsPerHour = 1800
 
@@ -125,13 +135,48 @@ func nextChat(lives []Video, chats map[string]*chatState, now time.Time) (next *
 	return next, active
 }
 
+// channelState es lo que el worker recuerda de cada canal de cfg.Channels.
+type channelState struct {
+	info                 ChannelInfo
+	live                 bool
+	waitSince, fastUntil time.Time
+	nextFast             time.Time
+}
+
+// trackChannels marca qué canales tienen un vivo en curso en vids (con chat o
+// sin él). Un canal que tenía vivo y se quedó sin ninguno pasa a la búsqueda
+// rápida; uno que tiene, la corta.
+func trackChannels(channels []*channelState, vids []Video, now time.Time) {
+	for _, c := range channels {
+		has := false
+		for _, v := range vids {
+			has = has || v.ChannelID == c.info.ID && v.LiveStatus == "live"
+		}
+		switch {
+		case has:
+			c.live, c.waitSince, c.fastUntil = true, time.Time{}, time.Time{}
+		case c.live:
+			c.live, c.waitSince, c.fastUntil, c.nextFast = false, now, now.Add(fastFor), now.Add(fastEvery)
+			log.Printf("%s se quedó sin vivo: lo reviso cada %s durante %s", c.info.Title, humanDur(fastEvery), humanDur(fastFor))
+		}
+	}
+}
+
+func channelStatuses(channels []*channelState, every time.Duration) []ChannelStatus {
+	out := make([]ChannelStatus, 0, len(channels))
+	for _, c := range channels {
+		out = append(out, ChannelStatus{ID: c.info.ID, Name: c.info.Title, Live: c.live, WaitSince: c.waitSince, FastUntil: c.fastUntil, Every: every})
+	}
+	return out
+}
+
 // RunWorker corre en una sola goroutine, así el cliente no se comparte, hasta
 // que se cancela ctx (con context.Background(), para siempre). Al cancelarlo
 // corta sus streaming y no vuelve hasta que terminan, para que nadie siga
 // escribiendo en el Store (los tests borran su directorio al terminar).
 func RunWorker(ctx context.Context, yt *YouTube, st *Store, cfg WorkerConfig) {
 	var (
-		uploads       []string // lista de subidas de cada canal, en el orden de cfg.Channels
+		channels      []*channelState // cada canal ya resuelto, en el orden de cfg.Channels
 		nextVideos    time.Time
 		nextComments  time.Time
 		lastChat      time.Time
@@ -140,7 +185,7 @@ func RunWorker(ctx context.Context, yt *YouTube, st *Store, cfg WorkerConfig) {
 		lives         []Video
 		chats         = map[string]*chatState{} // por ID de vivo; el token es de cada chat
 		events        = make(chan chatEvent, 256)
-		tick          = time.NewTicker(time.Second)
+		tick          = time.NewTicker(workerTick)
 		streams       int // goroutines de streaming que todavía no mandaron su done
 	)
 	spend := func(f func() error) error {
@@ -226,26 +271,34 @@ func RunWorker(ctx context.Context, yt *YouTube, st *Store, cfg WorkerConfig) {
 		used := st.Units()
 		every, peak := cfg.chatInterval(now)
 
+		reviewed := false
 		if now.After(nextVideos) && used < cfg.Budget {
 			nextVideos = now.Add(cfg.VideosEvery)
+			reviewed = true
 			err := spend(func() error {
-				for _, ch := range cfg.Channels[len(uploads):] {
-					title, pl, err := yt.UploadsPlaylist(ch)
+				for _, ch := range cfg.Channels[len(channels):] {
+					info, err := yt.LookupChannel(ch)
 					if err != nil {
 						return err
 					}
-					if len(uploads) == 0 {
-						st.SetVideos(title, nil)
+					if len(channels) == 0 {
+						st.SetVideos(info.Title, nil)
 					}
-					uploads = append(uploads, pl)
+					channels = append(channels, &channelState{info: info})
 				}
-				vids, err := yt.ChannelVideos(uploads, cfg.Videos, cfg.Extra)
+				infos := make([]ChannelInfo, len(channels))
+				for i, c := range channels {
+					infos[i] = c.info
+				}
+				vids, err := yt.ChannelVideos(infos, cfg.Videos, cfg.Extra)
 				if err != nil {
 					return err
 				}
-				st.SetVideos(st.Snapshot().Channel, vids)
-				// Los espectadores vienen en el mismo pedido de videos: la serie no cuesta cuota.
+				st.SetVideos(st.Status().Channel, vids)
+				// Los espectadores y los vivos de cada canal vienen en el mismo
+				// pedido de videos: las series no cuestan cuota.
 				st.AddViewers(time.Now(), vids)
+				st.AddLives(time.Now(), vids)
 				lives = nil
 				current := map[string]bool{}
 				for _, v := range vids {
@@ -269,6 +322,14 @@ func RunWorker(ctx context.Context, yt *YouTube, st *Store, cfg WorkerConfig) {
 						delete(chats, id)
 					}
 				}
+				trackChannels(channels, vids, now)
+				for _, c := range channels {
+					// Esta revisión ya miró sus vivos: la rápida espera fastEvery desde acá.
+					if !c.live && now.Before(c.fastUntil) {
+						c.nextFast = now.Add(fastEvery)
+					}
+				}
+				st.SetChannels(channelStatuses(channels, cfg.VideosEvery))
 				return nil
 			})
 			st.SetError(err)
@@ -276,6 +337,50 @@ func RunWorker(ctx context.Context, yt *YouTube, st *Store, cfg WorkerConfig) {
 				log.Printf("videos: %v", err)
 				nextVideos = now.Add(30 * time.Second) // reintento rápido
 			}
+		}
+
+		// Búsqueda rápida del próximo vivo: nunca en el mismo tick que la
+		// revisión completa y nunca con el tope de cuota alcanzado.
+		for _, c := range channels {
+			if reviewed || c.live || !now.Before(c.fastUntil) || now.Before(c.nextFast) || st.Units() >= cfg.Budget {
+				continue
+			}
+			c.nextFast = now.Add(fastEvery)
+			var found []Video
+			err := spend(func() (err error) {
+				found, err = yt.ChannelLives(c.info.Uploads)
+				return err
+			})
+			if err != nil {
+				log.Printf("búsqueda rápida de %s: %v", c.info.Title, err)
+				continue
+			}
+			for i := range found {
+				if found[i].ChannelID == "" { // salió de la lista de vivos de este canal
+					found[i].ChannelID = c.info.ID
+				}
+			}
+			st.AddLives(time.Now(), found)
+			live := false
+			for _, v := range found {
+				if v.LiveStatus != "live" {
+					continue
+				}
+				live = true
+				// Su chat se abre apenas lo deje el intervalo, sin esperar la revisión completa.
+				if v.LiveChatID != "" && chats[v.ID] == nil {
+					lives = append(lives, v)
+					chats[v.ID] = &chatState{chatID: v.LiveChatID}
+				}
+			}
+			if !live {
+				continue
+			}
+			log.Printf("vivo nuevo de %s encontrado a los %s", c.info.Title, humanDur(now.Sub(c.waitSince)))
+			merged := mergeChannelLives(st.Status().Videos, c.info.ID, found)
+			st.SetVideos(st.Status().Channel, merged)
+			trackChannels(channels, merged, now)
+			st.SetChannels(channelStatuses(channels, cfg.VideosEvery))
 		}
 
 		if now.After(nextComments) && used < cfg.Budget {
@@ -423,6 +528,25 @@ func RunWorker(ctx context.Context, yt *YouTube, st *Store, cfg WorkerConfig) {
 			return
 		}
 	}
+}
+
+// mergeChannelLives suma a la lista de videos los vivos que encontró la
+// búsqueda rápida de un canal, en lugar de los vivos que ese canal tenía. Los
+// videos comunes del canal y los de otros canales quedan como estaban hasta la
+// próxima revisión completa.
+func mergeChannelLives(videos []Video, channelID string, found []Video) []Video {
+	out := make([]Video, 0, len(videos)+len(found))
+	seen := map[string]bool{}
+	for _, v := range found {
+		seen[v.ID] = true
+	}
+	for _, v := range videos {
+		if seen[v.ID] || v.ChannelID == channelID && v.LiveStatus != "none" {
+			continue
+		}
+		out = append(out, v)
+	}
+	return append(append([]Video(nil), found...), out...)
 }
 
 // chatInfos arma el cartel de cada vivo. La próxima conexión o lectura se

@@ -259,11 +259,15 @@ type Slot struct {
 	Pct     float64   // participación; vale solo si Viewers > 0
 }
 
-// Participation arma las franjas de las últimas 24 h del chat de un vivo y la
-// participación típica (mediana del % de las franjas con espectadores). Las
-// personas se cuentan por nombre visible y los espectadores son los que
-// YouTube informa "mirando ahora": es una aproximación.
-func Participation(msgs []Message, viewers []ViewerSample, videoID string, now time.Time) (slots []Slot, typical float64, ok bool) {
+// Participation arma las franjas de las últimas 24 h del chat de uno o varios
+// vivos (los de un canal) y la participación típica (mediana del % de las
+// franjas con espectadores). Las personas se cuentan por nombre visible y los
+// espectadores son los que YouTube informa "mirando ahora": es una aproximación.
+func Participation(msgs []Message, viewers []ViewerSample, videoIDs []string, now time.Time) (slots []Slot, typical float64, ok bool) {
+	want := map[string]bool{}
+	for _, id := range videoIDs {
+		want[id] = true
+	}
 	end := now.Truncate(slotStep).Add(slotStep)
 	start := end.Add(-slotCount * slotStep)
 	index := func(t time.Time) int {
@@ -280,7 +284,7 @@ func Participation(msgs []Message, viewers []ViewerSample, videoID string, now t
 	}
 	for _, m := range msgs {
 		i := index(m.At)
-		if m.Source != "chat" || m.VideoID != videoID || i < 0 {
+		if m.Source != "chat" || !want[m.VideoID] || i < 0 {
 			continue
 		}
 		slots[i].Msgs = append(slots[i].Msgs, m)
@@ -289,20 +293,30 @@ func Participation(msgs []Message, viewers []ViewerSample, videoID string, now t
 			authors[i][m.Author] = true
 		}
 	}
-	sum, cnt := make([]int64, slotCount), make([]int64, slotCount)
+	// Promedio por vivo y por franja: con dos vivos del canal a la vez, los que
+	// miraban son la suma de los promedios de cada uno.
+	type key struct {
+		slot int
+		id   string
+	}
+	sum, cnt := map[key]int64{}, map[key]int64{}
 	for _, v := range viewers {
 		// Viewers 0 es "sin dato" (el canal oculta el contador), no "nadie mirando".
-		if i := index(v.At); v.VideoID == videoID && v.Viewers > 0 && i >= 0 {
-			sum[i] += v.Viewers
-			cnt[i]++
+		if i := index(v.At); want[v.VideoID] && v.Viewers > 0 && i >= 0 {
+			sum[key{i, v.VideoID}] += v.Viewers
+			cnt[key{i, v.VideoID}]++
 		}
+	}
+	total := make([]int64, slotCount)
+	for k, n := range cnt {
+		total[k.slot] += (sum[k] + n/2) / n // promedio redondeado
 	}
 	var pcts []float64
 	for i := range slots {
 		s := &slots[i]
 		s.Authors = len(authors[i])
-		if cnt[i] > 0 {
-			s.Viewers = (sum[i] + cnt[i]/2) / cnt[i] // promedio redondeado
+		if total[i] > 0 {
+			s.Viewers = total[i]
 			s.Pct = float64(s.Authors) / float64(s.Viewers) * 100
 			pcts = append(pcts, s.Pct)
 		}
@@ -329,6 +343,7 @@ func median(xs []float64) float64 {
 type Moment struct {
 	Slot             // la franja de 5 minutos (N, Authors, Viewers, Pct)
 	Rank     int     // 1 a maxMomentos
+	VideoID  string  // vivo con más mensajes en la franja: el que se linkea para el reel
 	Program  string  // programa más frecuente en la franja
 	Topics   []Count // temas de la franja
 	Examples []Message
@@ -381,6 +396,7 @@ func newMoment(s Slot, rank int, titles map[string]string) Moment {
 	msgs := append([]Message(nil), s.Msgs...)
 	sort.SliceStable(msgs, func(i, j int) bool { return msgs[i].At.Before(msgs[j].At) })
 	m.Program = mainProgram(msgs, titles)
+	m.VideoID = mainVideo(msgs)
 	m.Topics = TopTopics(msgs, 3)
 	topic := ""
 	if len(m.Topics) > 0 {
@@ -403,6 +419,19 @@ func newMoment(s Slot, rank int, titles map[string]string) Moment {
 		}
 	}
 	return m
+}
+
+// mainVideo devuelve el vivo con más mensajes (si empatan, el primero que llegó a esa cantidad).
+func mainVideo(msgs []Message) string {
+	counts := map[string]int{}
+	best := ""
+	for _, m := range msgs {
+		counts[m.VideoID]++
+		if counts[m.VideoID] > counts[best] {
+			best = m.VideoID
+		}
+	}
+	return best
 }
 
 // mainProgram devuelve el programa con más mensajes (si empatan, el primero que llegó a esa cantidad).
@@ -494,4 +523,120 @@ func Supers(msgs []Message, titles map[string]string) SuperSummary {
 	sort.SliceStable(sum.Last, func(i, j int) bool { return sum.Last[i].At.After(sum.Last[j].At) })
 	sum.Last = sum.Last[:min(len(sum.Last), 10)]
 	return sum
+}
+
+// Estados de un tramo del día de un canal (los textos de la tira).
+const (
+	SegEnded = "terminó"
+	SegLive  = "al aire"
+	SegNone  = "sin vivo"
+)
+
+// segmentGap: sin muestras de un vivo en más de 2 revisiones de videos (3 min
+// cada una) y 1 min de margen, el vivo se cortó o terminó.
+const segmentGap = 2*3*time.Minute + time.Minute
+
+// Segment es un tramo del día de un canal: un programa de un vivo o un rato
+// sin vivo. Start y End son la primera y la última muestra (hasta 3 min
+// después del cambio real); en "sin vivo", del fin de lo anterior al inicio
+// de lo siguiente o a ahora.
+type Segment struct {
+	VideoID, Program string
+	Start, End       time.Time
+	State            string
+}
+
+// dayStart es las 00:00 locales del día de t ("todo el día del canal").
+func dayStart(t time.Time) time.Time {
+	t = t.Local()
+	return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, time.Local)
+}
+
+// ProgramSegments arma los programas de un canal entre from y now con las
+// muestras de vivos: un tramo nuevo por cada vivo y cada vez que cambia el
+// programa del título; las muestras repetidas (por ejemplo, tras reiniciar)
+// se juntan, y un hueco de más de segmentGap corta el tramo y deja uno "sin
+// vivo". live son los vivos del canal en curso ahora (de la lista de videos):
+// solo el último tramo de cada uno está al aire, así el programa anterior
+// termina apenas cambia el título y no recién cuando pasa segmentGap. Si
+// nada está al aire, termina con un "sin vivo" hasta now.
+func ProgramSegments(samples []LiveSample, channelID string, live map[string]bool, from, now time.Time) []Segment {
+	var mine []LiveSample
+	for _, s := range samples {
+		if s.ChannelID == channelID && !s.At.Before(from) && !s.At.After(now) {
+			mine = append(mine, s)
+		}
+	}
+	sort.SliceStable(mine, func(i, j int) bool { return mine[i].At.Before(mine[j].At) })
+	var segs []Segment
+	open := map[string]int{} // vivo → su último tramo
+	for _, s := range mine {
+		p := ProgramName(s.Title, s.Channel)
+		if i, ok := open[s.VideoID]; ok && segs[i].Program == p && s.At.Sub(segs[i].End) <= segmentGap {
+			segs[i].End = s.At
+			continue
+		}
+		open[s.VideoID] = len(segs)
+		segs = append(segs, Segment{VideoID: s.VideoID, Program: p, Start: s.At, End: s.At})
+	}
+	var out []Segment
+	var covered time.Time // hasta dónde hubo algún vivo
+	onAir := false
+	for i, sg := range segs {
+		if !covered.IsZero() && sg.Start.Sub(covered) > segmentGap {
+			out = append(out, Segment{Start: covered, End: sg.Start, State: SegNone})
+		}
+		sg.State = SegEnded
+		if open[sg.VideoID] == i && live[sg.VideoID] {
+			sg.State, onAir = SegLive, true
+		}
+		out = append(out, sg)
+		if sg.End.After(covered) {
+			covered = sg.End
+		}
+	}
+	switch {
+	case covered.IsZero():
+		out = append(out, Segment{Start: from, End: now, State: SegNone})
+	case !onAir:
+		out = append(out, Segment{Start: covered, End: now, State: SegNone})
+	}
+	return out
+}
+
+// ContinuityBanner explica el último cambio de programa de hoy: si fue en el
+// mismo vivo o si empezó otro y el monitor lo enganchó. Vacío si no hubo
+// cambio hoy.
+func ContinuityBanner(segs []Segment, now time.Time) string {
+	var progs []Segment
+	for _, s := range segs {
+		if s.State != SegNone {
+			progs = append(progs, s)
+		}
+	}
+	if len(progs) < 2 {
+		return ""
+	}
+	last := progs[len(progs)-1]
+	var prev *Segment
+	for i := range progs[:len(progs)-1] {
+		if p := &progs[i]; p.Start.Before(last.Start) && (prev == nil || !p.End.Before(prev.End)) {
+			prev = p
+		}
+	}
+	if prev == nil || !dayStart(last.Start).Equal(dayStart(now)) {
+		return ""
+	}
+	at := last.Start.Local().Format("15:04")
+	if prev.VideoID == last.VideoID {
+		if prev.Program == last.Program || last.Start.Sub(prev.End) > segmentGap {
+			return "" // el mismo programa después de un corte: no hubo cambio que contar
+		}
+		return "A las " + at + " cambió el programa y el chat siguió sin cortes"
+	}
+	msg := "A las " + at + " empezó un vivo nuevo y el monitor lo enganchó solo."
+	if prev.State != SegLive {
+		msg += " El vivo de " + prev.Program + " terminó a las " + prev.End.Local().Format("15:04") + "."
+	}
+	return msg
 }

@@ -61,6 +61,7 @@ func (y *YouTube) get(path string, params url.Values, cost int, out any) error {
 type Video struct {
 	ID          string
 	Title       string
+	ChannelID   string // ID del canal (UC...): con él la vista sigue al canal de un vivo a otro
 	Channel     string // nombre del canal
 	PublishedAt time.Time
 	Views       int64
@@ -71,11 +72,17 @@ type Video struct {
 	StartedAt   time.Time // inicio real del vivo; cero si no empezó o no es un vivo
 }
 
-// UploadsPlaylist devuelve el nombre del canal y la lista de "subidas".
-// Acepta un ID de canal ("UC...") o un @handle.
-func (y *YouTube) UploadsPlaylist(channel string) (title, playlist string, err error) {
+// ChannelInfo es lo que se necesita de un canal: su ID (también cuando se dio
+// un @handle), su nombre y su lista de "subidas".
+type ChannelInfo struct {
+	ID, Title, Uploads string
+}
+
+// LookupChannel busca un canal por ID ("UC...") o @handle (1 unidad).
+func (y *YouTube) LookupChannel(channel string) (ChannelInfo, error) {
 	var r struct {
 		Items []struct {
+			ID             string                 `json:"id"`
 			Snippet        struct{ Title string } `json:"snippet"`
 			ContentDetails struct {
 				RelatedPlaylists struct {
@@ -88,14 +95,18 @@ func (y *YouTube) UploadsPlaylist(channel string) (title, playlist string, err e
 	if strings.HasPrefix(channel, "@") {
 		params = url.Values{"part": {"snippet,contentDetails"}, "forHandle": {channel}}
 	}
-	err = y.get("channels", params, 1, &r)
-	if err != nil {
-		return "", "", err
+	if err := y.get("channels", params, 1, &r); err != nil {
+		return ChannelInfo{}, err
 	}
 	if len(r.Items) == 0 {
-		return "", "", fmt.Errorf("no se encontró el canal %s", channel)
+		return ChannelInfo{}, fmt.Errorf("no se encontró el canal %s", channel)
 	}
-	return r.Items[0].Snippet.Title, r.Items[0].ContentDetails.RelatedPlaylists.Uploads, nil
+	it := r.Items[0]
+	info := ChannelInfo{ID: it.ID, Title: it.Snippet.Title, Uploads: it.ContentDetails.RelatedPlaylists.Uploads}
+	if info.ID == "" && !strings.HasPrefix(channel, "@") {
+		info.ID = channel // se pidió por ID: es el mismo
+	}
+	return info, nil
 }
 
 // RecentVideoIDs devuelve los últimos n videos subidos (incluye vivos).
@@ -122,20 +133,26 @@ func (y *YouTube) RecentVideoIDs(playlist string, n int) ([]string, error) {
 
 // ChannelVideos devuelve los vivos de los canales, los videos pedidos a mano
 // (extra) y los últimos n subidos del primer canal, sin repetir y en ese orden.
+// Si la API no manda snippet.channelId, el canal de cada video sale de la
+// lista en la que apareció (no cuesta cuota); los de extra quedan sin canal.
 // Los vivos que transmiten las 24 horas se publicaron hace días y quedan fuera de
 // los últimos n subidos: por eso se buscan también en la lista automática de
 // vivos de cada canal. De los otros canales solo quedan los vivos en curso o
 // programados, así no se gasta cuota en comentarios de videos viejos.
-func (y *YouTube) ChannelVideos(uploads []string, n int, extra []string) ([]Video, error) {
-	ups, err := y.RecentVideoIDs(uploads[0], n)
+func (y *YouTube) ChannelVideos(channels []ChannelInfo, n int, extra []string) ([]Video, error) {
+	ups, err := y.RecentVideoIDs(channels[0].Uploads, n)
 	if err != nil {
 		return nil, err
 	}
 	var ids []string
 	seen := map[string]bool{}
 	only := map[string]bool{} // videos que aparecen solo en la lista de vivos de otro canal
-	add := func(list []string, other bool) {
+	from := map[string]int{}  // de qué canal es cada video, según la primera lista en la que apareció
+	add := func(list []string, other bool, ch int) {
 		for _, id := range list {
+			if _, ok := from[id]; !ok && ch >= 0 {
+				from[id] = ch
+			}
 			if id != "" && !seen[id] {
 				seen[id] = true
 				ids = append(ids, id)
@@ -145,7 +162,7 @@ func (y *YouTube) ChannelVideos(uploads []string, n int, extra []string) ([]Vide
 			}
 		}
 	}
-	for i, u := range uploads {
+	for i, c := range channels {
 		// "UULV..." es la lista de vivos que YouTube arma sola (1 unidad por canal).
 		// No está documentada: si falla, seguimos con las subidas y los videos extra.
 		// De los otros canales alcanza con los últimos 5: solo interesan los vivos en curso.
@@ -153,15 +170,37 @@ func (y *YouTube) ChannelVideos(uploads []string, n int, extra []string) ([]Vide
 		if i > 0 {
 			count = 5
 		}
-		lives, _ := y.RecentVideoIDs("UULV"+strings.TrimPrefix(u, "UU"), count)
-		add(lives, i > 0)
+		lives, _ := y.RecentVideoIDs("UULV"+strings.TrimPrefix(c.Uploads, "UU"), count)
+		add(lives, i > 0, i)
 	}
-	add(extra, false)
-	add(ups, false)
+	add(extra, false, -1)
+	add(ups, false, 0)
 	vids, err := y.Videos(ids)
 	out := vids[:0]
 	for _, v := range vids {
+		if i, ok := from[v.ID]; ok && v.ChannelID == "" {
+			v.ChannelID = channels[i].ID
+		}
 		if !only[v.ID] || v.LiveStatus != "none" {
+			out = append(out, v)
+		}
+	}
+	return out, err
+}
+
+// ChannelLives revisa solo la lista de vivos de un canal y sus videos (2
+// unidades; 1 si la lista está vacía) y devuelve los vivos en curso o
+// programados. Es la búsqueda rápida del próximo vivo cuando un canal se
+// queda sin ninguno: más barata que la revisión completa.
+func (y *YouTube) ChannelLives(uploads string) ([]Video, error) {
+	ids, err := y.RecentVideoIDs("UULV"+strings.TrimPrefix(uploads, "UU"), 5)
+	if err != nil {
+		return nil, err
+	}
+	vids, err := y.Videos(ids)
+	out := vids[:0]
+	for _, v := range vids {
+		if v.LiveStatus != "none" {
 			out = append(out, v)
 		}
 	}
@@ -189,6 +228,7 @@ func (y *YouTube) videos(ids []string) ([]Video, error) {
 			ID      string `json:"id"`
 			Snippet struct {
 				Title                string    `json:"title"`
+				ChannelID            string    `json:"channelId"`
 				ChannelTitle         string    `json:"channelTitle"`
 				PublishedAt          time.Time `json:"publishedAt"`
 				LiveBroadcastContent string    `json:"liveBroadcastContent"`
@@ -213,6 +253,7 @@ func (y *YouTube) videos(ids []string) ([]Video, error) {
 		out = append(out, Video{
 			ID:          it.ID,
 			Title:       it.Snippet.Title,
+			ChannelID:   it.Snippet.ChannelID,
 			Channel:     it.Snippet.ChannelTitle,
 			PublishedAt: it.Snippet.PublishedAt,
 			Views:       atoi(it.Statistics.ViewCount),

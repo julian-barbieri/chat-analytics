@@ -69,9 +69,10 @@ func TestFlowAgainstFakeAPI(t *testing.T) {
 		case "/channels":
 			switch {
 			case q.Get("id") == "C":
-				w.Write([]byte(`{"items":[{"snippet":{"title":"Radio Test"},"contentDetails":{"relatedPlaylists":{"uploads":"UU1"}}}]}`))
+				w.Write([]byte(`{"items":[{"id":"C","snippet":{"title":"Radio Test"},"contentDetails":{"relatedPlaylists":{"uploads":"UU1"}}}]}`))
 			case q.Get("forHandle") == "@otra":
-				w.Write([]byte(`{"items":[{"snippet":{"title":"Otra Radio"},"contentDetails":{"relatedPlaylists":{"uploads":"UU2"}}}]}`))
+				// Con @handle el ID del canal sale solo de items[0].id.
+				w.Write([]byte(`{"items":[{"id":"UC2","snippet":{"title":"Otra Radio"},"contentDetails":{"relatedPlaylists":{"uploads":"UU2"}}}]}`))
 			default:
 				w.Write([]byte(`{"items":[]}`))
 			}
@@ -86,10 +87,10 @@ func TestFlowAgainstFakeAPI(t *testing.T) {
 			w.Write([]byte(`{"items":[` + strings.Join(out, ",") + `]}`))
 		case "/videos":
 			items := map[string]string{
-				"v1": `{"id":"v1","snippet":{"title":"Entrevista","channelTitle":"Radio Test","publishedAt":"` + now + `","liveBroadcastContent":"none"},"statistics":{"viewCount":"10","commentCount":"2"}}`,
-				"v2": `{"id":"v2","snippet":{"title":"🔴RADIO TEST en VIVO | LA MAÑANA","channelTitle":"Radio Test","publishedAt":"` + old + `","liveBroadcastContent":"live"},"statistics":{"viewCount":"100","commentCount":"0"},"liveStreamingDetails":{"activeLiveChatId":"chat1","concurrentViewers":"40","actualStartTime":"` + started.Format(time.RFC3339) + `"}}`,
-				"v3": `{"id":"v3","snippet":{"title":"La tarde de Otra","channelTitle":"Otra Radio","publishedAt":"` + now + `","liveBroadcastContent":"live"},"statistics":{"viewCount":"5","commentCount":"0"},"liveStreamingDetails":{"activeLiveChatId":"chat2","concurrentViewers":"7"}}`,
-				"v4": `{"id":"v4","snippet":{"title":"Vivo de ayer","channelTitle":"Otra Radio","publishedAt":"` + old + `","liveBroadcastContent":"none"},"statistics":{"viewCount":"50","commentCount":"9"}}`,
+				"v1": `{"id":"v1","snippet":{"title":"Entrevista","channelId":"C","channelTitle":"Radio Test","publishedAt":"` + now + `","liveBroadcastContent":"none"},"statistics":{"viewCount":"10","commentCount":"2"}}`,
+				"v2": `{"id":"v2","snippet":{"title":"🔴RADIO TEST en VIVO | LA MAÑANA","channelId":"C","channelTitle":"Radio Test","publishedAt":"` + old + `","liveBroadcastContent":"live"},"statistics":{"viewCount":"100","commentCount":"0"},"liveStreamingDetails":{"activeLiveChatId":"chat1","concurrentViewers":"40","actualStartTime":"` + started.Format(time.RFC3339) + `"}}`,
+				"v3": `{"id":"v3","snippet":{"title":"La tarde de Otra","channelId":"UC2","channelTitle":"Otra Radio","publishedAt":"` + now + `","liveBroadcastContent":"live"},"statistics":{"viewCount":"5","commentCount":"0"},"liveStreamingDetails":{"activeLiveChatId":"chat2","concurrentViewers":"7"}}`,
+				"v4": `{"id":"v4","snippet":{"title":"Vivo de ayer","channelId":"UC2","channelTitle":"Otra Radio","publishedAt":"` + old + `","liveBroadcastContent":"none"},"statistics":{"viewCount":"50","commentCount":"9"}}`,
 			}
 			var out []string
 			for _, id := range strings.Split(q.Get("id"), ",") {
@@ -119,18 +120,23 @@ func TestFlowAgainstFakeAPI(t *testing.T) {
 
 	yt := NewYouTube("k")
 	yt.BaseURL = srv.URL
-	title, up, err := yt.UploadsPlaylist("C")
-	if err != nil || title != "Radio Test" || up != "UU1" {
-		t.Fatalf("UploadsPlaylist: %v %q %q", err, title, up)
+	ch1, err := yt.LookupChannel("C")
+	if err != nil || ch1 != (ChannelInfo{ID: "C", Title: "Radio Test", Uploads: "UU1"}) {
+		t.Fatalf("LookupChannel: %v %+v", err, ch1)
 	}
-	title2, up2, err := yt.UploadsPlaylist("@otra")
-	if err != nil || title2 != "Otra Radio" || up2 != "UU2" {
-		t.Fatalf("UploadsPlaylist(@otra): %v %q %q", err, title2, up2)
+	ch2, err := yt.LookupChannel("@otra")
+	if err != nil || ch2 != (ChannelInfo{ID: "UC2", Title: "Otra Radio", Uploads: "UU2"}) {
+		t.Fatalf("LookupChannel(@otra): %v %+v", err, ch2)
 	}
-	vids, err := yt.ChannelVideos([]string{up, up2}, 5, []string{"v1"})
+	title, title2, up2 := ch1.Title, ch2.Title, ch2.Uploads
+	vids, err := yt.ChannelVideos([]ChannelInfo{ch1, ch2}, 5, []string{"v1"})
 	if err != nil || len(vids) != 3 || vids[0].ID != "v2" || vids[0].LiveChatID != "chat1" || vids[0].Concurrent != 40 ||
 		vids[1].ID != "v3" || vids[1].Channel != "Otra Radio" || vids[2].ID != "v1" {
 		t.Fatalf("ChannelVideos: %v %+v", err, vids)
+	}
+	// El ID del canal viene en snippet, la misma parte que ya se pide: no cuesta cuota.
+	if vids[0].ChannelID != "C" || vids[1].ChannelID != "UC2" || vids[2].ChannelID != "C" {
+		t.Errorf("ChannelID = %q, %q, %q", vids[0].ChannelID, vids[1].ChannelID, vids[2].ChannelID)
 	}
 	// El inicio del vivo viene en la misma parte que ya se pide: no cuesta cuota.
 	if !vids[0].StartedAt.Equal(started) {
@@ -165,6 +171,15 @@ func TestFlowAgainstFakeAPI(t *testing.T) {
 	// 2 canales, subidas + vivos de cada canal, videos, comentarios, 2 lecturas de chat.
 	if yt.Units != 2+1+2+1+1+2*5 {
 		t.Errorf("unidades = %d", yt.Units)
+	}
+
+	// La búsqueda rápida de un canal: su lista de vivos y videos (2 unidades),
+	// y solo quedan los vivos en curso o programados.
+	fast := NewYouTube("k")
+	fast.BaseURL = srv.URL
+	lives, err := fast.ChannelLives(up2)
+	if err != nil || len(lives) != 1 || lives[0].ID != "v3" || lives[0].ChannelID != "UC2" || fast.Units != 2 {
+		t.Errorf("ChannelLives = %v %+v, %d unidades", err, lives, fast.Units)
 	}
 }
 
@@ -538,10 +553,11 @@ func TestLiveChatSelection(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	st.SetChannels([]ChannelStatus{{ID: "UC1", Name: "Radio Test", Live: true}, {ID: "UC2", Name: "Otra Radio", Live: true}})
 	st.SetVideos("Radio Test", []Video{
-		{ID: "v1", Title: "🔴RADIO TEST en VIVO | LA MAÑANA", Channel: "Radio Test", LiveStatus: "live"},
-		{ID: "v2", Title: "🔴 [EN VIVO] LA TARDE | OTRA RADIO", Channel: "Otra Radio", LiveStatus: "live"},
-		{ID: "v3", Title: "Vivo terminado", Channel: "Radio Test", LiveStatus: "none"},
+		{ID: "v1", Title: "🔴RADIO TEST en VIVO | LA MAÑANA", ChannelID: "UC1", Channel: "Radio Test", LiveStatus: "live"},
+		{ID: "v2", Title: "🔴 [EN VIVO] LA TARDE | OTRA RADIO", ChannelID: "UC2", Channel: "Otra Radio", LiveStatus: "live"},
+		{ID: "v3", Title: "Vivo terminado", ChannelID: "UC1", Channel: "Radio Test", LiveStatus: "none"},
 	})
 	st.Add([]Message{
 		{ID: "a", Source: "chat", VideoID: "v1", Author: "Ana", Text: "hola desde la mañana", At: time.Now()},
@@ -554,20 +570,22 @@ func TestLiveChatSelection(t *testing.T) {
 		return w
 	}
 
-	w := get("/parcial/vivo/chat?video=v2")
+	w := get("/parcial/vivo/chat?canal=UC2&video=v2")
 	body := w.Body.String()
-	if w.Header().Get("HX-Retarget") != "" || !strings.Contains(body, "Mostrando OTRA RADIO en VIVO") ||
-		!strings.Contains(body, "En pausa: RADIO TEST en VIVO") || !strings.Contains(body, "hola desde la tarde") ||
+	if w.Header().Get("HX-Retarget") != "" || !strings.Contains(body, "Mostrando Otra Radio · en vivo") ||
+		!strings.Contains(body, "En pausa: Radio Test · en vivo") || !strings.Contains(body, "hola desde la tarde") ||
 		strings.Contains(body, "hola desde la mañana") {
-		t.Errorf("chat de v2:\n%s", body)
+		t.Errorf("chat de UC2:\n%s", body)
 	}
-	// Si el vivo pedido terminó, se recarga la sección entera con el primero en vivo.
+	// Un link viejo a un vivo que terminó elige el canal de ese vivo, no el
+	// primero que esté en vivo de cualquier canal.
 	w = get("/parcial/vivo/chat?video=v3")
-	if w.Header().Get("HX-Retarget") != "#vivo" || !strings.Contains(w.Body.String(), "video=v1") {
+	if w.Header().Get("HX-Retarget") != "#vivo" || !strings.Contains(w.Body.String(), "canal=UC1&video=v1") ||
+		strings.Contains(w.Body.String(), "UC2") {
 		t.Errorf("vivo terminado: retarget %q\n%s", w.Header().Get("HX-Retarget"), w.Body.String())
 	}
-	if body := get("/parcial/vivo/analisis?video=v1").Body.String(); !strings.Contains(body, "Análisis de RADIO TEST en VIVO") {
-		t.Errorf("análisis de v1:\n%s", body)
+	if body := get("/parcial/vivo/analisis?canal=UC1&video=v1").Body.String(); !strings.Contains(body, "Análisis de Radio Test") {
+		t.Errorf("análisis de UC1:\n%s", body)
 	}
 }
 
@@ -1150,7 +1168,7 @@ func TestParticipation(t *testing.T) {
 		{"otro", at(14, 6, 0), 9999},
 		{"v", at(14, 11, 0), 50}, // franja sin mensajes pero con espectadores: 0 %
 	}
-	slots, typical, ok := Participation(msgs, viewers, "v", now)
+	slots, typical, ok := Participation(msgs, viewers, []string{"v"}, now)
 	if len(slots) != 288 {
 		t.Fatalf("franjas = %d, quería 288", len(slots))
 	}
@@ -1189,11 +1207,11 @@ func TestParticipation(t *testing.T) {
 	if !ok || typical != 1.0 {
 		t.Errorf("participación típica = %v (%v), quería 1", typical, ok)
 	}
-	if _, _, ok := Participation(msgs, nil, "v", now); ok {
+	if _, _, ok := Participation(msgs, nil, []string{"v"}, now); ok {
 		t.Errorf("sin muestras de espectadores la participación típica debería ser sin dato")
 	}
 	three := append(viewers, ViewerSample{"v", at(14, 21, 0), 10})
-	if _, typical, ok := Participation(msgs, three, "v", now); !ok || typical != 0 {
+	if _, typical, ok := Participation(msgs, three, []string{"v"}, now); !ok || typical != 0 {
 		t.Errorf("mediana de 0, 0 y 2 = %v (%v), quería 0", typical, ok)
 	}
 }
@@ -1230,6 +1248,25 @@ func TestReelLink(t *testing.T) {
 		href, hint := reelLink(Video{ID: "abc", LiveStatus: c.status, StartedAt: c.started}, c.slot, now)
 		if href != c.href || (c.has != "" && hint != c.has) || hint == "" {
 			t.Errorf("%s: reelLink = %q, %q; quería %q, %q", c.name, href, hint, c.href, c.has)
+		}
+	}
+
+	// CA1.10: el momento linkea el vivo del que es. Si ese vivo ya no está en
+	// la lista de videos (un vivo terminado de un canal extra), se linkea sin
+	// t= y la pista dice la hora local.
+	videos := []Video{{ID: "abc", LiveStatus: "live"}, {ID: "def", LiveStatus: "none", StartedAt: now.Add(-3 * time.Hour)}}
+	slot := now.Add(-62 * time.Minute)
+	moment := []struct {
+		name, id, href, hint string
+	}{
+		{"vivo en curso", "abc", live, "Abrí el vivo y retrocedé ~1 h 2 min en el reproductor"},
+		{"vivo terminado en la lista", "def", "https://www.youtube.com/watch?v=def&t=7080s", "Ver en YouTube desde ese momento"},
+		{"ya no está en la lista", "gh&i", "https://www.youtube.com/watch?v=gh%26i",
+			"Ese vivo ya no está en la lista de videos: abrilo y buscá el momento de las " + slot.Local().Format("15:04") + " (hora local)"},
+	}
+	for _, c := range moment {
+		if href, hint := momentLink(videos, c.id, slot, now); href != c.href || hint != c.hint {
+			t.Errorf("%s: momentLink = %q, %q; quería %q, %q", c.name, href, hint, c.href, c.hint)
 		}
 	}
 }
@@ -1384,7 +1421,7 @@ func TestParticipationBorders(t *testing.T) {
 		{"v", at(13, 0, 0, 0), 101},              // 101 y 102 dan 102 (redondeo hacia arriba)
 		{"v", at(13, 1, 0, 0), 102},
 	}
-	slots, _, _ := Participation(msgs, viewers, "v", now)
+	slots, _, _ := Participation(msgs, viewers, []string{"v"}, now)
 	byStart := map[time.Time]Slot{}
 	total := 0
 	for _, s := range slots {
@@ -1416,7 +1453,7 @@ func TestParticipationBorders(t *testing.T) {
 
 	// Con now en hora argentina las franjas siguen alineadas a 5 minutos locales.
 	art := time.FixedZone("ART", -3*3600)
-	slots, _, _ = Participation(nil, nil, "v", now.In(art))
+	slots, _, _ = Participation(nil, nil, []string{"v"}, now.In(art))
 	for _, s := range slots {
 		if s.Start.In(art).Minute()%5 != 0 || s.Start.Second() != 0 {
 			t.Fatalf("franja desalineada en hora local: %v", s.Start.In(art))
@@ -1766,7 +1803,7 @@ func TestTopMoments(t *testing.T) {
 		}
 	}
 	// Vivo sin mensajes, pasando por Participation como en el servidor.
-	slots, _, _ := Participation(nil, []ViewerSample{{"v", time.Now(), 50}}, "v", time.Now())
+	slots, _, _ := Participation(nil, []ViewerSample{{"v", time.Now(), 50}}, []string{"v"}, time.Now())
 	if ms := TopMoments(slots, nil); len(ms) != 0 {
 		t.Errorf("vivo sin mensajes: %+v", ms)
 	}
@@ -2513,7 +2550,7 @@ func TestTopMomentsEdges(t *testing.T) {
 	for j := range 5 {
 		old = append(old, Message{ID: fmt.Sprint("o", j), Source: "chat", VideoID: "v", Author: fmt.Sprint("a", j), Text: "hola", At: now.Add(-25 * time.Hour)})
 	}
-	slots, _, ok := Participation(old, []ViewerSample{{"v", now.Add(-25 * time.Hour), 10}, {"v", now.Add(-time.Hour), 10}}, "v", now)
+	slots, _, ok := Participation(old, []ViewerSample{{"v", now.Add(-25 * time.Hour), 10}, {"v", now.Add(-time.Hour), 10}}, []string{"v"}, now)
 	if ms := TopMoments(slots, nil); !ok || len(ms) != 0 {
 		t.Errorf("ventana vacía: ok %v, momentos %+v", ok, ms)
 	}
@@ -2543,7 +2580,7 @@ func TestTopMomentsEdges(t *testing.T) {
 		}
 		paid = append(paid, m)
 	}
-	slots, _, _ = Participation(paid, []ViewerSample{{"v", now.Add(-time.Hour), 50}}, "v", now)
+	slots, _, _ = Participation(paid, []ViewerSample{{"v", now.Add(-time.Hour), 50}}, []string{"v"}, now)
 	ms := TopMoments(slots, nil)
 	if len(ms) != 1 || ms[0].N != 5 || ms[0].Authors != 5 || len(ms[0].Topics) != 0 ||
 		len(ms[0].Examples) != 2 || ms[0].Examples[0].ID != "p3" || ms[0].Examples[1].ID != "p4" {
@@ -3488,5 +3525,937 @@ func TestClassifyAmountSpam(t *testing.T) {
 		if got := Classify(in); got != want {
 			t.Errorf("Classify(%q) = %s, quería %s", in, got, want)
 		}
+	}
+}
+
+// noonLocal fija time.Local en una zona en la que ahora son las 12:00, así los
+// tests de "hoy" (desde las 00:00 locales) no fallan cerca de la medianoche.
+// Modifica time.Local: no puede correr en paralelo con otros tests.
+func noonLocal(t *testing.T) time.Time {
+	t.Helper()
+	orig := time.Local
+	t.Cleanup(func() { time.Local = orig })
+	now := time.Now().UTC()
+	secs := now.Hour()*3600 + now.Minute()*60 + now.Second()
+	time.Local = time.FixedZone("mediodia", 12*3600-secs)
+	return time.Now()
+}
+
+// livesEvery arma muestras de un vivo cada 3 minutos, como las revisiones de videos.
+func livesEvery(video, channelID, channel, title string, from, to time.Time) []LiveSample {
+	var out []LiveSample
+	for at := from; !at.After(to); at = at.Add(3 * time.Minute) {
+		out = append(out, LiveSample{At: at, VideoID: video, ChannelID: channelID, Channel: channel, Title: title})
+	}
+	return out
+}
+
+// TestLiveChatByChannel (CA1.2, CA1.11): la vista es del canal y no salta a
+// otro canal cuando termina el vivo; los vivos sueltos de -vivos siguen con su botón.
+func TestLiveChatByChannel(t *testing.T) {
+	now := noonLocal(t)
+	st, err := OpenStore(t.TempDir() + "/datos.jsonl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	const titleB1, titleB2 = "🔴 [EN VIVO] LA MAÑANA | RADIO B", "🔴 [EN VIVO] LA TARDE | RADIO B"
+	a1 := Video{ID: "a1", Title: "🔴RADIO A en VIVO | LA MAÑANA", ChannelID: "UCA", Channel: "Radio A", LiveStatus: "live", LiveChatID: "ka"}
+	b2 := Video{ID: "b2", Title: titleB2, ChannelID: "UCB", Channel: "Radio B", LiveStatus: "live", LiveChatID: "kb2"}
+	x1 := Video{ID: "x1", Title: "🔴 [EN VIVO] SUELTO | OTRA COSA", ChannelID: "UCX", Channel: "Otra Cosa", LiveStatus: "live"}
+	st.SetChannels([]ChannelStatus{{ID: "UCA", Name: "Radio A", Live: true}, {ID: "UCB", Name: "Radio B", Live: true}})
+	// b1 ya no está: los vivos terminados de canales extra se descartan. b0 es
+	// un video viejo de B (una subida, sin vivo hoy): su chat no va en el feed.
+	b0 := Video{ID: "b0", Title: "Vivo de anteayer", ChannelID: "UCB", Channel: "Radio B", LiveStatus: "none"}
+	st.SetVideos("Radio A", []Video{a1, b2, x1, b0})
+	for _, s := range livesEvery("b1", "UCB", "Radio B", titleB1, now.Add(-90*time.Minute), now.Add(-60*time.Minute)) {
+		st.AddLives(s.At, []Video{{ID: s.VideoID, ChannelID: s.ChannelID, Channel: s.Channel, Title: s.Title, LiveStatus: "live"}})
+	}
+	st.AddLives(now.Add(-time.Minute), []Video{a1, b2})
+	st.Add([]Message{
+		{ID: "ma", Source: "chat", VideoID: "a1", Author: "Ana", Text: "hola desde A", At: now},
+		{ID: "mb1", Source: "chat", VideoID: "b1", Author: "Beto", Text: "hola desde B1", At: now.Add(-70 * time.Minute)},
+		{ID: "mb2", Source: "chat", VideoID: "b2", Author: "Caro", Text: "hola desde B2", At: now},
+		{ID: "mx", Source: "chat", VideoID: "x1", Author: "Dani", Text: "hola suelto", At: now},
+		{ID: "mb0", Source: "chat", VideoID: "b0", Author: "Eva", Text: "chat de un video viejo", At: now.Add(-30 * time.Hour)},
+	})
+	h := (&Server{st: st, budget: 9000}).Routes()
+	get := func(url string) *httptest.ResponseRecorder {
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, httptest.NewRequest("GET", url, nil))
+		return w
+	}
+	check := func(name string, w *httptest.ResponseRecorder, retarget string, want, not []string) {
+		t.Helper()
+		body := w.Body.String()
+		if got := w.Header().Get("HX-Retarget"); got != retarget {
+			t.Errorf("%s: HX-Retarget = %q, quería %q", name, got, retarget)
+		}
+		for _, s := range want {
+			if !strings.Contains(body, s) {
+				t.Errorf("%s: falta %q", name, s)
+			}
+		}
+		for _, s := range not {
+			if strings.Contains(body, s) {
+				t.Errorf("%s: no debería tener %q", name, s)
+			}
+		}
+		if t.Failed() {
+			t.Logf("%s:\n%s", name, body)
+		}
+	}
+
+	// B con su vivo nuevo: el feed junta los dos vivos de B de hoy y nada de A.
+	check("B en vivo", get("/parcial/vivo/chat?canal=UCB&video=b2"), "", []string{
+		"Mostrando Radio B · en vivo", "hola desde B1", "hola desde B2",
+		`hx-get="/parcial/vivo?canal=UCA"`, `hx-push-url="/?canal=UCB"`, `hx-get="/parcial/vivo?video=x1"`, `hx-push-url="/?vivo=x1"`,
+		"En pausa: Radio A · en vivo, OTRA COSA en VIVO",
+	}, []string{"hola desde A", "hola suelto", "chat de un video viejo"})
+	// La vista seguía en b1, que terminó: se recarga la sección del mismo canal
+	// con b2, conservando lo elegido en el análisis (que el chat manda con hx-include).
+	check("B cambió de vivo", get("/parcial/vivo/chat?canal=UCB&video=b1&ver=dia&horas=24"), "#vivo",
+		[]string{`hx-get="/parcial/vivo/chat?canal=UCB&video=b2"`, `hx-include=".vq"`,
+			`hx-get="/parcial/vivo/analisis?canal=UCB&video=b2&ver=dia&horas=24"`}, []string{"canal=UCA", "video=a1"})
+	// Un pedido solo con video= de un vivo en curso del canal (un link de
+	// antes) muestra ese chat sin recargar la sección.
+	check("solo video= en curso", get("/parcial/vivo/chat?video=b2"), "", []string{"Mostrando Radio B · en vivo", "hola desde B2", "hola desde B1"},
+		[]string{"hola desde A"})
+	// ?vivo= de un vivo terminado elige el canal de ese vivo.
+	check("link viejo", get("/parcial/vivo?video=b1"), "", []string{`hx-get="/parcial/vivo/chat?canal=UCB&video=b2"`}, []string{"canal=UCA"})
+	check("link a un vivo de A", get("/parcial/vivo?video=a1"), "", []string{`canal=UCA&video=a1`}, []string{"canal=UCB"})
+	// El vivo suelto (CA1.11): botón propio y su chat solo.
+	check("suelto", get("/parcial/vivo/chat?video=x1"), "", []string{"Mostrando OTRA COSA en VIVO", "hola suelto", `hx-get="/parcial/vivo?canal=UCB"`},
+		[]string{"hola desde A", "hola desde B"})
+
+	// B se queda sin vivo: espera el próximo sin saltar a A y muestra lo de hoy.
+	st.SetChannels([]ChannelStatus{{ID: "UCA", Name: "Radio A", Live: true},
+		{ID: "UCB", Name: "Radio B", WaitSince: now.Add(-time.Minute), FastUntil: now.Add(19 * time.Minute), Every: 3 * time.Minute}})
+	st.SetVideos("Radio A", []Video{a1, x1})
+	check("B sin vivo, venía de b2", get("/parcial/vivo/chat?canal=UCB&video=b2"), "#vivo",
+		[]string{`hx-get="/parcial/vivo/chat?canal=UCB&video="`}, []string{"canal=UCA", "video=a1"})
+	check("B esperando", get("/parcial/vivo/chat?canal=UCB&video="), "", []string{
+		"Mostrando Radio B · esperando el próximo vivo", "Esperando el próximo vivo de Radio B",
+		"buscando cada 1 min hasta " + now.Add(19*time.Minute).Format("15:04"), "hola desde B1", "hola desde B2",
+	}, []string{"hola desde A", "No hay vivos en este momento", "chat de un video viejo"})
+	// La página se abrió antes de la primera revisión: el chat pide solo
+	// video= vacío. Al aparecer los canales se recarga la sección con el canal
+	// elegido aunque no tenga vivo, para que aparezcan la tira y el selector.
+	st.SetChannels([]ChannelStatus{{ID: "UCA", Name: "Radio A", Every: 3 * time.Minute}, {ID: "UCB", Name: "Radio B", Every: 3 * time.Minute}})
+	st.SetVideos("Radio A", nil)
+	check("antes de la primera revisión", get("/parcial/vivo/chat?video="), "#vivo",
+		[]string{`hx-get="/parcial/vivo/chat?canal=UCA&video="`, `id="vivo-analisis"`}, nil)
+	st.SetVideos("Radio A", []Video{a1, x1})
+	st.SetChannels([]ChannelStatus{{ID: "UCA", Name: "Radio A", Live: true},
+		{ID: "UCB", Name: "Radio B", WaitSince: now.Add(-time.Minute), FastUntil: now.Add(19 * time.Minute), Every: 3 * time.Minute}})
+	// Sin canal pedido, va primero el canal que está en vivo.
+	check("sin pedido", get("/parcial/vivo?video="), "", []string{"canal=UCA&video=a1"}, nil)
+}
+
+// TestWorkerRecordsLives (CA1.3): cada revisión de videos guarda una muestra
+// por vivo en curso en datos.vivos.jsonl sin pedidos nuevos a la API.
+func TestWorkerRecordsLives(t *testing.T) {
+	now := time.Now().UTC().Format(time.RFC3339)
+	var mu sync.Mutex
+	paths := map[string]int{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		paths[r.URL.Path]++
+		mu.Unlock()
+		switch r.URL.Path {
+		case "/channels":
+			w.Write([]byte(`{"items":[{"id":"UC1","snippet":{"title":"Radio Test"},"contentDetails":{"relatedPlaylists":{"uploads":"UU1"}}}]}`))
+		case "/playlistItems":
+			ids := map[string]string{"UU1": "w0", "UULV1": "w1"}
+			w.Write([]byte(`{"items":[{"contentDetails":{"videoId":"` + ids[r.URL.Query().Get("playlistId")] + `"}}]}`))
+		case "/videos":
+			// Sin activeLiveChatId: así el worker no abre el chat.
+			w.Write([]byte(`{"items":[{"id":"w1","snippet":{"title":"LA MAÑANA | EN VIVO","channelId":"UC1","channelTitle":"Radio Test","publishedAt":"` + now +
+				`","liveBroadcastContent":"live"},"statistics":{},"liveStreamingDetails":{"concurrentViewers":"321"}},` +
+				`{"id":"w0","snippet":{"title":"Entrevista","channelId":"UC1","channelTitle":"Radio Test","publishedAt":"` + now +
+				`","liveBroadcastContent":"none"},"statistics":{}}]}`))
+		default:
+			w.WriteHeader(404)
+		}
+	}))
+	defer srv.Close()
+	dir := t.TempDir()
+	st, err := OpenStore(dir + "/datos.jsonl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	yt := NewYouTube("k")
+	yt.BaseURL = srv.URL
+	stopWorker := startWorker(t, yt, st, WorkerConfig{
+		Channels: []string{"UC1"}, Videos: 5, VideosEvery: time.Hour, CommentsEvery: time.Hour,
+		ChatEvery: time.Hour, ChatPeak: time.Hour, Budget: 9000,
+	})
+	deadline := time.Now().Add(5 * time.Second)
+	for len(st.Lives(time.Time{})) == 0 && time.Now().Before(deadline) {
+		time.Sleep(20 * time.Millisecond)
+	}
+	time.Sleep(100 * time.Millisecond)
+	stopWorker()
+
+	got := st.Lives(time.Time{})
+	if len(got) != 1 || got[0].VideoID != "w1" || got[0].ChannelID != "UC1" || got[0].Channel != "Radio Test" ||
+		got[0].Title != "LA MAÑANA | EN VIVO" || got[0].At.IsZero() {
+		t.Fatalf("muestras = %+v, quería una de w1", got)
+	}
+	b, err := os.ReadFile(dir + "/datos.vivos.jsonl")
+	var s LiveSample
+	if err != nil || strings.Count(string(b), "\n") != 1 || json.Unmarshal(b, &s) != nil || s.VideoID != "w1" || s.ChannelID != "UC1" {
+		t.Errorf("datos.vivos.jsonl: %v\n%s", err, b)
+	}
+	if b, _ := os.ReadFile(dir + "/datos.jsonl"); strings.Contains(string(b), "w1") || strings.Contains(string(b), "ChannelID") {
+		t.Errorf("las muestras de vivos no van en datos.jsonl:\n%s", b)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	// Una revisión: canal, subidas, lista de vivos y videos. Nada más.
+	if want := map[string]int{"/channels": 1, "/playlistItems": 2, "/videos": 1}; fmt.Sprint(paths) != fmt.Sprint(want) {
+		t.Errorf("pedidos = %v, quería %v", paths, want)
+	}
+	if ch := st.Status().Channels; len(ch) != 1 || ch[0].ID != "UC1" || ch[0].Name != "Radio Test" || !ch[0].Live {
+		t.Errorf("canales = %+v", ch)
+	}
+}
+
+// TestStoreLivesOpen (CA1.4): al abrir, datos.vivos.jsonl descarta lo vencido,
+// lo ilegible y lo demasiado largo, y se reescribe con temporal + os.Rename.
+func TestStoreLivesOpen(t *testing.T) {
+	now := time.Now().Truncate(time.Second)
+	line := func(id string, at time.Time) string {
+		b, _ := json.Marshal(LiveSample{At: at, VideoID: id, ChannelID: "UC1", Channel: "Radio", Title: "EN VIVO | " + id})
+		return string(b)
+	}
+	cases := []struct {
+		name    string
+		content *string // nil = no existe el archivo
+		want    string
+	}{
+		{"sin archivo", nil, ""},
+		{"vacío", ptr(""), ""},
+		{"con basura", ptr(strings.Join([]string{
+			line("ok1", now.Add(-time.Hour)),
+			"",
+			"basura {",
+			`{"VideoID":"x","At":"no es fecha"}`,
+			"null", // sin fecha: vencida
+			line("viejo", now.Add(-31*24*time.Hour)),
+			line("ok2", now.Add(-29*24*time.Hour)),
+			`{"VideoID":"larga","Title":"` + strings.Repeat("x", 70*1024) + `","At":"` + now.Format(time.RFC3339) + `"}`,
+			line("ok3", now),
+			`{"VideoID":"cortada","At":"` + now.Format(time.RFC3339),
+		}, "\n") + "\n"), "ok1,ok2,ok3"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			dir := t.TempDir()
+			path, lpath := dir+"/datos.jsonl", dir+"/datos.vivos.jsonl"
+			if c.content != nil {
+				if err := os.WriteFile(lpath, []byte(*c.content), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			st, err := OpenStore(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var ids []string
+			for _, s := range st.Lives(time.Time{}) {
+				ids = append(ids, s.VideoID)
+			}
+			if got := strings.Join(ids, ","); got != c.want {
+				t.Errorf("cargadas = %q, quería %q", got, c.want)
+			}
+			b, err := os.ReadFile(lpath)
+			switch {
+			case c.content == nil && !os.IsNotExist(err):
+				t.Errorf("OpenStore creó datos.vivos.jsonl sin muestras: %v", err)
+			case c.content != nil && strings.Count(string(b), "\n") != len(ids):
+				t.Errorf("archivo reescrito con %d líneas, quería %d:\n%.300s", strings.Count(string(b), "\n"), len(ids), b)
+			}
+			if _, err := os.Stat(lpath + ".tmp"); !os.IsNotExist(err) {
+				t.Errorf("quedó el archivo temporal: %v", err)
+			}
+			if _, err := os.Stat(path); !os.IsNotExist(err) {
+				t.Errorf("OpenStore creó datos.jsonl: %v", err)
+			}
+			// Lo nuevo se agrega al final (solo los vivos en curso) y sobrevive a reabrir.
+			st.AddLives(now, []Video{{ID: "nuevo", ChannelID: "UC1", LiveStatus: "live"}, {ID: "prog", LiveStatus: "upcoming"}, {ID: "fin", LiveStatus: "none"}})
+			st2, err := OpenStore(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			got := st2.Lives(now)
+			if len(got) != 1+strings.Count(c.want, "ok3") || got[len(got)-1].VideoID != "nuevo" {
+				t.Errorf("después de AddLives y reabrir = %+v", got)
+			}
+			got[0].VideoID = "cambiado"
+			if again := st2.Lives(now); again[0].VideoID == "cambiado" {
+				t.Errorf("Lives no devuelve una copia")
+			}
+		})
+	}
+}
+
+func ptr[T any](v T) *T { return &v }
+
+// TestProgramSegments (CA1.5): los programas del día de un canal a partir de
+// las muestras de vivos.
+func TestProgramSegments(t *testing.T) {
+	orig := time.Local
+	t.Cleanup(func() { time.Local = orig })
+	time.Local = time.UTC
+	day := time.Date(2026, 11, 5, 0, 0, 0, 0, time.UTC)
+	at := func(hm string) time.Time {
+		h, _ := strconv.Atoi(hm[:2])
+		m, _ := strconv.Atoi(hm[3:])
+		return day.Add(time.Duration(h)*time.Hour + time.Duration(m)*time.Minute)
+	}
+	run := func(video, channel, title, from, to string) []LiveSample {
+		return livesEvery(video, "UCA", channel, title, at(from), at(to))
+	}
+	const (
+		riva1 = "🔴RADIO RIVADAVIA en VIVO | CRISTINA SIN VUELTAS"
+		riva2 = "🔴RADIO RIVADAVIA en VIVO | LA VUELTA"
+		rock1 = "🔴 [EN VIVO] QUIÉN PAGA LA FIESTA | ROCK & POP"
+		rock2 = "🔴 [EN VIVO] BASTA DE TODO | ROCK & POP"
+	)
+	cat := func(ss ...[]LiveSample) []LiveSample {
+		var out []LiveSample
+		for _, s := range ss {
+			out = append(out, s...)
+		}
+		return out
+	}
+	restart := run("v1", "Luzu", "X | EN VIVO", "06:00", "08:00")
+	restart = append(restart, restart[20], restart[20]) // reinicio: la misma muestra repetida
+	other := run("z1", "Otro", "OTRO | EN VIVO", "06:00", "11:57")
+	for i := range other {
+		other[i].ChannelID = "UCZ"
+	}
+	cases := []struct {
+		name    string
+		samples []LiveSample
+		want    string
+		banner  string
+	}{
+		{"Rivadavia: mismo vivo, otro título", cat(run("v1", "Radio Rivadavia", riva1, "06:00", "09:57"), run("v1", "Radio Rivadavia", riva2, "10:00", "11:57")),
+			"CRISTINA SIN VUELTAS 06:00-09:57 terminó|LA VUELTA 10:00-11:57 al aire",
+			"A las 10:00 cambió el programa y el chat siguió sin cortes"},
+		{"Rock & Pop: un vivo por programa", cat(run("v1", "Rock & Pop", rock1, "06:00", "07:57"), run("v2", "Rock & Pop", rock2, "08:03", "11:57")),
+			"QUIÉN PAGA LA FIESTA 06:00-07:57 terminó|BASTA DE TODO 08:03-11:57 al aire",
+			"A las 08:03 empezó un vivo nuevo y el monitor lo enganchó solo. El vivo de QUIÉN PAGA LA FIESTA terminó a las 07:57."},
+		{"reinicio: muestras repetidas y un hueco corto", cat(restart, run("v1", "Luzu", "X | EN VIVO", "08:06", "11:57")),
+			"X 06:00-11:57 al aire", ""},
+		{"hueco entre vivos", cat(run("v1", "Rock & Pop", rock1, "06:00", "07:00"), run("v2", "Rock & Pop", rock2, "08:00", "11:57")),
+			"QUIÉN PAGA LA FIESTA 06:00-07:00 terminó|- 07:00-08:00 sin vivo|BASTA DE TODO 08:00-11:57 al aire",
+			"A las 08:00 empezó un vivo nuevo y el monitor lo enganchó solo. El vivo de QUIÉN PAGA LA FIESTA terminó a las 07:00."},
+		{"hueco en el mismo vivo", cat(run("v1", "Luzu", "X | EN VIVO", "06:00", "07:00"), run("v1", "Luzu", "X | EN VIVO", "07:30", "11:57")),
+			"X 06:00-07:00 terminó|- 07:00-07:30 sin vivo|X 07:30-11:57 al aire", ""},
+		{"terminó y no empezó otro", run("v1", "Rock & Pop", rock1, "06:00", "11:00"),
+			"QUIÉN PAGA LA FIESTA 06:00-11:00 terminó|- 11:00-12:00 sin vivo", ""},
+		{"dos vivos del mismo canal a la vez", cat(run("v1", "Rock & Pop", rock1, "10:00", "11:57"), run("v2", "Rock & Pop", rock2, "10:03", "11:57")),
+			"QUIÉN PAGA LA FIESTA 10:00-11:57 al aire|BASTA DE TODO 10:03-11:57 al aire",
+			"A las 10:03 empezó un vivo nuevo y el monitor lo enganchó solo."},
+		{"otro canal no cuenta", cat(other, run("v1", "Luzu", "X | EN VIVO", "11:00", "11:57")), "X 11:00-11:57 al aire", ""},
+		{"sin muestras", nil, "- 00:00-12:00 sin vivo", ""},
+	}
+	str := func(segs []Segment) string {
+		var parts []string
+		for _, s := range segs {
+			p := s.Program
+			if p == "" {
+				p = "-"
+			}
+			parts = append(parts, fmt.Sprintf("%s %s-%s %s", p, s.Start.Local().Format("15:04"), s.End.Local().Format("15:04"), s.State))
+		}
+		return strings.Join(parts, "|")
+	}
+	// Qué vivos están en curso según la lista de videos en cada caso.
+	onAir := map[string][]string{
+		"Rivadavia: mismo vivo, otro título": {"v1"}, "Rock & Pop: un vivo por programa": {"v2"},
+		"reinicio: muestras repetidas y un hueco corto": {"v1"}, "hueco entre vivos": {"v2"}, "hueco en el mismo vivo": {"v1"},
+		"dos vivos del mismo canal a la vez": {"v1", "v2"}, "otro canal no cuenta": {"v1", "z1"},
+	}
+	set := func(ids []string) map[string]bool {
+		m := map[string]bool{}
+		for _, id := range ids {
+			m[id] = true
+		}
+		return m
+	}
+	now := at("12:00")
+	for _, c := range cases {
+		// El orden de las muestras en el archivo no importa.
+		samples := append([]LiveSample(nil), c.samples...)
+		sort.SliceStable(samples, func(i, j int) bool { return samples[i].VideoID > samples[j].VideoID })
+		segs := ProgramSegments(samples, "UCA", set(onAir[c.name]), day, now)
+		if got := str(segs); got != c.want {
+			t.Errorf("%s:\n got %s\nwant %s", c.name, got, c.want)
+		}
+		// CA1.7: el cartel de continuidad sale de los mismos tramos.
+		if got := ContinuityBanner(segs, now); got != c.banner {
+			t.Errorf("%s: cartel = %q, quería %q", c.name, got, c.banner)
+		}
+	}
+
+	// Recién después del cambio (1 a 4 min, antes de que pase segmentGap): el
+	// tramo anterior ya no está al aire.
+	recent := []struct {
+		name    string
+		samples []LiveSample
+		now     string
+		live    []string
+		want    string
+		banner  string
+	}{
+		{"Rivadavia, 2 min después del cambio de título", cat(run("v1", "Radio Rivadavia", riva1, "06:00", "09:57"), run("v1", "Radio Rivadavia", riva2, "10:00", "10:00")), "10:02", []string{"v1"},
+			"CRISTINA SIN VUELTAS 06:00-09:57 terminó|LA VUELTA 10:00-10:00 al aire",
+			"A las 10:00 cambió el programa y el chat siguió sin cortes"},
+		{"Rock & Pop, vivo nuevo enganchado 1 min después", cat(run("v1", "Rock & Pop", rock1, "06:00", "07:57"), run("v2", "Rock & Pop", rock2, "08:00", "08:00")), "08:01", []string{"v2"},
+			"QUIÉN PAGA LA FIESTA 06:00-07:57 terminó|BASTA DE TODO 08:00-08:00 al aire",
+			"A las 08:00 empezó un vivo nuevo y el monitor lo enganchó solo. El vivo de QUIÉN PAGA LA FIESTA terminó a las 07:57."},
+		{"Rock & Pop, terminó hace 4 min y no hay vivo nuevo", run("v1", "Rock & Pop", rock1, "06:00", "07:57"), "08:01", nil,
+			"QUIÉN PAGA LA FIESTA 06:00-07:57 terminó|- 07:57-08:01 sin vivo", ""},
+	}
+	for _, c := range recent {
+		segs := ProgramSegments(c.samples, "UCA", set(c.live), day, at(c.now))
+		if got := str(segs); got != c.want {
+			t.Errorf("%s:\n got %s\nwant %s", c.name, got, c.want)
+		}
+		if got := ContinuityBanner(segs, at(c.now)); got != c.banner {
+			t.Errorf("%s: cartel = %q, quería %q", c.name, got, c.banner)
+		}
+	}
+
+	// El día es el local: con -zona de Argentina empieza a las 00:00 de acá (03:00 UTC).
+	if err := setZone(defaultZone); err != nil {
+		t.Fatal(err)
+	}
+	nowART := time.Date(2026, 11, 5, 12, 0, 0, 0, time.Local)
+	from := dayStart(nowART)
+	if !from.Equal(time.Date(2026, 11, 5, 3, 0, 0, 0, time.UTC)) {
+		t.Fatalf("dayStart = %v, quería 03:00 UTC", from)
+	}
+	samples := livesEvery("v1", "UCA", "Radio Rivadavia", riva1, time.Date(2026, 11, 4, 23, 48, 0, 0, time.Local), time.Date(2026, 11, 5, 11, 57, 0, 0, time.Local))
+	if got := str(ProgramSegments(samples, "UCA", set([]string{"v1"}), from, nowART)); got != "CRISTINA SIN VUELTAS 00:00-11:57 al aire" {
+		t.Errorf("día local: %s", got)
+	}
+}
+
+// TestContinuityBanner (CA1.7): el cartel solo aparece si el cambio fue hoy.
+func TestContinuityBanner(t *testing.T) {
+	orig := time.Local
+	t.Cleanup(func() { time.Local = orig })
+	time.Local = time.UTC
+	yesterday := time.Date(2026, 11, 4, 0, 0, 0, 0, time.UTC)
+	samples := append(livesEvery("v1", "UCA", "Rock & Pop", "🔴 [EN VIVO] A | ROCK & POP", yesterday.Add(20*time.Hour), yesterday.Add(23*time.Hour)),
+		livesEvery("v2", "UCA", "Rock & Pop", "🔴 [EN VIVO] B | ROCK & POP", yesterday.Add(23*time.Hour+3*time.Minute), yesterday.Add(25*time.Hour))...)
+	now := yesterday.Add(25*time.Hour + time.Minute) // 01:01 de hoy
+	segs := ProgramSegments(samples, "UCA", map[string]bool{"v2": true}, yesterday, now)
+	if len(segs) != 2 {
+		t.Fatalf("tramos = %+v", segs)
+	}
+	if got := ContinuityBanner(segs, now); got != "" {
+		t.Errorf("el cambio fue ayer a las 23:03 y el cartel dice %q", got)
+	}
+	if got := ContinuityBanner(segs, yesterday.Add(23*time.Hour+30*time.Minute)); !strings.HasPrefix(got, "A las 23:03 empezó un vivo nuevo") {
+		t.Errorf("el mismo día: %q", got)
+	}
+	if got := ContinuityBanner(nil, now); got != "" {
+		t.Errorf("sin tramos: %q", got)
+	}
+}
+
+// TestChannelDayStrip (CA1.8): la tira "Hoy en el canal" del parcial de análisis.
+func TestChannelDayStrip(t *testing.T) {
+	now := noonLocal(t)
+	hm := func(t time.Time) string { return t.Local().Format("15:04") }
+	const titleB1, titleB2 = "🔴 [EN VIVO] LA MAÑANA | RADIO B", "🔴 [EN VIVO] LA TARDE | RADIO B"
+	b1 := livesEvery("b1", "UCB", "Radio B", titleB1, now.Add(-3*time.Hour), now.Add(-2*time.Hour))
+	b1recent := livesEvery("b1", "UCB", "Radio B", titleB1, now.Add(-62*time.Minute), now.Add(-2*time.Minute))
+	setup := func(t *testing.T, ch ChannelStatus, vids []Video, samples []LiveSample, units int) string {
+		st, err := OpenStore(t.TempDir() + "/datos.jsonl")
+		if err != nil {
+			t.Fatal(err)
+		}
+		st.AddUnits(units)
+		st.SetChannels([]ChannelStatus{ch})
+		st.SetVideos("Radio B", vids)
+		for _, s := range samples {
+			st.AddLives(s.At, []Video{{ID: s.VideoID, ChannelID: s.ChannelID, Channel: s.Channel, Title: s.Title, LiveStatus: "live"}})
+		}
+		return getBody((&Server{st: st, budget: 9000}).Routes(), "/parcial/vivo/analisis?canal=UCB&video=&ver=dia")
+	}
+	// block devuelve lo que tiene que estar por cada bloque: aria-label y <title> con el mismo texto.
+	block := func(text string) []string {
+		return []string{`aria-label="` + text + `"`, "<title>" + text + "</title>"}
+	}
+	cases := []struct {
+		name    string
+		ch      ChannelStatus
+		vids    []Video
+		samples []LiveSample
+		blocks  []string
+		not     []string
+		units   int
+	}{
+		{"buscando cada 1 min", ChannelStatus{ID: "UCB", Name: "Radio B", WaitSince: now.Add(-2 * time.Hour), FastUntil: now.Add(10 * time.Minute), Every: 3 * time.Minute}, nil, b1,
+			[]string{hm(b1[0].At) + " a " + hm(b1[len(b1)-1].At) + " · LA MAÑANA · terminó",
+				hm(b1[len(b1)-1].At) + " a ahora · sin vivo · buscando cada 1 min hasta " + hm(now.Add(10*time.Minute))},
+			[]string{"buscando cada 3 min", "al aire", "empezó un vivo nuevo"}, 0},
+		{"buscando cada 3 min", ChannelStatus{ID: "UCB", Name: "Radio B", WaitSince: now.Add(-2 * time.Hour), Every: 3 * time.Minute}, nil, b1,
+			[]string{hm(b1[0].At) + " a " + hm(b1[len(b1)-1].At) + " · LA MAÑANA · terminó",
+				hm(b1[len(b1)-1].At) + " a ahora · sin vivo · buscando cada 3 min"},
+			[]string{"buscando cada 1 min"}, 0},
+		{"al aire", ChannelStatus{ID: "UCB", Name: "Radio B", Live: true, Every: 3 * time.Minute},
+			[]Video{{ID: "b2", Title: titleB2, ChannelID: "UCB", Channel: "Radio B", LiveStatus: "live"}},
+			append(b1, livesEvery("b2", "UCB", "Radio B", titleB2, now.Add(-time.Hour), now.Add(-time.Minute))...),
+			[]string{hm(b1[0].At) + " a " + hm(b1[len(b1)-1].At) + " · LA MAÑANA · terminó",
+				hm(b1[len(b1)-1].At) + " a " + hm(now.Add(-time.Hour)) + " · sin vivo",
+				hm(now.Add(-time.Hour)) + " a ahora · LA TARDE · al aire",
+				"A las " + hm(now.Add(-time.Hour)) + " empezó un vivo nuevo y el monitor lo enganchó solo. El vivo de LA MAÑANA terminó a las " + hm(b1[len(b1)-1].At) + "."},
+			[]string{"buscando"}, 0},
+		// Terminó hace 2 min (menos que segmentGap): ya no está al aire y se busca el próximo.
+		{"recién terminado", ChannelStatus{ID: "UCB", Name: "Radio B", WaitSince: now.Add(-time.Minute), FastUntil: now.Add(19 * time.Minute), Every: 3 * time.Minute}, nil, b1recent,
+			[]string{hm(b1recent[0].At) + " a " + hm(b1recent[len(b1recent)-1].At) + " · LA MAÑANA · terminó",
+				hm(b1recent[len(b1recent)-1].At) + " a ahora · sin vivo · buscando cada 1 min hasta " + hm(now.Add(19*time.Minute))},
+			[]string{"al aire"}, 0},
+		// Con el tope de cuota el worker no busca: la tira no dice que busca.
+		{"tope de cuota", ChannelStatus{ID: "UCB", Name: "Radio B", WaitSince: now.Add(-2 * time.Hour), FastUntil: now.Add(10 * time.Minute), Every: 3 * time.Minute}, nil, b1,
+			[]string{hm(b1[0].At) + " a " + hm(b1[len(b1)-1].At) + " · LA MAÑANA · terminó",
+				hm(b1[len(b1)-1].At) + " a ahora · sin vivo · en pausa por el tope de cuota"},
+			[]string{"buscando"}, 9000},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			body := setup(t, c.ch, c.vids, c.samples, c.units)
+			i := strings.Index(body, `aria-label="Hoy en el canal"`)
+			if i < 0 {
+				t.Fatalf("falta la tira:\n%s", body)
+			}
+			tira := body[i:]
+			tira = tira[:strings.Index(tira, "</section>")]
+			if !strings.Contains(tira, "<h2>Hoy en el canal</h2>") || !strings.Contains(tira, `role="img"`) {
+				t.Errorf("falta el título o el role de la tira:\n%s", tira)
+			}
+			n := 0
+			for _, b := range c.blocks {
+				if strings.HasPrefix(b, "A las ") {
+					if !strings.Contains(body, b) {
+						t.Errorf("falta el cartel %q", b)
+					}
+					continue
+				}
+				n++
+				for _, w := range block(b) {
+					if !strings.Contains(tira, w) {
+						t.Errorf("falta %q", w)
+					}
+				}
+			}
+			if got := strings.Count(tira, "<title>"); got != n {
+				t.Errorf("%d bloques con <title>, quería %d", got, n)
+			}
+			for _, s := range c.not {
+				if strings.Contains(body, s) {
+					t.Errorf("no debería tener %q", s)
+				}
+			}
+			if t.Failed() {
+				t.Logf("tira:\n%s", tira)
+			}
+		})
+	}
+}
+
+// TestLiveAnalysisByChannel (CA1.9): "Programa en curso" y "Todo el día del
+// canal" filtran todo el análisis y la cabecera, sin mensajes de otro canal.
+func TestLiveAnalysisByChannel(t *testing.T) {
+	now := noonLocal(t)
+	st, err := OpenStore(t.TempDir() + "/datos.jsonl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	const (
+		titleB1   = "🔴 [EN VIVO] LA MAÑANA | RADIO B"
+		titleMid  = "🔴 [EN VIVO] EL MEDIODÍA | RADIO B"
+		titleLate = "🔴 [EN VIVO] LA TARDE | RADIO B"
+	)
+	b2 := Video{ID: "b2", Title: titleLate, ChannelID: "UCB", Channel: "Radio B", LiveStatus: "live", Concurrent: 100}
+	a1 := Video{ID: "a1", Title: "🔴RADIO A en VIVO | OTRA", ChannelID: "UCA", Channel: "Radio A", LiveStatus: "live"}
+	st.SetChannels([]ChannelStatus{{ID: "UCA", Name: "Radio A", Live: true}, {ID: "UCB", Name: "Radio B", Live: true}})
+	st.SetVideos("Radio A", []Video{a1, b2})
+	samples := append(livesEvery("b1", "UCB", "Radio B", titleB1, now.Add(-3*time.Hour), now.Add(-2*time.Hour)),
+		livesEvery("b2", "UCB", "Radio B", titleMid, now.Add(-2*time.Hour+3*time.Minute), now.Add(-58*time.Minute))...)
+	samples = append(samples, livesEvery("b2", "UCB", "Radio B", titleLate, now.Add(-55*time.Minute), now.Add(-time.Minute))...)
+	for _, s := range samples {
+		st.AddLives(s.At, []Video{{ID: s.VideoID, ChannelID: s.ChannelID, Channel: s.Channel, Title: s.Title, LiveStatus: "live"}})
+	}
+	q := func(id, video, program, text string, at time.Time) Message {
+		return Message{ID: id, Source: "chat", VideoID: video, Author: id, Text: text, At: at, Program: program}
+	}
+	pay := func(m Message, cur string) Message {
+		m.Super, m.AmountMicros, m.Currency, m.AmountText = SuperChat, 1000000, cur, cur+" 1,00"
+		return m
+	}
+	st.Add([]Message{
+		q("m1", "b1", "LA MAÑANA", "¿Cuándo vuelve el programa de la mañana?", now.Add(-150*time.Minute)),
+		pay(q("m1p", "b1", "LA MAÑANA", "gracias", now.Add(-140*time.Minute)), "EUR"),
+		q("m2", "b2", "EL MEDIODÍA", "¿Quién era el invitado del mediodía?", now.Add(-90*time.Minute)),
+		q("m3", "b2", "LA TARDE", "¿Repiten la entrevista de la tarde?", now.Add(-30*time.Minute)),
+		pay(q("m3p", "b2", "LA TARDE", "vamos", now.Add(-20*time.Minute)), "ARS"),
+		q("m4", "b2", "LA TARDE", "¿Qué pasó con la tarde tan temprano?", now.Add(-58*time.Minute)), // dentro de los 5 min previos al tramo
+		q("m5", "a1", "OTRA", "¿Esto es del otro canal, el de Radio A?", now.Add(-10*time.Minute)),
+		q("m6", "b1", "LA MAÑANA", "¿Esto quedó de ayer en la radio B?", dayStart(now).Add(-time.Hour)),
+	})
+	h := (&Server{st: st, budget: 9000}).Routes()
+	cases := []struct {
+		query     string
+		want, not []string
+	}{
+		{"canal=UCB&video=b2&ver=programa", []string{
+			"Análisis de Radio B · LA TARDE (programa en curso) · 3 mensajes", "¿Repiten la entrevista de la tarde?", "¿Qué pasó con la tarde tan temprano?",
+			"<td>ARS</td>", `hx-get="/parcial/vivo/analisis?canal=UCB&video=b2&ver=programa&horas=6" hx-trigger="every 30s"`,
+			`hx-get="/parcial/vivo/analisis?canal=UCB&video=b2&ver=programa&horas=24"`, `id="ver-programa" class="vbtn" aria-pressed="true"`,
+			`id="ver-dia" class="vbtn" aria-pressed="false"`, `hx-get="/parcial/vivo/analisis?canal=UCB&video=b2&ver=dia&horas=6"`,
+		}, []string{"programa de la mañana", "invitado del mediodía", "Radio A?", "de ayer", "EUR"}},
+		// Sin ver: con vivo, el programa en curso.
+		{"canal=UCB&video=b2", []string{"Análisis de Radio B · LA TARDE (programa en curso) · 3 mensajes"}, []string{"invitado del mediodía"}},
+		{"canal=UCB&video=b2&ver=dia&horas=24", []string{
+			"Análisis de Radio B · hoy · 6 mensajes", "¿Cuándo vuelve el programa de la mañana?", "¿Quién era el invitado del mediodía?",
+			"¿Repiten la entrevista de la tarde?", "<td>ARS</td>", "<td>EUR</td>",
+			`hx-get="/parcial/vivo/analisis?canal=UCB&video=b2&ver=dia&horas=24" hx-trigger="every 30s"`,
+			`id="ver-dia" class="vbtn" aria-pressed="true"`, `id="pwin-24" class="vbtn" aria-pressed="true"`,
+			// Lo que manda el chat al recargar la sección, para conservar la elección.
+			`<input type="hidden" class="vq" name="ver" value="dia">`, `<input type="hidden" class="vq" name="horas" value="24">`,
+		}, []string{"Radio A?", "de ayer"}},
+	}
+	for _, c := range cases {
+		body := getBody(h, "/parcial/vivo/analisis?"+c.query)
+		for _, w := range c.want {
+			if !strings.Contains(body, w) {
+				t.Errorf("%s: falta %q", c.query, w)
+			}
+		}
+		for _, n := range c.not {
+			if strings.Contains(body, n) {
+				t.Errorf("%s: no debería tener %q", c.query, n)
+			}
+		}
+		if t.Failed() {
+			t.Logf("%s:\n%s", c.query, body)
+			break
+		}
+	}
+	// La sección del canal pide el análisis por canal.
+	if body := getBody(h, "/parcial/vivo?canal=UCB"); !strings.Contains(body, `hx-get="/parcial/vivo/analisis?canal=UCB&video=b2"`) {
+		t.Errorf("/parcial/vivo?canal=UCB:\n%s", body)
+	}
+}
+
+// TestParticipationChannel (CA1.10): las franjas de un canal con dos vivos a la vez.
+func TestParticipationChannel(t *testing.T) {
+	now := time.Date(2026, 10, 30, 15, 2, 0, 0, time.UTC)
+	at := func(m int) time.Time { return time.Date(2026, 10, 30, 14, m, 0, 0, time.UTC) }
+	chat := func(id, video, author string, t time.Time) Message {
+		return Message{ID: id, Source: "chat", VideoID: video, Author: author, Text: "hola", At: t}
+	}
+	msgs := []Message{
+		chat("1", "v1", "Ana", at(6)), chat("2", "v1", "Beto", at(7)), chat("3", "v1", "Dani", at(8)),
+		chat("4", "v2", "Caro", at(7)),
+		chat("5", "otro", "Eva", at(7)), // de otro canal
+		chat("6", "v2", "Fede", at(21)),
+	}
+	viewers := []ViewerSample{
+		{"v1", at(6), 100}, {"v1", at(8), 200}, // promedio 150
+		{"v2", at(7), 50},
+		{"otro", at(7), 9999},
+		{"v2", at(21), 40}, // franja con solo v2
+	}
+	slots, _, ok := Participation(msgs, viewers, []string{"v1", "v2"}, now)
+	byStart := map[time.Time]Slot{}
+	for _, s := range slots {
+		byStart[s.Start] = s
+	}
+	if s := byStart[at(5)]; !ok || s.N != 4 || s.Authors != 4 || s.Viewers != 200 || s.Pct != 2 {
+		t.Errorf("franja 14:05 = N %d, personas %d, espectadores %d, %% %v; quería 4, 4, 200 (150 + 50), 2", s.N, s.Authors, s.Viewers, s.Pct)
+	}
+	if s := byStart[at(20)]; s.Viewers != 40 || s.N != 1 {
+		t.Errorf("franja 14:20 = %+v, quería solo v2", s)
+	}
+	// Con un solo vivo, como antes.
+	if s, _, _ := Participation(msgs, viewers, []string{"v1"}, now); s[len(s)-1-11].Viewers != 150 {
+		t.Errorf("solo v1: espectadores = %d, quería 150", s[len(s)-1-11].Viewers)
+	}
+	// El momento sabe de qué vivo es: el de más mensajes en la franja.
+	moments := TopMoments(slots, nil)
+	if len(moments) != 1 || moments[0].VideoID != "v1" {
+		t.Errorf("momentos = %+v, quería uno de v1", moments)
+	}
+}
+
+// TestWorkerFindsNextLive (CA1.6): cuando el canal se queda sin vivo, el
+// worker revisa solo ese canal cada fastEvery durante fastFor y engancha el
+// vivo nuevo sin esperar la revisión completa; con el tope de cuota, no busca.
+func TestWorkerFindsNextLive(t *testing.T) {
+	defer func(e, f, k time.Duration) { fastEvery, fastFor, workerTick = e, f, k }(fastEvery, fastFor, workerTick)
+	workerTick, fastEvery = 5*time.Millisecond, 15*time.Millisecond
+	now := time.Now().UTC().Format(time.RFC3339)
+	video := func(id, chat string) string {
+		return `{"id":"` + id + `","snippet":{"title":"PROGRAMA ` + id + ` | EN VIVO","channelId":"UC1","channelTitle":"Radio Test","publishedAt":"` + now +
+			`","liveBroadcastContent":"live"},"statistics":{},"liveStreamingDetails":{"activeLiveChatId":"` + chat + `"}}`
+	}
+	// fake cuenta las revisiones completas (piden las subidas, UU1) y las
+	// rápidas (piden solo la lista de vivos, UULV1), y la cuota de lo que respondió.
+	type fake struct {
+		mu                  sync.Mutex
+		reviews, fast, unit int
+		lastUU, appeared    bool
+		c2At                chan int      // revisiones completas cuando se conectó al chat de c2
+		lastReview          time.Time     // cuándo llegó la última revisión completa
+		afterReview         time.Duration // lo mínimo que pasó entre una revisión completa y la rápida siguiente
+	}
+	start := func(t *testing.T, budget, appearAt int, videosEvery time.Duration) (*fake, *Store, func()) {
+		f := &fake{c2At: make(chan int, 1)}
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			q := r.URL.Query()
+			f.mu.Lock()
+			switch r.URL.Path {
+			case "/channels":
+				f.unit++
+				w.Write([]byte(`{"items":[{"id":"UC1","snippet":{"title":"Radio Test"},"contentDetails":{"relatedPlaylists":{"uploads":"UU1"}}}]}`))
+			case "/playlistItems":
+				f.unit++
+				var ids []string
+				switch {
+				case q.Get("playlistId") == "UU1":
+					f.reviews++
+					f.lastUU = true
+					f.lastReview = time.Now()
+				case f.lastUU: // la lista de vivos de una revisión completa
+					f.lastUU = false
+					if f.reviews == 1 {
+						ids = []string{"c1"}
+					} else if f.appeared {
+						ids = []string{"c2"}
+					}
+				default:
+					f.fast++
+					if d := time.Since(f.lastReview); f.afterReview == 0 || d < f.afterReview {
+						f.afterReview = d
+					}
+					if appearAt > 0 && f.fast >= appearAt {
+						f.appeared = true
+						ids = []string{"c2"}
+					}
+				}
+				var out []string
+				for _, id := range ids {
+					out = append(out, `{"contentDetails":{"videoId":"`+id+`"}}`)
+				}
+				w.Write([]byte(`{"items":[` + strings.Join(out, ",") + `]}`))
+			case "/videos":
+				f.unit++
+				var out []string
+				for _, id := range strings.Split(q.Get("id"), ",") {
+					out = append(out, video(id, "k"+id))
+				}
+				w.Write([]byte(`{"items":[` + strings.Join(out, ",") + `]}`))
+			case "/liveChat/messages/stream":
+				f.unit += 5
+				w.Write([]byte("["))
+				w.(http.Flusher).Flush()
+				if q.Get("liveChatId") == "kc2" {
+					select {
+					case f.c2At <- f.reviews:
+					default:
+					}
+				}
+				f.mu.Unlock()
+				<-r.Context().Done() // queda abierta hasta que el worker la corta
+				return
+			default:
+				w.WriteHeader(404)
+			}
+			f.mu.Unlock()
+		}))
+		st, err := OpenStore(t.TempDir() + "/datos.jsonl")
+		if err != nil {
+			t.Fatal(err)
+		}
+		yt := NewYouTube("k")
+		yt.BaseURL = srv.URL
+		ctx, cancel := context.WithCancel(context.Background())
+		done := runWorker(ctx, yt, st, WorkerConfig{
+			Channels: []string{"UC1"}, Videos: 5, VideosEvery: videosEvery, CommentsEvery: time.Hour,
+			ChatEvery: time.Millisecond, ChatPeak: time.Millisecond, Budget: budget,
+		})
+		return f, st, func() {
+			cancel()
+			if !returned(done, 5*time.Second) {
+				t.Error("RunWorker no volvió")
+			}
+			srv.Close()
+		}
+	}
+	get := func(f *fake) (reviews, fast, unit int) {
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		return f.reviews, f.fast, f.unit
+	}
+	waitReviews := func(t *testing.T, f *fake, n int) {
+		deadline := time.Now().Add(5 * time.Second)
+		for r, _, _ := get(f); r < n; r, _, _ = get(f) {
+			if time.Now().After(deadline) {
+				t.Fatalf("no hubo %d revisiones completas", n)
+			}
+			time.Sleep(time.Millisecond)
+		}
+	}
+
+	t.Run("engancha el vivo nuevo", func(t *testing.T) {
+		fastFor = time.Hour
+		f, st, stop := start(t, 9000, 2, 800*time.Millisecond)
+		defer stop()
+		select {
+		case r := <-f.c2At:
+			if r != 2 {
+				t.Errorf("el chat de c2 se abrió después de %d revisiones completas, quería 2 (sin esperar la siguiente)", r)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatal("no se abrió el chat del vivo nuevo")
+		}
+		// La búsqueda rápida también guarda su muestra del vivo.
+		found := false
+		for _, s := range st.Lives(time.Time{}) {
+			found = found || s.VideoID == "c2" && s.ChannelID == "UC1"
+		}
+		if !found {
+			t.Errorf("no se guardó la muestra de c2: %+v", st.Lives(time.Time{}))
+		}
+		if ch := st.Status().Channels; len(ch) != 1 || !ch[0].Live || !ch[0].FastUntil.IsZero() {
+			t.Errorf("canal = %+v, quería en vivo y sin búsqueda rápida", ch)
+		}
+		// La cuota de cada pedido que respondió el falso, sumada con spend.
+		deadline := time.Now().Add(3 * time.Second)
+		for _, _, u := get(f); st.Units() != u && time.Now().Before(deadline); _, _, u = get(f) {
+			time.Sleep(5 * time.Millisecond)
+		}
+		stop()
+		if r, fast, u := get(f); st.Units() != u || fast != 2 {
+			t.Errorf("unidades = %d, el falso respondió %d (revisiones %d, rápidas %d; quería 2 rápidas)", st.Units(), u, r, fast)
+		}
+	})
+
+	t.Run("se termina la ventana", func(t *testing.T) {
+		fastFor = 60 * time.Millisecond
+		f, _, stop := start(t, 9000, 0, 2*time.Second)
+		defer stop()
+		waitReviews(t, f, 2)
+		time.Sleep(250 * time.Millisecond)
+		r1, f1, _ := get(f)
+		time.Sleep(250 * time.Millisecond)
+		r2, f2, _ := get(f)
+		if r1 != 2 || r2 != 2 {
+			t.Fatalf("revisiones completas = %d, %d: la prueba quedó larga para la revisión cada 2 s", r1, r2)
+		}
+		if f1 == 0 || f1 != f2 || f1 > int(fastFor/fastEvery)+1 {
+			t.Errorf("rápidas = %d y después %d: quería alguna y ninguna más pasada la ventana", f1, f2)
+		}
+	})
+
+	// La revisión completa también revisa los vivos del canal: la búsqueda
+	// rápida siguiente espera fastEvery desde ahí, no se repite al tick siguiente.
+	t.Run("no repite la búsqueda después de la revisión", func(t *testing.T) {
+		defer func(e time.Duration) { fastEvery = e }(fastEvery)
+		fastEvery, fastFor = 200*time.Millisecond, time.Hour
+		f, _, stop := start(t, 9000, 0, 400*time.Millisecond)
+		defer stop()
+		waitReviews(t, f, 5)
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		if f.fast == 0 || f.afterReview < fastEvery/2 {
+			t.Errorf("%d rápidas; la más cercana a una revisión completa llegó %s después, quería al menos %s", f.fast, f.afterReview, fastEvery/2)
+		}
+	})
+
+	t.Run("sin cuota no busca", func(t *testing.T) {
+		fastFor = time.Hour
+		// Primera revisión: 4 unidades; segunda (sin vivos): 2. Con 6 se llega al tope.
+		f, st, stop := start(t, 6, 0, 800*time.Millisecond)
+		defer stop()
+		waitReviews(t, f, 2)
+		time.Sleep(200 * time.Millisecond)
+		if _, fast, _ := get(f); fast != 0 || st.Units() != 6 {
+			t.Errorf("con el tope alcanzado hubo %d revisiones rápidas (%d unidades)", fast, st.Units())
+		}
+	})
+}
+
+// TestWorkerChannelIDWithoutSnippet: si la API no manda snippet.channelId, la
+// revisión completa completa el canal de cada video según de qué lista salió
+// (sin pedidos extra) y la vista por canal anda igual.
+func TestWorkerChannelIDWithoutSnippet(t *testing.T) {
+	now := time.Now().UTC().Format(time.RFC3339)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+		switch r.URL.Path {
+		case "/channels":
+			if q.Get("forHandle") == "@otra" {
+				w.Write([]byte(`{"items":[{"id":"UC2","snippet":{"title":"Otra Radio"},"contentDetails":{"relatedPlaylists":{"uploads":"UU2"}}}]}`))
+				return
+			}
+			w.Write([]byte(`{"items":[{"id":"UC1","snippet":{"title":"Radio Test"},"contentDetails":{"relatedPlaylists":{"uploads":"UU1"}}}]}`))
+		case "/playlistItems":
+			ids := map[string]string{"UU1": "u1", "UULV1": "p1", "UULV2": "p2"}
+			w.Write([]byte(`{"items":[{"contentDetails":{"videoId":"` + ids[q.Get("playlistId")] + `"}}]}`))
+		case "/videos":
+			live := func(id, title, ch string) string {
+				return `{"id":"` + id + `","snippet":{"title":"` + title + `","channelTitle":"` + ch + `","publishedAt":"` + now +
+					`","liveBroadcastContent":"live"},"statistics":{}}`
+			}
+			w.Write([]byte(`{"items":[` + live("p1", "LA MAÑANA | EN VIVO", "Radio Test") + `,` + live("p2", "LA TARDE | EN VIVO", "Otra Radio") +
+				`,{"id":"u1","snippet":{"title":"Entrevista","channelTitle":"Radio Test","publishedAt":"` + now + `","liveBroadcastContent":"none"},"statistics":{}}]}`))
+		default:
+			w.WriteHeader(404)
+		}
+	}))
+	defer srv.Close()
+	st, err := OpenStore(t.TempDir() + "/datos.jsonl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	yt := NewYouTube("k")
+	yt.BaseURL = srv.URL
+	stopWorker := startWorker(t, yt, st, WorkerConfig{
+		Channels: []string{"UC1", "@otra"}, Videos: 5, VideosEvery: time.Hour, CommentsEvery: time.Hour,
+		ChatEvery: time.Hour, ChatPeak: time.Hour, Budget: 9000,
+	})
+	deadline := time.Now().Add(5 * time.Second)
+	for len(st.Status().Channels) < 2 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	stopWorker()
+
+	got := map[string]string{}
+	for _, v := range st.Status().Videos {
+		got[v.ID] = v.ChannelID
+	}
+	if want := map[string]string{"p1": "UC1", "u1": "UC1", "p2": "UC2"}; fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Errorf("canal de cada video = %v, quería %v", got, want)
+	}
+	if ch := st.Status().Channels; len(ch) != 2 || !ch[0].Live || !ch[1].Live {
+		t.Errorf("canales = %+v, quería los dos en vivo", ch)
+	}
+	if ls := st.Lives(time.Time{}); len(ls) != 2 || ls[0].ChannelID == "" || ls[1].ChannelID == "" {
+		t.Errorf("muestras de vivos sin canal: %+v", ls)
+	}
+	w := httptest.NewRecorder()
+	(&Server{st: st, budget: 9000}).Routes().ServeHTTP(w, httptest.NewRequest("GET", "/parcial/vivo/chat?canal=UC2&video=p2", nil))
+	if w.Header().Get("HX-Retarget") != "" || !strings.Contains(w.Body.String(), "Mostrando Otra Radio · en vivo") {
+		t.Errorf("vista del canal 2 (retarget %q):\n%s", w.Header().Get("HX-Retarget"), w.Body.String())
 	}
 }
