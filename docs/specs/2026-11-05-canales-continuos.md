@@ -1,6 +1,6 @@
 # Spec: canales en continuo (vista por canal, intervalo de chat por canal y canales editables desde el dashboard)
 
-- **Estado:** implementada la etapa 1 en esta rama (falta la revisión en el navegador, CA1.14); la etapa 2 sigue aprobada y va en `feat/canales-editables`
+- **Estado:** implementada la etapa 1 en esta rama (falta la revisión en el navegador, CA1.14); la etapa 2 quedó **absorbida** por `docs/specs/2026-11-05-rediseno-tres-pantallas.md` (su etapa 2, en `feat/canales-editables`): no se implementa por su cuenta
 - **Tipo:** mejora
 - **Rama:** `feat/canales-continuos` (si se aprueba en dos etapas: `feat/canales-continuos`
   para la etapa 1 y `feat/canales-editables` para la 2, cada una con su PR)
@@ -584,6 +584,7 @@ anotarlo.
    que hoy). Si existe el archivo y se pasa `-canal`, gana el archivo con un aviso.
 6. **"Programas de hoy":** por ahora alcanza con la tira "Hoy en el canal"; sin pantalla aparte.
 7. **Vista previa:** sigue con un solo canal; no se toca `tools/preview` ni el ADR 0003.
+   (Reemplazada por la decisión 11 de `2026-11-05-rediseno-tres-pantallas.md`.)
 8. **"Cómo sale":** se deduce de lo observado.
 9. **Reglas:** se aprueban los textos nuevos de AGENTS.md / CLAUDE.md y el ADR 0005 de la
    sección "Reglas que cambian" (cada etapa aplica los que le corresponden).

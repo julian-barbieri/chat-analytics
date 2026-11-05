@@ -1,6 +1,6 @@
 # Spec: rediseño del dashboard en tres pantallas (En vivo, Programas de hoy, Canales), canales editables y Claude en tiempo real
 
-- **Estado:** borrador (con las respuestas de la persona a las preguntas del primer
+- **Estado:** aprobada (con las respuestas de la persona a las preguntas del primer
   borrador; ver "Decisiones de la persona" al final)
 - **Tipo:** mejora (feat)
 - **Rama:** tres etapas, tres PRs: `feat/rediseno-tres-pantallas` (etapa 1),
@@ -22,7 +22,8 @@
   editables) queda absorbida por esta spec** como su etapa 2: nadie la implementa por su
   cuenta. También absorbe la etapa C de la 009 (categorías por mensaje) dentro de la etapa
   3. (Esta tarea no edita esas specs; el orquestador marca su estado al aprobar.)
-- **Aprobada por / fecha:** pendiente.
+- **Aprobada por / fecha:** Julian Barbieri, 2026-11-05 ("Sí, aprobada"), incluido el
+  agregado de CA3.17 (la vista previa copia también `datos.etiquetas.jsonl`).
 
 ## Contexto
 
