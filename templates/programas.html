@@ -1,0 +1,100 @@
+{{template "head" .}}
+{{template "programas-lista" .}}
+{{template "foot" .}}
+
+{{/* La tabla y el detalle van juntos: elegir un programa vuelve a pedir los dos, así la fila marcada coincide. Con "Hoy" se refresca cada 60 s. */}}
+{{define "programas-lista"}}
+<div id="programas" class="vivo"{{if .Refresh}} hx-get="{{.Q.Partial}}" hx-trigger="every 60s" hx-swap="outerHTML"{{end}}>
+<section class="card" aria-labelledby="lista-h">
+  <div class="chead">
+    <div>
+      <h2 id="lista-h">{{.Title}}</h2>
+      <p class="muted">Cada programa se cierra cuando cambia el título del vivo o termina el vivo. Tocá uno para ver el detalle.{{if not .Refresh}} Actualizado a las {{hora .Updated}}.{{end}}</p>
+    </div>
+    <div class="filtros">
+      <label class="field" for="f-canal"><span class="lbl">Canal</span>
+        <select id="f-canal" class="sel" name="canal" hx-get="/parcial/programas" hx-trigger="change" hx-include="#f-dia" hx-target="#programas" hx-swap="outerHTML" hx-push-url="true">
+          {{range .Channels}}<option value="{{.ID}}"{{if .Selected}} selected{{end}}>{{.Name}}</option>{{end}}
+        </select></label>
+      <label class="field" for="f-dia"><span class="lbl">Día</span>
+        <select id="f-dia" class="sel" name="dia" hx-get="/parcial/programas" hx-trigger="change" hx-include="#f-canal" hx-target="#programas" hx-swap="outerHTML" hx-push-url="true">
+          {{range .Days}}<option value="{{.ID}}"{{if .Selected}} selected{{end}}>{{.Name}}</option>{{end}}
+        </select></label>
+    </div>
+  </div>
+  {{if .Rows}}<div class="tablewrap">
+  <table>
+    <thead><tr><th scope="col">Programa</th><th scope="col">Canal</th><th scope="col">Horario</th><th scope="col" class="n">Mensajes</th><th scope="col" class="n">Personas</th><th scope="col" class="n">Preguntas</th><th scope="col" class="n">Super Chats</th><th scope="col">Resumen</th></tr></thead>
+    <tbody>{{range .Rows}}<tr{{if eq .Key $.Pick}} class="sel"{{end}}>
+      <td><a href="{{($.Q.WithTramo .Key).Page}}" hx-get="{{($.Q.WithTramo .Key).Partial}}" hx-target="#programas" hx-swap="outerHTML" hx-push-url="{{($.Q.WithTramo .Key).Page}}"><strong>{{if .Seg.Program}}{{.Seg.Program}}{{else}}sin programa{{end}}</strong></a>{{if .OnAir}} <span class="live">AL AIRE</span>{{end}}</td>
+      <td>{{if .Channel.Name}}{{.Channel.Name}}{{else}}{{.Channel.ID}}{{end}}</td>
+      <td>{{if $.Multi}}{{.Date}} {{end}}{{.Hours}}</td>
+      <td class="n">{{miles .Msgs}}</td>
+      <td class="n">{{miles .People}}</td>
+      <td class="n" title="por reglas">{{miles .Questions}}</td>
+      <td class="n">{{miles .Supers}}</td>
+      <td>{{if .Analysis}}{{if .Analysis.Error}}<span class="muted">con error</span>{{else}}<span class="ia">Claude</span>{{end}}{{else}}<span class="muted">{{if .OnAir}}al cerrar{{else}}sin resumen{{end}}</span>{{end}}</td>
+    </tr>{{end}}</tbody>
+  </table>
+  </div>
+  <p class="muted">Preguntas por reglas. El resumen de Claude se hace solo cuando termina cada programa.</p>
+  {{else}}<p class="muted">{{.Empty}}{{if .Since}} {{.Since}}{{end}}</p>{{end}}
+</section>
+{{with .Detail}}{{template "programa-detalle" .}}{{end}}
+</div>
+{{end}}
+
+{{define "programa-detalle"}}
+<section id="detalle" class="card" aria-labelledby="det-h">
+{{if .Found}}
+  <div class="chead">
+    <div>
+      <h2 id="det-h">{{.Title}}</h2>
+      <p class="muted">{{.Line}}</p>
+    </div>
+    <div class="actions">
+      <a class="btn btn-s" href="{{.CSV}}">CSV de este programa</a>
+      {{if .Href}}<a class="btn btn-s" href="{{.Href}}" target="_blank" rel="noopener" title="{{.Hint}}">Abrir en YouTube</a>{{else}}<span class="muted">{{.Hint}}</span>{{end}}
+    </div>
+  </div>
+  <div class="inner">
+    <h3>Resumen del chat {{if .Claude}}<span class="ia">Claude</span>{{end}}</h3>
+    {{if .Claude}}<p>{{.Claude.Summary}}</p><p class="muted">{{.Claude.Footer}}</p>
+    {{else if .ClaudeErr}}<div class="note">{{.ClaudeErr}}</div>
+    {{else}}<p class="muted">{{.NoSummary}}</p>{{end}}
+  </div>
+  <div class="detail-grid">
+    <div class="inner">
+      <h3>Temas de conversación {{if and .Claude .Claude.Topics}}<span class="ia">Claude</span>{{else}}<span class="chip">por reglas</span>{{end}}</h3>
+      {{if and .Claude .Claude.Topics}}<div class="words">{{range .Claude.Topics}}<span>{{.Text}} · {{.Count}}</span>{{end}}</div>
+      {{else}}{{range .Topics}}<div class="catrow" title="{{.Label}}: {{.N}} mensajes">
+        <span>{{.Label}}</span>
+        <div class="track"><div class="fill" style="width: {{printf "%.1f" .Pct}}%"></div></div>
+        <span class="num">{{miles .N}}</span>
+      </div>{{else}}<p class="muted">Sin datos.</p>{{end}}{{end}}
+    </div>
+    <div class="inner">
+      <h3>Sentimiento del programa {{if .Claude}}<span class="ia">Claude</span>{{end}}</h3>
+      {{if and .Claude (or .Claude.Sent .Claude.Tone)}}{{template "claude-sent" .Claude}}
+      {{else}}<p class="muted">Sale del resumen de Claude: todavía no hay.</p>{{end}}
+    </div>
+    <div class="inner">
+      <h3>Preguntas {{if and .Claude .Claude.Questions}}<span class="ia">Claude</span>{{else}}<span class="chip">por reglas</span>{{end}}</h3>
+      {{if and .Claude .Claude.Questions}}{{template "claude-items" .Claude.Questions}}
+      {{else}}<ul class="qlist">{{range .Questions}}<li>
+        <div class="meta"><strong>{{.Author}}</strong> · {{fecha .At}}</div>
+        <div>{{.Text}}</div>
+      </li>{{else}}<li class="muted">Sin preguntas.</li>{{end}}</ul>{{end}}
+    </div>
+    <div class="inner supers">
+      <h3>Super Chats del programa</h3>
+      {{if .Supers}}<table>
+        <tr><th scope="col">Moneda</th><th scope="col" class="n">Cantidad</th><th scope="col" class="n">Total</th></tr>
+        {{range .Supers}}<tr><td>{{.Currency}}</td><td class="n">{{miles .N}}</td><td class="n">{{.Total}}</td></tr>{{end}}
+      </table>{{else}}<p class="muted">Sin Super Chats ni Super Stickers.</p>{{end}}
+      <p class="muted">{{.SupersNote}}</p>
+    </div>
+  </div>
+{{else}}<p class="muted">Ese programa ya no está guardado.</p>{{end}}
+</section>
+{{end}}

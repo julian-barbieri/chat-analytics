@@ -1,0 +1,291 @@
+{{/* Encabezado común de las tres pantallas: tokens de color (claro y oscuro), CSS, título con el CSV, pestañas y franja de estado. */}}
+{{define "head"}}<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{if eq .Tab "programas"}}Programas de hoy{{else if eq .Tab "canales"}}Canales{{else}}En vivo{{end}} · Monitor de YouTube{{if .Channel}} · {{.Channel}}{{end}}</title>
+<script src="/static/htmx.min.js"></script>
+<style>
+:root {
+  color-scheme: light;
+  --surface-0: #f4f4f2;
+  --surface-1: #fcfcfb;
+  --border: #e2e1dc;
+  --text-primary: #0b0b0b;
+  --text-secondary: #52514e;
+  --text-muted: #6b6a65;
+  --series-1: #2a78d6;
+  --series-2: #c2570c;
+  --series-3: #7b5cc4;
+  --series-4: #2e8b57;
+  --series-5: #b8860b;
+  --grid: #e9e8e4;
+  --live: #c62828;
+  --warn-bg: #fff4e0;
+  --warn-text: #7a4a00;
+  --crit-bg: #fde8e8;
+  --crit-text: #9b1c1c;
+  --ok-bg: #e6f4ea;
+  --ok-text: #1e5b2e;
+  --on-live: #ffffff;
+  --paid-bg: #efe7fb;
+  --paid-text: #5b2d91;
+  --link: #1f63b8;
+  --link-hover: #174c8e;
+  --sent-pos: var(--series-1);
+  --sent-neu: #b9b8b2;
+  --sent-neg: #c2570c;
+  --ia-bg: #e7eefa;
+  --ia-text: #1d4f91;
+  --field-border: #cfcec8;
+  --on-accent: #ffffff;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --surface-0: #111110;
+    --surface-1: #1a1a19;
+    --border: #2e2e2c;
+    --text-primary: #f0efec;
+    --text-secondary: #c3c2b7;
+    --text-muted: #8e8d86;
+    --series-1: #3987e5;
+    --series-2: #e07a3a;
+    --series-3: #a58bec;
+    --series-4: #5cc08a;
+    --series-5: #e0b44a;
+    --grid: #2a2a28;
+    --live: #ef5350;
+    --warn-bg: #3a2c10;
+    --warn-text: #f4c56b;
+    --crit-bg: #3d1717;
+    --crit-text: #f19c9c;
+    --ok-bg: #16301e;
+    --ok-text: #8fd3a2;
+    --on-live: #1a0505;
+    --paid-bg: #2c2140;
+    --paid-text: #cdb1f5;
+    --link: #6aa6f0;
+    --link-hover: #8dbcf5;
+    --sent-pos: var(--series-1);
+    --sent-neu: #5f5e59;
+    --sent-neg: #e07a3a;
+    --ia-bg: #1c2a40;
+    --ia-text: #9cc0f5;
+    --field-border: #3d3d3a;
+    --on-accent: #ffffff;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--surface-0); color: var(--text-primary);
+  font: 15px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+main { max-width: 1200px; margin: 0 auto; padding: 20px 16px 56px; display: flex; flex-direction: column; gap: 16px; }
+h1 { font-size: 22px; margin: 0; }
+h2 { font-size: 17px; margin: 0 0 10px; font-weight: 650; }
+h3 { font-size: 15px; margin: 0 0 6px; }
+a { color: var(--link); }
+a:hover { color: var(--link-hover); }
+:focus-visible { outline: 2px solid var(--series-1); outline-offset: 2px; }
+/* Encabezado y pestañas: links comunes entre pantallas, sin JS propio. */
+.top { display: flex; flex-wrap: wrap; gap: 12px 16px; align-items: center; justify-content: space-between; }
+.brand { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; }
+.tabs { display: flex; flex-wrap: wrap; gap: 8px; }
+.tabs a { display: inline-flex; align-items: center; min-height: 44px; padding: 0 16px; border-radius: 99px; text-decoration: none;
+  font-weight: 600; font-size: 14px; color: var(--text-secondary); border: 1px solid var(--border); background: var(--surface-0); }
+.tabs a:hover { border-color: var(--text-muted); }
+.tabs a[aria-current="page"] { background: var(--text-primary); color: var(--surface-1); border-color: var(--text-primary); }
+.estado { display: flex; flex-wrap: wrap; gap: 4px 14px; align-items: baseline; }
+.estado .note { flex-basis: 100%; margin: 0; }
+.card { background: var(--surface-1); border: 1px solid var(--border); border-radius: 10px; padding: 16px; }
+.inner { background: var(--surface-0); border: 1px solid var(--border); border-radius: 10px; padding: 12px; }
+.chead { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: baseline; justify-content: space-between; margin-bottom: 10px; }
+.chead h2 { margin: 0; }
+.muted { color: var(--text-muted); font-size: 13px; }
+.lbl { font-size: 13px; font-weight: 600; color: var(--text-secondary); }
+.chip { display: inline-flex; align-items: center; gap: 6px; padding: 2px 9px; border-radius: 99px; font-size: 12px; font-weight: 600;
+  background: var(--grid); color: var(--text-secondary); }
+.chip.ok { background: var(--ok-bg); color: var(--ok-text); }
+.chip.warn { background: var(--warn-bg); color: var(--warn-text); }
+.ia { display: inline-flex; align-items: center; font-size: 11px; font-weight: 700; letter-spacing: .02em; padding: 1px 7px;
+  border-radius: 99px; background: var(--ia-bg); color: var(--ia-text); vertical-align: middle; }
+.live { display: inline-flex; gap: 6px; align-items: center; font-weight: 700; font-size: 12px; color: var(--live); }
+.live::before { content: ""; width: 9px; height: 9px; border-radius: 50%; background: var(--live); }
+.btn { display: inline-flex; align-items: center; justify-content: center; min-height: 44px; padding: 0 16px; border-radius: 99px;
+  font: inherit; font-size: 14px; font-weight: 600; cursor: pointer; text-decoration: none; }
+.btn-p { background: var(--series-1); color: var(--on-accent); border: 1px solid var(--series-1); }
+.btn-s { background: var(--surface-0); color: var(--text-secondary); border: 1px solid var(--border); }
+.btn-s:hover { border-color: var(--text-muted); color: var(--text-primary); }
+select.sel, .inp { min-height: 44px; background: var(--surface-1); color: var(--text-primary); border: 1px solid var(--field-border);
+  border-radius: 8px; padding: 0 10px; font: inherit; font-size: 14px; }
+.field { display: flex; flex-direction: column; gap: 2px; }
+.leg { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--text-secondary); }
+.sw { width: 10px; height: 10px; border-radius: 2px; display: inline-block; }
+.cartel { display: grid; gap: 2px; padding: 8px 12px; border-radius: 8px; font-size: 13px; margin-bottom: 12px; }
+.cartel strong { font-weight: 600; }
+.cartel.ok { background: var(--ok-bg); color: var(--ok-text); }
+.cartel.warn { background: var(--warn-bg); color: var(--warn-text); }
+.cartel.crit { background: var(--crit-bg); color: var(--crit-text); }
+.note { padding: 8px 12px; border-radius: 8px; font-size: 13px; margin-bottom: 12px; background: var(--warn-bg); color: var(--warn-text); }
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; }
+.tile { padding: 14px; }
+.tile .v { font-size: 26px; font-weight: 650; font-variant-numeric: tabular-nums; }
+.tile .l { font-size: 13px; font-weight: 600; color: var(--text-secondary); }
+.grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(460px, 100%), 1fr)); gap: 16px; }
+.bar { fill: var(--series-1); }
+.hit { fill: transparent; }
+.hit:hover + .bar, .bar:hover { opacity: .75; }
+.catrow { display: grid; grid-template-columns: minmax(0, 38%) 1fr 48px; gap: 8px; align-items: center; margin: 6px 0; font-size: 13.5px; }
+.catrow span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.track { background: var(--grid); border-radius: 4px; height: 12px; overflow: hidden; }
+.fill { background: var(--series-1); height: 100%; border-radius: 0 4px 4px 0; }
+.fill.warn { background: var(--warn-text); }
+.num { text-align: right; font-variant-numeric: tabular-nums; color: var(--text-secondary); }
+.feed { list-style: none; margin: 0; padding: 0; max-height: 560px; overflow-y: auto; }
+.feed li { padding: 8px 0; border-bottom: 1px solid var(--border); }
+.feed .meta { font-size: 12px; color: var(--text-muted); display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.vfeed { max-height: 420px; }
+.badge { font-size: 11px; padding: 1px 7px; border-radius: 99px; border: 1px solid var(--border); color: var(--text-secondary); }
+.badge.spam, .badge.insulto { background: var(--crit-bg); color: var(--crit-text); border-color: transparent; }
+.badge.pregunta { background: var(--ok-bg); color: var(--ok-text); border-color: transparent; }
+.badge.queja { background: var(--warn-bg); color: var(--warn-text); border-color: transparent; }
+/* Pagos (Super Chat y Super Sticker): "super" no choca con ninguna categoría. */
+.badge.super { background: var(--paid-bg); color: var(--paid-text); border-color: transparent; }
+.supers table { margin-bottom: 12px; }
+.supers td { overflow-wrap: anywhere; }
+.supers td.n, .supers th.n { white-space: nowrap; }
+.words { display: flex; flex-wrap: wrap; gap: 6px; }
+.words span { font-size: 13px; padding: 2px 8px; border-radius: 6px; background: var(--grid); }
+table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+td, th { text-align: left; padding: 8px 6px; border-bottom: 1px solid var(--border); vertical-align: top; }
+th { font-weight: 600; color: var(--text-secondary); font-size: 12.5px; }
+td.n, th.n { text-align: right; font-variant-numeric: tabular-nums; }
+.tablewrap { overflow-x: auto; border: 1px solid var(--border); border-radius: 8px; }
+.tablewrap table td, .tablewrap table th { white-space: nowrap; }
+tr.sel td { background: var(--ia-bg); }
+.vivo { display: flex; flex-direction: column; gap: 16px; }
+#vivo-analisis, #vivo-abajo { display: flex; flex-direction: column; gap: 16px; }
+.vbtns { display: flex; flex-wrap: wrap; gap: 8px; }
+.vbtn { font: inherit; font-size: 14px; font-weight: 600; min-height: 44px; padding: 0 16px; border-radius: 99px; cursor: pointer;
+  border: 1px solid var(--border); background: var(--surface-0); color: var(--text-secondary); }
+.vbtn:hover { border-color: var(--text-muted); }
+.vbtn[aria-pressed="true"] { background: var(--live); border-color: var(--live); color: var(--on-live); }
+.seg { font: inherit; font-size: 13px; font-weight: 600; min-height: 44px; padding: 0 14px; border-radius: 99px; cursor: pointer;
+  border: 1px solid var(--border); background: var(--surface-1); color: var(--text-secondary); }
+.seg[aria-pressed="true"] { background: var(--text-primary); color: var(--surface-1); border-color: var(--text-primary); }
+.selector { display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: center; justify-content: space-between; }
+.selector p { margin: 0; }
+.atitle { margin: 0; }
+.onair { display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: baseline; margin-bottom: 12px; }
+.onair .prog { font-size: 17px; }
+/* 400px: con el ancho máximo de main entran 2 por fila; min(…, 100%) para que en un celular no desborde. */
+.vgrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(400px, 100%), 1fr)); gap: 12px; }
+/* Gráfico de participación: el SVG se estira a un alto fijo (no depende del
+   ancho) y los textos van en HTML para que midan siempre 12 px. */
+.pchart svg { display: block; width: 100%; height: 240px; overflow: visible; }
+/* Panel de oyentes: mismo ancho y viewBox que las barras para que cada escalón
+   caiga sobre su columna. overflow visible para no cortar medio trazo en y = 0;
+   la línea no toma el mouse para que el tooltip lo dé la zona de la franja. */
+.poyentes svg { display: block; width: 100%; height: 72px; overflow: visible; margin-bottom: 8px; }
+.poyentes .hit:hover { fill: var(--grid); }
+.oyentes { fill: none; stroke: var(--text-secondary); stroke-width: 2; stroke-linejoin: round; pointer-events: none; }
+.pmax, .pmarks, .pticks { position: relative; height: 16px; font-size: 12px; line-height: 16px; color: var(--text-muted); }
+.pmarks span, .pticks span { position: absolute; transform: translateX(-50%); white-space: nowrap; }
+.pticks span:first-child { transform: none; }
+.pticks span.end { transform: translateX(-100%); }
+.pmarks span { color: var(--warn-text); font-weight: 600; }
+.bar.top { fill: var(--warn-text); }
+.pwin { margin: 4px 0 8px; }
+.pwin .vbtn { font-size: 13px; }
+.tipica { stroke: var(--text-muted); stroke-dasharray: 4 3; vector-effect: non-scaling-stroke; }
+.base { stroke: var(--grid); vector-effect: non-scaling-stroke; }
+/* Resumen de Claude: la barra de sentimiento usa los tokens de sentimiento,
+   que están en los dos temas; los % van también en texto. */
+.claude h3 { font-size: 14px; margin: 0 0 6px; }
+.claude .cnote { margin: 0 0 12px; }
+.cblock { padding: 10px 0; border-bottom: 1px solid var(--border); margin-bottom: 12px; overflow-wrap: anywhere; }
+.cblock p { margin: 4px 0; }
+.csent { display: block; width: 100%; height: 12px; border-radius: 4px; margin: 8px 0 4px; }
+.csent .pos { fill: var(--sent-pos); }
+.csent .neu { fill: var(--sent-neu); }
+.csent .neg { fill: var(--sent-neg); }
+.sw.pos { background: var(--sent-pos); }
+.sw.neu { background: var(--sent-neu); }
+.sw.neg { background: var(--sent-neg); }
+.claude .btn { margin: 4px 0; }
+.tops tr.main td { border-bottom: 0; }
+.tops tr.det td { overflow-wrap: anywhere; color: var(--text-secondary); }
+.tops tr.main td:first-child { overflow-wrap: anywhere; }
+.tops td.n, .tops th.n { white-space: nowrap; }
+@media (max-width: 600px) {
+  .pchart svg { height: 180px; }
+  .poyentes svg { height: 56px; }
+  .pticks span:nth-child(even) { display: none; }
+}
+/* Tira "Hoy en el canal": un bloque por tramo, ancho proporcional a los
+   minutos (flex-grow) y con un mínimo legible; en un celular se desplaza. */
+.tira { list-style: none; margin: 4px 0 8px; padding: 0 0 4px; display: flex; gap: 4px; overflow-x: auto; }
+.tb { flex: 1 0 120px; min-width: 120px; border-radius: 8px; padding: 8px 10px; display: flex; flex-direction: column; gap: 1px;
+  font-size: 12px; background: var(--grid); color: var(--text-secondary); border: 1px solid var(--border); }
+.tb strong { font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tb span { white-space: nowrap; }
+.tb.aire { background: var(--live); color: var(--on-live); border-color: var(--live); }
+.tb.sin { background: var(--surface-1); color: var(--text-muted); border-style: dashed; border-color: var(--sent-neu); }
+.sub { display: block; margin: -2px 0 6px; }
+.qlist, .q { list-style: none; margin: 0 0 8px; padding: 0; font-size: 14px; }
+.qlist li, .q li { padding: 8px 0; border-bottom: 1px solid var(--border); }
+.qlist .meta { font-size: 12px; color: var(--text-muted); }
+.copy { width: 100%; font: 13px/1.4 ui-monospace, monospace; padding: 6px 8px; border-radius: 6px; resize: vertical;
+  border: 1px solid var(--field-border); background: var(--surface-1); color: var(--text-primary); margin-bottom: 8px; }
+/* Programas */
+.filtros { display: flex; flex-wrap: wrap; gap: 8px; }
+.detail-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(340px, 100%), 1fr)); gap: 12px; }
+.actions { display: flex; flex-wrap: wrap; gap: 8px; }
+/* Canales y barra de cuota (escala de 10.000 unidades). */
+.ccard { display: flex; flex-direction: column; gap: 10px; }
+.ccard dl { margin: 0; display: grid; gap: 4px; font-size: 13.5px; }
+.ccard dt { font-weight: 600; color: var(--text-secondary); }
+.ccard dd { margin: 0 0 6px; }
+.qbar { position: relative; padding-top: 22px; margin-bottom: 8px; }
+.qtrack { display: flex; height: 18px; border-radius: 4px; overflow: hidden; background: var(--grid); }
+.q-vid { background: var(--text-muted); }
+.q-com { background: var(--sent-neu); }
+.q-chat { background: var(--series-1); }
+.qmark { position: absolute; top: 0; bottom: 0; border-left: 2px dashed var(--text-primary); }
+.qmark.stop { border-left: 2px solid var(--live); }
+.qmark span { position: absolute; top: 0; transform: translateX(-50%); font-size: 12px; white-space: nowrap; }
+.qmark.stop span { color: var(--crit-text); }
+.steps { margin: 0; padding-left: 20px; display: grid; gap: 6px; font-size: 14px; }
+details summary { cursor: pointer; min-height: 32px; font-weight: 600; }
+</style>
+</head>
+<body>
+<main>
+<header class="top">
+  <div class="brand">
+    <h1>Monitor de YouTube</h1>
+    <a href="/export.csv">Descargar CSV para Claude</a>
+  </div>
+  <nav class="tabs" aria-label="Secciones">
+    <a href="/"{{if eq .Tab "vivo"}} aria-current="page"{{end}}>En vivo</a>
+    <a href="/programas"{{if eq .Tab "programas"}} aria-current="page"{{end}}>Programas de hoy</a>
+    <a href="/canales"{{if eq .Tab "canales"}} aria-current="page"{{end}}>Canales</a>
+  </nav>
+</header>
+<div id="estado" hx-get="/parcial/resumen" hx-trigger="load, every 5s"><p class="muted">Cargando…</p></div>
+{{end}}
+
+{{define "foot"}}
+</main>
+</body>
+</html>
+{{end}}
+
+{{define "resumen"}}
+<div class="estado">
+  <strong>{{if .Channel}}{{.Channel}}{{else}}Conectando con YouTube…{{end}}</strong>
+  {{if .Started}}<span class="muted">Actualizado {{hora .Updated}}</span>{{end}}
+  {{if .ChatNote}}<span class="muted">{{.ChatNote}}</span>{{end}}
+  {{if .LastErr}}<div class="note">Error al consultar YouTube: {{.LastErr}}</div>{{end}}
+</div>
+{{end}}

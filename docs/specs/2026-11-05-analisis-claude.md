@@ -903,7 +903,8 @@ persona (2026-11-05)". Quedan para la implementación, sin frenar la aprobación
 5. **Tope:** valor sugerido en el README `-claude-usd 2`, con el día local de Argentina.
 6. **Volumen:** se mide la primera semana; queda la hipótesis y cada análisis guarda
    tokens y costo.
-7. **Etapa C (categorías por mensaje):** a decidir después.
+7. **Etapa C (categorías por mensaje):** a decidir después. (Absorbida por la etapa 3 de
+   `2026-11-05-rediseno-tres-pantallas.md`.)
 8. **Diseño:** la tarjeta "7. Análisis con Claude" propuesta va bien.
 9. **Etapas:** A, después B; C a decidir.
 10. **Vista previa:** sumar una API de Claude simulada a `tools/preview` (`/v1/messages`

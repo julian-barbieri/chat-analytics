@@ -9,7 +9,8 @@ privacidad, clasificador, concurrencia) están en `AGENTS.md` y se importan acá
 
 `yt-monitor`: bot de **solo lectura** que monitorea comentarios y chat en vivo de
 canales de YouTube (piloto de Alphamedia con Radio Rivadavia). Dos modos con el mismo
-binario: informe puntual (`go run .`) y continuo con dashboard htmx (`-dashboard :8080`).
+binario: informe puntual (`go run .`) y continuo con dashboard htmx de tres pantallas:
+En vivo, Programas de hoy y Canales (`-dashboard :8080`).
 No publica, no modera, no usa OAuth. Si se activa (`-claude-usd` > 0 y `CLAUDE_API_KEY`),
 el dashboard manda el **texto** de los mensajes de chat de cada programa (sin autores) a
 la API de Anthropic para resumirlos y agruparlos (ADR 0006). Sigue sin escribir en YouTube.
@@ -141,7 +142,9 @@ Una tarea está terminada solo si se cumple **todo**:
 - Vista previa del PR (paso 7b de `/factory`, a pedido de la persona y solo si el cambio
   toca el dashboard o lo que muestra): `go run ./tools/preview -datos <checkout
   principal>/datos.jsonl` levanta la rama en `http://localhost:8081` con una copia
-  temporal de los datos y una API simulada; `go run ./tools/preview -cortar` la corta y
+  temporal de los datos (`datos.jsonl`, `datos.cuota.json`, `datos.espectadores.jsonl`,
+  `datos.vivos.jsonl` y `datos.analisis.jsonl`; no `datos.claude.json` ni
+  `datos.canales.json`) y una API simulada; `go run ./tools/preview -cortar` la corta y
   borra la copia. Siempre se corta antes de cerrar la tarea.
 - Modelo y esfuerzo fijos en el frontmatter de cada agente (no heredan la sesión):
   triage, implementer y reviewer en `claude-opus-5-5` con esfuerzo `high`; tester en

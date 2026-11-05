@@ -74,6 +74,7 @@ type LiveSample struct {
 // memoria: el nombre viene de la API y no hace falta guardarlo.
 type ChannelStatus struct {
 	ID, Name  string
+	Input     string        // lo que se pasó en -canal (el ID o el @handle), para mostrarlo en Canales
 	Live      bool          // tiene al menos un vivo en curso
 	WaitSince time.Time     // desde cuándo espera el próximo vivo (cero si nunca tuvo uno desde que arrancó)
 	FastUntil time.Time     // hasta cuándo se busca el próximo vivo cada fastEvery
@@ -351,6 +352,20 @@ func (s *Store) AddLives(at time.Time, vids []Video) {
 	for _, l := range add {
 		enc.Encode(l)
 	}
+}
+
+// FirstLive es la hora de la muestra de vivos más vieja guardada (cero si no
+// hay): Programas la usa para decir desde cuándo hay datos sin copiar la serie.
+func (s *Store) FirstLive() time.Time {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var first time.Time
+	for _, l := range s.lives {
+		if first.IsZero() || l.At.Before(first) {
+			first = l.At
+		}
+	}
+	return first
 }
 
 // Lives devuelve una copia de las muestras de vivos desde since.

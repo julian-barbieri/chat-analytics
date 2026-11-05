@@ -1,0 +1,74 @@
+{{template "head" .}}
+<section class="card" aria-labelledby="canales-h">
+  <h2 id="canales-h">Canales que se siguen</h2>
+  <p class="muted">Cada canal se sigue todo el día: cuando termina un programa, el monitor busca solo el vivo siguiente y continúa. {{.ChatNow}}</p>
+  <p class="muted">Por ahora los canales y los intervalos se cambian con -canal, -chat-seg-pico y -chat-seg (ver README).</p>
+</section>
+<div id="canales-estado" class="vivo" hx-get="/parcial/canales/estado" hx-trigger="every 5s">
+{{template "canales-estado" .}}
+</div>
+
+<section class="card" aria-labelledby="cont-h">
+  <h2 id="cont-h">Qué pasa cuando termina un programa</h2>
+  <ol class="steps">
+    <li><strong>Mismo vivo, otro programa</strong>: cambia el título, el monitor cierra el programa anterior y sigue leyendo el mismo chat sin reconectar.</li>
+    <li><strong>Termina el vivo</strong>: el canal queda en «Esperando el próximo vivo». Se busca solo ese canal cada {{.FastEvery}} durante {{.FastFor}} y después cada {{.Every}}, con la revisión de videos.</li>
+    <li><strong>Empieza el siguiente</strong>: se engancha solo, aparece en el mismo botón del canal y el análisis sigue con el programa nuevo. Lo anterior queda en «Programas de hoy».</li>
+  </ol>
+  <p class="muted">Buscar más seguido gasta a lo sumo {{.FastMax}} unidades cada vez que un canal se queda sin vivo.</p>
+</section>
+
+{{with .Claude}}<section class="card" aria-labelledby="ia-h">
+  <div class="chead"><h2 id="ia-h">Análisis con Claude <span class="ia">Claude</span></h2><span class="chip {{.ChipClass}}">{{.Chip}}</span></div>
+  <p class="muted">La clave se lee de CLAUDE_API_KEY (en el archivo de la clave o en el entorno) y nunca se muestra acá ni en los registros. Si falta o se llega al tope de gasto, el monitor sigue con las reglas de siempre.</p>
+  <dl class="tiles">
+    <div class="inner"><dt class="lbl">Modelo</dt><dd>{{.Model}}</dd></div>
+    <div class="inner"><dt class="lbl">Tope</dt><dd>{{.Tope}}</dd></div>
+    <div class="inner"><dt class="lbl">Gastado hoy</dt><dd>{{.Spent}}</dd></div>
+  </dl>
+  <p>{{.Last}}</p>
+  {{if .Warn}}<p class="muted">Último aviso: {{.Warn}}</p>{{end}}
+  <details>
+    <summary>Qué se le manda a Claude y qué se guarda</summary>
+    <ul class="steps">
+      <li>Un pedido por programa, cuando termina (y otro si se toca «Analizar ahora» en En vivo, como mucho cada 10 min por canal).</li>
+      <li>Solo el texto y la hora de los mensajes de chat del programa, sin nombres de usuario ni spam.</li>
+      <li>El resumen se guarda en datos.analisis.jsonl, aparte de los mensajes, con la misma retención de 30 días.</li>
+      <li>Claude no responde ni modera: el monitor sigue siendo de solo lectura.</li>
+    </ul>
+  </details>
+  <p class="muted">El modelo y el tope se cambian con -claude-modelo y -claude-usd (ver README).</p>
+</section>{{end}}
+{{template "foot" .}}
+
+{{define "canales-estado"}}
+<div class="grid2">
+{{range .Rows}}<section class="card ccard" aria-label="{{.Name}}">
+  <div class="chead">
+    <div><h3>{{.Name}}</h3><div class="muted">{{.Input}} · {{.Role}}</div></div>
+    {{if .Live}}<span class="live">EN VIVO</span>{{else}}<span class="chip">Esperando el próximo vivo</span>{{end}}
+  </div>
+  <div class="inner">
+    <div>{{.Status}}</div>
+    <div class="muted">Cómo sale: {{.How}}.</div>
+  </div>
+  <dl>
+    <dt>Horas en vivo por día</dt><dd>{{.Hours}}</dd>
+    <dt>Chat</dt><dd>{{.Chat}}</dd>
+  </dl>
+</section>{{else}}<section class="card"><p class="muted">Todavía no se resolvieron los canales de -canal: aparecen después de la primera revisión de videos.</p></section>{{end}}
+</div>
+
+<section class="card" aria-labelledby="cuota-h">
+  <div class="chead"><h2 id="cuota-h">Cuota de YouTube con esta configuración</h2>
+    <div><strong>{{.Total}}</strong> <span class="muted">unidades por día estimadas · Usadas hoy: {{.Used}}</span></div></div>
+  <div class="qbar" role="img" aria-label="{{.Aria}}">
+    <div class="qtrack">{{range .Parts}}<div class="{{.Class}}" style="width: {{printf "%.2f" .W}}%"></div>{{end}}</div>
+    <div class="qmark" style="left: {{printf "%.2f" .LimitX}}%"><span>{{.Limit}} · se pausa el chat</span></div>
+    <div class="qmark stop" style="left: {{printf "%.2f" .BudgetX}}%"><span>{{.Budget}} · tope</span></div>
+  </div>
+  <div class="vbtns">{{range .Parts}}<span class="leg"><span class="sw {{.Class}}"></span>{{.Label}} · {{.N}}</span>{{end}}</div>
+  {{with .Quota}}<div class="cartel {{if .Fits}}ok{{else}}warn{{end}}"><strong>{{.Text}}.</strong>{{if not .Fits}}<span>El chat se pausaría antes de terminar el día del Pacífico (de madrugada en Argentina). Para que entre, subí -chat-seg-pico o -chat-seg.</span>{{end}}</div>{{end}}
+  <p class="muted">Horas en vivo: {{.Hours}}. YouTube da 10.000 unidades por día por proyecto y se reinician a medianoche del Pacífico (04:00 o 05:00 en Argentina). El chat se deja de leer al llegar a {{.Limit}} para guardar {{.Reserve}} para videos y comentarios. Si YouTube deja abierto el chat en tiempo real, los mensajes llegan al instante y el intervalo es el mínimo entre dos conexiones, así que nunca gasta más que esto.</p>
+</section>
+{{end}}
