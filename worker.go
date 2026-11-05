@@ -138,6 +138,7 @@ func nextChat(lives []Video, chats map[string]*chatState, now time.Time) (next *
 // channelState es lo que el worker recuerda de cada canal de cfg.Channels.
 type channelState struct {
 	info                 ChannelInfo
+	input                string // lo que se pasó en -canal
 	live                 bool
 	waitSince, fastUntil time.Time
 	nextFast             time.Time
@@ -165,7 +166,7 @@ func trackChannels(channels []*channelState, vids []Video, now time.Time) {
 func channelStatuses(channels []*channelState, every time.Duration) []ChannelStatus {
 	out := make([]ChannelStatus, 0, len(channels))
 	for _, c := range channels {
-		out = append(out, ChannelStatus{ID: c.info.ID, Name: c.info.Title, Live: c.live, WaitSince: c.waitSince, FastUntil: c.fastUntil, Every: every})
+		out = append(out, ChannelStatus{ID: c.info.ID, Name: c.info.Title, Input: c.input, Live: c.live, WaitSince: c.waitSince, FastUntil: c.fastUntil, Every: every})
 	}
 	return out
 }
@@ -284,7 +285,7 @@ func RunWorker(ctx context.Context, yt *YouTube, st *Store, cfg WorkerConfig) {
 					if len(channels) == 0 {
 						st.SetVideos(info.Title, nil)
 					}
-					channels = append(channels, &channelState{info: info})
+					channels = append(channels, &channelState{info: info, input: ch})
 				}
 				infos := make([]ChannelInfo, len(channels))
 				for i, c := range channels {

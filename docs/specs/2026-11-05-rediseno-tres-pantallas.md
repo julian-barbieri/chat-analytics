@@ -1,7 +1,8 @@
 # Spec: rediseño del dashboard en tres pantallas (En vivo, Programas de hoy, Canales), canales editables y Claude en tiempo real
 
-- **Estado:** aprobada (con las respuestas de la persona a las preguntas del primer
-  borrador; ver "Decisiones de la persona" al final)
+- **Estado:** etapa 1 implementada (CA1.1 a CA1.21; CA1.22 se revisa en el navegador con
+  la vista previa); etapas 2 y 3 aprobadas, pendientes. Aprobada con las respuestas de la
+  persona a las preguntas del primer borrador (ver "Decisiones de la persona" al final)
 - **Tipo:** mejora (feat)
 - **Rama:** tres etapas, tres PRs: `feat/rediseno-tres-pantallas` (etapa 1),
   `feat/canales-editables` (etapa 2) y `feat/claude-tiempo-real` (etapa 3). Cada una sale
@@ -155,17 +156,17 @@ lista falla hoy **en ejecución** (no por compilación): guardar esa salida para
 
 ### Etapa 1 — rediseño y tres pantallas con lo que ya existe
 
-- [ ] CA1.1 (falla hoy): `GET /`, `GET /programas` y `GET /canales` responden 200 con el
+- [x] CA1.1 (falla hoy): `GET /`, `GET /programas` y `GET /canales` responden 200 con el
   mismo encabezado (`<h1>Monitor de YouTube</h1>`, link "Descargar CSV para Claude" a
   `/export.csv`) y `<nav class="tabs" aria-label="Secciones">` con tres links: "En vivo"
   (`/`), "Programas de hoy" (`/programas`) y "Canales" (`/canales`); el de la pantalla
   actual lleva `aria-current="page"` y los otros no — se verifica con `TestDashboardTabs`
   (tabla de las tres rutas; hoy `/programas` y `/canales` dan 404 y `/` no tiene `nav`).
-- [ ] CA1.2: `GET /?canal=UC…` y `GET /?vivo=ID` siguen eligiendo canal o vivo suelto como
+- [x] CA1.2: `GET /?canal=UC…` y `GET /?vivo=ID` siguen eligiendo canal o vivo suelto como
   hoy (mismos casos que `TestLiveChatByChannel`, que se actualiza a la tarjeta nueva); el
   `HX-Retarget: #vivo` de `/parcial/vivo/chat` cuando cambia el vivo en curso del canal no
   cambia — se verifica con `TestLiveChatByChannel` y `TestLiveChatSelection` ajustados.
-- [ ] CA1.3: tarjeta Canal (`GET /parcial/vivo/canal?canal=…&video=…`, cada 5 s): botones
+- [x] CA1.3: tarjeta Canal (`GET /parcial/vivo/canal?canal=…&video=…`, cada 5 s): botones
   por canal y por vivo suelto con `aria-pressed`; con vivo: "EN VIVO", programa, "desde
   HH:MM" (inicio del tramo al aire), "N.º vivo de hoy" si el canal tuvo más de uno,
   "N mirando" (suma de `Concurrent` de sus vivos) y "Abrir en YouTube"
@@ -175,19 +176,19 @@ lista falla hoy **en ejecución** (no por compilación): guardar esa salida para
   (`fin`/`aire`/`sin`) y `flex-grow` proporcional a los minutos; línea "Cómo sale" (CA1.4).
   No hace `HX-Retarget` (eso queda en el chat) — se verifica con `TestLiveChannelCard`
   (tabla) y `TestChannelDayStrip` movido a este parcial (cambia `<title>` por `title="…"`).
-- [ ] CA1.4: `howItAirs(segs)` (pura) deduce cómo sale un canal con los tramos de los
+- [x] CA1.4: `howItAirs(segs)` (pura) deduce cómo sale un canal con los tramos de los
   últimos 7 días: un mismo vivo con dos o más programas → "Un vivo de 24 h: el programa se
   toma del título, que cambia con cada uno"; dos o más vivos distintos en un día → "Un vivo
   nuevo por programa: al cortarse uno, el monitor busca el siguiente"; sin eso → "Todavía
   no se vio un cambio de programa" (decisión 8 de canales-continuos) — se verifica con
   `TestHowItAirs`.
-- [ ] CA1.5: debajo de la tarjeta Canal, las píldoras "Programa en curso" / "Todo el día
+- [x] CA1.5: debajo de la tarjeta Canal, las píldoras "Programa en curso" / "Todo el día
   del canal" (`class="seg"`, `aria-pressed`) y el título "Análisis de <programa> (programa
   en curso)" o "Análisis de todo el día del canal"; la elección se conserva en los
   refrescos como hoy. Con la 009 activa, una línea con la etiqueta "Claude" y "resumen al
   cerrar cada programa · último análisis HH:MM" (o "todavía sin análisis hoy") — se
   verifica con `TestLiveAnalysisByChannel` extendido.
-- [ ] CA1.6: tiles por alcance (`liveTiles`, pura, sobre los mensajes ya filtrados por el
+- [x] CA1.6: tiles por alcance (`liveTiles`, pura, sobre los mensajes ya filtrados por el
   selector): **Mensajes por minuto** = mensajes de chat de los últimos 5 min / 5, con
   "X % sobre (o bajo) lo típico de <este programa | el día>" solo si hay al menos 6 franjas
   de 5 min con mensajes (típico = mediana de esas franjas), si no "en los últimos 5 min";
@@ -198,7 +199,7 @@ lista falla hoy **en ejecución** (no por compilación): guardar esa salida para
   con `money`) o "en N monedas" (nunca se suman monedas); **Preguntas** = `Classify`
   pregunta, nota "por reglas" — se verifica con `TestLiveTiles` (tabla: sin mensajes, sin
   espectadores, dos monedas, menos de 6 franjas).
-- [ ] CA1.7: orden de En vivo (ids en el HTML): `#estado`, `#canal`, selector y título,
+- [x] CA1.7: orden de En vivo (ids en el HTML): `#estado`, `#canal`, selector y título,
   tiles, `#quejas` (Quejas técnicas por reglas), `#claude-card` (la 009, si hay canal),
   `#preguntas` y `#categorias` (en grilla de dos), `#momentos` (gráfico de participación,
   panel de oyentes, 6 h / 24 h y la tabla), `#chat`, `#supers`, `#filtros` (con "Temas por
@@ -206,13 +207,13 @@ lista falla hoy **en ejecución** (no por compilación): guardar esa salida para
   comentarios, Palabras más repetidas, Quiénes más escriben). Ningún título lleva número
   — se verifica con `TestLiveScreenOrder` (índices de los ids en `GET /` y en
   `/parcial/vivo/analisis?canal=…`).
-- [ ] CA1.8: bloques de la 009: con "Programa en curso" la tarjeta se titula "Resumen de
+- [x] CA1.8: bloques de la 009: con "Programa en curso" la tarjeta se titula "Resumen de
   Claude del programa en curso" con el mismo contenido, estados y botón "Analizar ahora"
   (mismas guardas); con "Todo el día del canal" la tarjeta muestra solo "Los resúmenes de
   cada programa están en Programas de hoy" con link a `/programas?canal=UC…`. Apagada:
   el texto de apagado de la 009 — se verifica con los tests de la 009 (`TestClaudeCardOff`,
   `TestClaudeCard`, `TestClaudeAnalyzePost`) ajustados al título nuevo.
-- [ ] CA1.9: `programRows` (pura, una sola pasada sobre los mensajes) arma las filas de
+- [x] CA1.9: `programRows` (pura, una sola pasada sobre los mensajes) arma las filas de
   Programas: por cada tramo que no es "sin vivo", programa, canal, horario ("14:00–" al
   aire, "10:00–14:00" terminado), mensajes, personas, Super Chats (cantidad), preguntas
   (reglas), "AL AIRE", y el análisis final de la 009 si existe con la misma `segmentKey`.
@@ -224,7 +225,7 @@ lista falla hoy **en ejecución** (no por compilación): guardar esa salida para
   entran mensajes de otro canal. Orden: canales en el orden de `-canal`, del más nuevo al
   más viejo — se verifica con `TestProgramRows` (tabla: vivo de 24 h con dos programas, un
   vivo por programa, cruce de medianoche, 7 días, filtro de canal, mensajes de otro canal).
-- [ ] CA1.10: pantalla Programas (`GET /programas?dia=hoy|ayer|7d&canal=…&tramo=…` y
+- [x] CA1.10: pantalla Programas (`GET /programas?dia=hoy|ayer|7d&canal=…&tramo=…` y
   `GET /parcial/programas?…`): título "Programas de hoy · <día> DD/MM" (día de la semana en
   español), selects "Canal" y "Día" con `<label>` que piden el parcial con `hx-get`
   (`hx-trigger="change"`, `hx-push-url`); tabla con `th scope="col"`, fila elegida con
@@ -233,7 +234,7 @@ lista falla hoy **en ejecución** (no por compilación): guardar esa salida para
   HH:MM"); sin tramos: "Todavía no hay programas guardados para ese día" y, si los datos
   empiezan después, "Hay programas guardados desde el DD/MM"; día o canal inválidos → se
   usa el valor por defecto (hoy, todos) — se verifica con `TestProgramsPage`.
-- [ ] CA1.11: detalle (`GET /parcial/programas/detalle?tramo=<clave>`): título del
+- [x] CA1.11: detalle (`GET /parcial/programas/detalle?tramo=<clave>`): título del
   programa; línea "Canal · HH:MM a HH:MM · <se cerró cuando cambió el título | terminó el
   vivo | al aire> · N mensajes de N personas"; botones `btn` "CSV de este programa"
   (`/export.csv?tramo=…`) y "Abrir en YouTube" (`momentLink` al inicio del tramo); bloques
@@ -245,18 +246,18 @@ lista falla hoy **en ejecución** (no por compilación): guardar esa salida para
   o el al aire. Clave desconocida: "Ese programa ya no está guardado". Todo texto de
   usuarios y del modelo sale escapado (un `<script>` aparece como `&lt;script&gt;`) — se
   verifica con `TestProgramDetail` (tabla).
-- [ ] CA1.12: `GET /export.csv?tramo=<clave>` exporta solo los mensajes del tramo (mismo
+- [x] CA1.12: `GET /export.csv?tramo=<clave>` exporta solo los mensajes del tramo (mismo
   filtro), con `csvHeader`, y nombre `mensajes_<programa>_<AAAA-MM-DD_HHMM>.csv` donde
   `<programa>` solo tiene `[a-z0-9-]` (sin tildes ni espacios, para que no rompa el
   header); clave desconocida → 404; sin `tramo` → igual que hoy — se verifica con
   `TestExportProgram`.
-- [ ] CA1.13: Programas no copia todo el histórico: los handlers usan `Store.Lives` y
+- [x] CA1.13: Programas no copia todo el histórico: los handlers usan `Store.Lives` y
   `Store.MessagesOf` (de la 009), no `Snapshot`; `programRows` asigna cada mensaje a su
   tramo con búsqueda binaria por vivo (O(M log S)). Se verifica con la revisión del
   reviewer y `go test -run '^$' -bench '^BenchmarkProgramRows$' .` (70.000 mensajes
   sintéticos, 2 canales, 7 días) con el resultado en el PR; referencia: menos de 100 ms por
   pedido en la PC de desarrollo (informativo, no es gate).
-- [ ] CA1.14: Canales en solo lectura (`GET /canales`, estado con
+- [x] CA1.14: Canales en solo lectura (`GET /canales`, estado con
   `GET /parcial/canales/estado` cada 5 s): una tarjeta por canal (nombre, lo que se pasó en
   `-canal`, "canal principal" o "canal extra", "EN VIVO" o "Esperando el próximo vivo",
   "Al aire: <programa> desde HH:MM · N.º vivo de hoy" o "Sin vivo desde HH:MM · buscando
@@ -269,7 +270,7 @@ lista falla hoy **en ejecución** (no por compilación): guardar esa salida para
   se cambian con -canal, -chat-seg-pico y -chat-seg (ver README)". **Ningún** `<form>`,
   `<input>`, `<select>`, `hx-post` ni botón "Guardar" — se verifica con
   `TestChannelsPageReadOnly`.
-- [ ] CA1.15: `EstimateQuota` y `LiveHours` (puras, en `quota.go`; adelantan CA2.7 y
+- [x] CA1.15: `EstimateQuota` y `LiveHours` (puras, en `quota.go`; adelantan CA2.7 y
   CA2.8 de canales-continuos). `LiveHours(samples, ids, peakFrom, peakTo, now)` = horas por
   día con al menos una muestra de esos canales (franjas de 5 min), últimos 7 días,
   separadas en pico y fuera; con menos de 24 h de historial devuelve 24 h y "sin
@@ -286,7 +287,7 @@ lista falla hoy **en ejecución** (no por compilación): guardar esa salida para
   `Budget − reserveForComments` y en `Budget`, `role="img"` con `aria-label`, y al lado
   "Usadas hoy: N" (contador real) — se verifica con `TestEstimateQuota`, `TestLiveHours` y
   un caso de `TestChannelsPageReadOnly`.
-- [ ] CA1.16: tarjeta "Análisis con Claude" en solo lectura: chip "Clave cargada" o "Falta
+- [x] CA1.16: tarjeta "Análisis con Claude" en solo lectura: chip "Clave cargada" o "Falta
   CLAUDE_API_KEY" o "Apagado (-claude-usd 0)" (nunca la clave ni parte de ella), modelo,
   tope, "Gastado hoy US$ x,xx", último análisis y último aviso de la 009, y `<details>`
   "Qué se le manda a Claude y qué se guarda" con lo que es verdad en esta etapa (un pedido
@@ -294,23 +295,23 @@ lista falla hoy **en ejecución** (no por compilación): guardar esa salida para
   `Server` el aviso de `claudeConfig` (un campo de texto), no la clave — se verifica con
   `TestChannelsClaudeReadOnly` (tabla con un `getenv` falso con clave testigo que no
   aparece en el HTML).
-- [ ] CA1.17: estilos: todo `var(--x)` que usan las plantillas está definido en `:root` y
+- [x] CA1.17: estilos: todo `var(--x)` que usan las plantillas está definido en `:root` y
   en el bloque oscuro; los `style="…"` de las plantillas solo llevan valores calculados
   (`width`, `left`, `flex-grow`) y no colores — se verifica con `TestTemplateTokens`
   (lee las plantillas embebidas con regex) — y los colores nuevos de "Diseño" están en los
   dos temas.
-- [ ] CA1.18: `/parcial/resumen` queda solo con estado (actualizado, error, nota global
+- [x] CA1.18: `/parcial/resumen` queda solo con estado (actualizado, error, nota global
   del chat) y sin tiles; `/parcial/extra` responde 404 — se verifica con
   `TestDashboardWithoutRemovedSections` y `TestSummaryWithoutActivityChart` actualizados.
-- [ ] CA1.19: la cuota de YouTube no cambia: `git diff main -- youtube.go` vacío; en
+- [x] CA1.19: la cuota de YouTube no cambia: `git diff main -- youtube.go` vacío; en
   `worker.go` solo se agrega `Input` a `ChannelStatus` (lo que se pasó en `-canal`), sin
   pedidos nuevos; `TestFlowAgainstFakeAPI` con el mismo `yt.Units`.
-- [ ] CA1.20: README (sección 3 reescrita por pantalla, rutas, archivos que copia la vista
+- [x] CA1.20: README (sección 3 reescrita por pantalla, rutas, archivos que copia la vista
   previa), AGENTS.md (mapa, rutas, estilo del dashboard, vista previa) y CLAUDE.md con los
   textos de "Reglas que cambian"; ADR 0007 y la línea de estado del ADR 0003 — se verifica
   con `git diff --stat main`, `grep -n "/programas" README.md AGENTS.md` y
   `grep -n "0007" docs/decisions/0003-*.md`.
-- [ ] CA1.21: la vista previa copia también `datos.vivos.jsonl` y `datos.analisis.jsonl`
+- [x] CA1.21: la vista previa copia también `datos.vivos.jsonl` y `datos.analisis.jsonl`
   (decisión 11) con los mismos nombres que deriva `OpenStore`, a la misma carpeta privada
   temporal (`0700`, dentro de `os.UserCacheDir()/yt-monitor-vista-previa/`), y se borran
   al cortarla como el resto; si alguno no existe en el origen, se sigue sin él y sin aviso

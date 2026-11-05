@@ -160,7 +160,12 @@ func main() {
 			addr = "localhost" + addr
 		}
 		log.Printf("Dashboard en http://%s (Ctrl+C para cortar)", addr)
-		check(http.ListenAndServe(addr, (&Server{st: st, budget: *budget, analyst: analyst}).Routes()))
+		// La pantalla Canales muestra los intervalos y estima la cuota; de Claude
+		// recibe solo el aviso de claudeConfig, nunca la clave.
+		srv := &Server{st: st, budget: *budget, analyst: analyst,
+			chat:       ChatSettings{Peak: time.Duration(*chatPeak) * time.Second, Off: time.Duration(*chatSeg) * time.Second, PeakFrom: peakFrom, PeakTo: peakTo},
+			claudeWarn: warn, claudeModel: *claudeModel, claudeUSD: *claudeUSD}
+		check(http.ListenAndServe(addr, srv.Routes()))
 		return
 	}
 

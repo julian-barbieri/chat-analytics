@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"html/template"
 	"log"
+	"math"
 	"net/http"
 	"net/url"
 	"sort"
@@ -22,9 +23,10 @@ var templatesFS embed.FS
 var staticFS embed.FS
 
 var tmpl = template.Must(template.New("").Funcs(template.FuncMap{
-	"hora":  func(t time.Time) string { return t.Local().Format("15:04") },
-	"fecha": func(t time.Time) string { return t.Local().Format("02/01 15:04") },
-	"miles": miles,
+	"hora":   func(t time.Time) string { return t.Local().Format("15:04") },
+	"fecha":  func(t time.Time) string { return t.Local().Format("02/01 15:04") },
+	"miles":  miles,
+	"plural": plural,
 }).ParseFS(templatesFS, "templates/*.html"))
 
 var categories = []string{CatPregunta, CatQueja, CatElogio, CatInsulto, CatSpam, CatOtro}
@@ -39,6 +41,26 @@ type Server struct {
 	budget  int
 	analyst *Analyst         // nil si el análisis con Claude está apagado
 	now     func() time.Time // nil: time.Now; los tests fijan la hora sin tocar time.Local
+	chat    ChatSettings     // -chat-seg-pico, -chat-seg y -pico, para mostrarlos y estimar la cuota
+	// Lo que dijo claudeConfig al arrancar (nunca la clave) y los flags de
+	// Claude, para la tarjeta de Canales cuando el análisis está apagado.
+	claudeWarn, claudeModel string
+	claudeUSD               float64
+}
+
+// ChatSettings son los intervalos del chat que usa el worker (WorkerConfig).
+type ChatSettings struct {
+	Peak, Off        time.Duration
+	PeakFrom, PeakTo int
+}
+
+// chatSettings devuelve los del Server o, si no se pasaron (los tests), los
+// valores por defecto de los flags.
+func (s *Server) chatSettings() ChatSettings {
+	if s.chat.Peak == 0 && s.chat.Off == 0 {
+		return ChatSettings{Peak: time.Minute, Off: 3 * time.Minute, PeakFrom: 7, PeakTo: 20}
+	}
+	return s.chat
 }
 
 func (s *Server) clock() time.Time {
@@ -51,11 +73,16 @@ func (s *Server) clock() time.Time {
 func (s *Server) Routes() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /{$}", s.page)
+	mux.HandleFunc("GET /programas", s.programsPage)
+	mux.HandleFunc("GET /canales", s.channelsPage)
 	mux.HandleFunc("GET /parcial/resumen", s.summary)
-	mux.HandleFunc("GET /parcial/extra", s.extra)
 	mux.HandleFunc("GET /parcial/vivo", s.liveSection)
+	mux.HandleFunc("GET /parcial/vivo/canal", s.liveChannel)
 	mux.HandleFunc("GET /parcial/vivo/chat", s.liveChat)
 	mux.HandleFunc("GET /parcial/vivo/analisis", s.liveAnalysis)
+	mux.HandleFunc("GET /parcial/programas", s.programsPartial)
+	mux.HandleFunc("GET /parcial/programas/detalle", s.programDetailPartial)
+	mux.HandleFunc("GET /parcial/canales/estado", s.channelsState)
 	mux.HandleFunc("POST /claude/analizar", s.claudeAnalyze)
 	mux.HandleFunc("GET /export.csv", s.export)
 	mux.Handle("GET /static/", http.FileServerFS(staticFS))
@@ -69,10 +96,15 @@ func (s *Server) render(w http.ResponseWriter, name string, data any) {
 	}
 }
 
+// page es la pantalla En vivo. La sección del canal va armada en la página
+// (sus lugares se llenan con htmx), así el orden de las tarjetas se ve en el HTML.
 func (s *Server) page(w http.ResponseWriter, r *http.Request) {
-	snap := s.st.Snapshot()
+	snap := s.st.Status()
 	q := r.URL.Query()
-	s.render(w, "page.html", map[string]any{"Channel": snap.Channel, "Canal": q.Get("canal"), "Vivo": q.Get("vivo")})
+	chanOf, _ := s.dayLives(snap, s.clock())
+	sel, _ := pickChannel(snap, q.Get("canal"), q.Get("vivo"), chanOf)
+	s.render(w, "page.html", map[string]any{"Tab": "vivo", "Channel": snap.Channel,
+		"Vivo": map[string]any{"Canal": sel.Canal, "Video": sel.Video}})
 }
 
 type Tile struct {
@@ -86,71 +118,40 @@ type Bar struct {
 	Class      string // clase CSS extra, por ejemplo "top"
 }
 
-// LiveRow es un vivo en curso con el estado de su chat.
-type LiveRow struct {
-	Video
-	Note string
-}
-
 type CatRow struct {
 	Key, Label string
 	N          int
 	Pct        float64
 }
 
+// summary es la franja de estado de arriba de cada pantalla: cuándo se
+// actualizó, el error de la API y la nota global del chat.
 func (s *Server) summary(w http.ResponseWriter, r *http.Request) {
-	snap := s.st.Snapshot()
-	now := time.Now()
-	startDay := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.Local)
-
-	var lives []LiveRow
-	for _, v := range snap.Videos {
-		if v.LiveStatus == "live" {
-			lives = append(lives, LiveRow{v, snap.ChatNotes[v.ID]})
-		}
-	}
-
-	today := since(snap.Msgs, startDay)
-	lastHour := since(snap.Msgs, now.Add(-time.Hour))
-	chat5 := 0
-	for _, m := range since(snap.Msgs, now.Add(-5*time.Minute)) {
-		if m.Source == "chat" {
-			chat5++
-		}
-	}
-	counts := map[string]int{}
-	for _, m := range today {
-		counts[Classify(m.Text)]++
-	}
-
-	tiles := []Tile{
-		{"Mensajes hoy", miles(len(today)), "comentarios + chat"},
-		{"Última hora", miles(len(lastHour)), ""},
-		{"Chat últimos 5 min", miles(chat5), ""},
-		{"Preguntas hoy", miles(counts[CatPregunta]), "para responder"},
-		{"Spam e insultos hoy", miles(counts[CatSpam] + counts[CatInsulto]), "a moderar"},
-		{"Cuota usada hoy", fmt.Sprintf("%s / %s", miles(snap.Units), miles(s.budget)), "se reinicia a las 04:00 o 05:00 (hora de Argentina)"},
-	}
-
-	maxCat := 1
-	for _, c := range categories {
-		maxCat = max(maxCat, counts[c])
-	}
-	var rows []CatRow
-	for _, c := range categories {
-		rows = append(rows, CatRow{c, catLabels[c], counts[c], float64(counts[c]) * 100 / float64(maxCat)})
-	}
-
+	snap := s.st.Status()
 	s.render(w, "resumen", map[string]any{
 		"Channel":  snap.Channel,
-		"Lives":    lives,
-		"Tiles":    tiles,
-		"Cats":     rows,
 		"ChatNote": snap.ChatNote,
 		"LastErr":  snap.LastErr,
 		"Updated":  snap.Updated,
 		"Started":  !snap.Updated.IsZero(),
 	})
+}
+
+// catRows cuenta las categorías por reglas de unos mensajes.
+func catRows(msgs []Message) []CatRow {
+	counts := map[string]int{}
+	for _, m := range msgs {
+		counts[Classify(m.Text)]++
+	}
+	peak := 1
+	for _, c := range categories {
+		peak = max(peak, counts[c])
+	}
+	var rows []CatRow
+	for _, c := range categories {
+		rows = append(rows, CatRow{c, catLabels[c], counts[c], float64(counts[c]) * 100 / float64(peak)})
+	}
+	return rows
 }
 
 // LiveButton es un botón para elegir qué se ve: un canal de -canal (Canal) o
@@ -366,15 +367,6 @@ func (s *Server) liveChat(w http.ResponseWriter, r *http.Request) {
 		s.render(w, "vivo", map[string]any{"Canal": sel.Canal, "Video": sel.Video, "Ver": ver, "Horas": hours})
 		return
 	}
-	var label string
-	var paused []string
-	for _, b := range btns {
-		if b.Active {
-			label = b.Label
-		} else {
-			paused = append(paused, b.Label)
-		}
-	}
 	// El feed es del canal: los vivos de hoy, así al cambiar de vivo no se
 	// pierde lo anterior.
 	var rows []ChatRow
@@ -383,15 +375,151 @@ func (s *Server) liveChat(w http.ResponseWriter, r *http.Request) {
 		rows = append(rows, ChatRow{m, c, catLabels[c], superLabels[m.Super]})
 	}
 	sort.SliceStable(rows, func(i, j int) bool { return rows[i].At.After(rows[j].At) })
-	var waiting string
-	if sel.Canal != "" && sel.Video == "" {
-		waiting = fmt.Sprintf("Esperando el próximo vivo de %s (%s). Mientras tanto queda lo de hoy.", channelName(sel.Ch), searchText(sel.Ch, now, s.quotaPaused(snap)))
-	}
 	s.render(w, "vivo-chat", map[string]any{
-		"Buttons": btns, "Label": label, "Paused": strings.Join(paused, ", "),
+		"Has": len(btns) > 0, "Waiting": sel.Canal != "" && sel.Video == "",
 		"Rows": rows, "Note": snap.ChatNotes[sel.Video], "ChatNote": snap.ChatNote,
-		"Banner": chatBanner(snap.ChatInfo, sel.Video, now), "Waiting": waiting,
+		"Banner": chatBanner(snap.ChatInfo, sel.Video, now), "Every": chatEvery(snap.ChatInfo, sel.Video),
 	})
+}
+
+// chatEvery es el resumen del encabezado del chat: cómo llega y cada cuánto
+// se le consulta a YouTube como mínimo (el detalle va en el cartel).
+func chatEvery(infos map[string]ChatInfo, id string) string {
+	ci, ok := infos[id]
+	switch {
+	case !ok || ci.Blocked:
+		return ""
+	case ci.RealTime:
+		return "llega en tiempo real continuo"
+	case ci.Stream:
+		return "llega en tiempo real · lectura mínima cada " + humanDur(ci.Gap)
+	}
+	return "se lee con consultas comunes · como mínimo cada " + humanDur(ci.Gap)
+}
+
+// ChannelCard es la tarjeta Canal de En vivo.
+type ChannelCard struct {
+	Buttons                         []LiveButton
+	Live                            bool
+	Program, Since, Nth, Href       string
+	Watching                        int64
+	Waiting, Banner, How, StripAria string
+	Strip                           []StripBlock
+}
+
+// liveChannel es la tarjeta Canal (cada 5 s). No recarga la sección: el que
+// detecta el cambio de vivo es el chat (cada 2 s), como antes.
+func (s *Server) liveChannel(w http.ResponseWriter, r *http.Request) {
+	snap := s.st.Status()
+	now := s.clock()
+	q := r.URL.Query()
+	chanOf, _ := s.dayLives(snap, now)
+	sel, btns := pickChannel(snap, q.Get("canal"), q.Get("video"), chanOf)
+	s.render(w, "vivo-canal", s.channelCard(snap, sel, btns, now))
+}
+
+// channelCard arma la tarjeta Canal: qué está al aire (o qué se espera), la
+// tira de hoy y cómo sale el canal según los últimos 7 días.
+func (s *Server) channelCard(snap Snapshot, sel liveSel, btns []LiveButton, now time.Time) ChannelCard {
+	c := ChannelCard{Buttons: btns}
+	var video Video
+	for _, v := range snap.Videos {
+		if v.ID == sel.Video && v.ID != "" {
+			video = v
+		}
+	}
+	if video.ID != "" {
+		c.Live, c.Href = true, "https://www.youtube.com/watch?v="+url.QueryEscape(video.ID)
+		if c.Program = ProgramName(video.Title, video.Channel); c.Program == "" {
+			c.Program = video.Title
+		}
+		c.Watching = video.Concurrent
+	}
+	if sel.Canal == "" {
+		return c // un vivo suelto: no tiene tira ni historial de canal
+	}
+	paused := s.quotaPaused(snap)
+	if video.ID == "" {
+		c.Waiting = fmt.Sprintf("Esperando el próximo vivo de %s (%s). Mientras tanto queda lo de hoy.", channelName(sel.Ch), searchText(sel.Ch, now, paused))
+	}
+	c.Watching = 0
+	for _, v := range snap.Videos {
+		if v.ChannelID == sel.Canal && v.LiveStatus == "live" {
+			c.Watching += v.Concurrent
+		}
+	}
+	week := s.st.Lives(now.Add(-7 * 24 * time.Hour))
+	live := liveOf(snap.Videos, sel.Canal)
+	from := dayStart(now)
+	day := dayStrip(ProgramSegments(week, sel.Canal, live, from, now), sel.Ch, from, now, paused)
+	c.Strip, c.Banner, c.StripAria = day["Blocks"].([]StripBlock), day["Banner"].(string), day["Aria"].(string)
+	segs := ProgramSegments(week, sel.Canal, live, claudeFrom(now), now)
+	if cur, ok := currentSegment(snap.Videos, segs, sel.Canal, sel.Video); ok && video.ID != "" {
+		c.Since = "desde las " + cur.Start.Local().Format("15:04")
+		c.Nth = nthLive(segs, cur.VideoID, now)
+	}
+	c.How = howItAirs(ProgramSegments(week, sel.Canal, live, now.Add(-7*24*time.Hour), now))
+	return c
+}
+
+// nthLive dice "2.º vivo de hoy" si el canal tuvo más de un vivo hoy.
+func nthLive(segs []Segment, video string, now time.Time) string {
+	var order []string
+	seen := map[string]bool{}
+	for _, sg := range segs {
+		if sg.State == SegNone || sg.End.Before(dayStart(now)) || seen[sg.VideoID] {
+			continue
+		}
+		seen[sg.VideoID] = true
+		order = append(order, sg.VideoID)
+	}
+	if len(order) < 2 {
+		return ""
+	}
+	for i, id := range order {
+		if id == video {
+			return fmt.Sprintf("%d.º vivo de hoy", i+1)
+		}
+	}
+	return ""
+}
+
+// Cómo sale un canal, según lo que se vio en los últimos 7 días.
+const (
+	airs24h     = "Un vivo de 24 h: el programa se toma del título, que cambia con cada uno"
+	airsPerShow = "Un vivo nuevo por programa: al cortarse uno, el monitor busca el siguiente"
+	airsUnknown = "Todavía no se vio un cambio de programa"
+)
+
+// howItAirs deduce cómo sale un canal con sus tramos: un mismo vivo con dos
+// o más programas es un vivo de 24 h; dos o más vivos en un mismo día, un
+// vivo por programa.
+func howItAirs(segs []Segment) string {
+	progs := map[string]map[string]bool{} // vivo → programas
+	byDay := map[time.Time]map[string]bool{}
+	for _, sg := range segs {
+		if sg.State == SegNone {
+			continue
+		}
+		if progs[sg.VideoID] == nil {
+			progs[sg.VideoID] = map[string]bool{}
+		}
+		progs[sg.VideoID][sg.Program] = true
+		if len(progs[sg.VideoID]) > 1 {
+			return airs24h
+		}
+		d := dayStart(sg.Start)
+		if byDay[d] == nil {
+			byDay[d] = map[string]bool{}
+		}
+		byDay[d][sg.VideoID] = true
+	}
+	for _, vids := range byDay {
+		if len(vids) > 1 {
+			return airsPerShow
+		}
+	}
+	return airsUnknown
 }
 
 // Banner es el cartel del vivo elegido: si el chat está conectado en tiempo
@@ -498,20 +626,96 @@ func (s *Server) liveAnalysis(w http.ResponseWriter, r *http.Request) {
 	msgs := sinceFor(snap.Msgs, id, now.Add(-24*time.Hour))
 	viewers := s.st.Viewers(id, now.Add(-24*time.Hour))
 	data := analysisData(msgs, viewers, []string{id}, snap.Videos, video.Concurrent, now, hours, scopeLast24)
-	data["Video"], data["Label"] = id, label
+	data["Video"], data["Label"], data["Span"] = id, label, label+" · últimas 24 h"
+	data["Monitor"] = monitorView(snap.Msgs, now)
 	// El análisis con Claude es por canal: un vivo suelto no lo tiene.
 	data["Claude"] = claudeView(claudeInput{Configured: s.analyst != nil, Status: snap.Claude, Now: now})
 	s.render(w, "vivo-analisis", data)
 }
 
-// scope es de qué mensajes habla el análisis, para los textos de las tarjetas.
-type scope struct{ of, in, window string }
+// scope es de qué mensajes habla el análisis, para los textos de las
+// tarjetas; short y typical van en las notas de los tiles.
+type scope struct{ of, in, window, short, typical string }
 
 var (
-	scopeLast24  = scope{"de las últimas 24 h", "en las últimas 24 h", "las últimas 24 h"}
-	scopeDay     = scope{"de hoy", "hoy", "lo de hoy (desde las 00:00)"}
-	scopeProgram = scope{"del programa en curso", "en el programa en curso", "el programa en curso"}
+	scopeLast24  = scope{"de las últimas 24 h", "en las últimas 24 h", "las últimas 24 h", "las últimas 24 h", "de las últimas 24 h"}
+	scopeDay     = scope{"de hoy", "hoy", "lo de hoy (desde las 00:00)", "el día", "del día"}
+	scopeProgram = scope{"del programa en curso", "en el programa en curso", "el programa en curso", "este programa", "de este programa"}
 )
+
+// monitorView es el bloque "Todo el monitor · últimas 24 h": categorías,
+// palabras y autores de todos los mensajes (también comentarios y otros canales).
+func monitorView(all []Message, now time.Time) map[string]any {
+	day := since(all, now.Add(-24*time.Hour))
+	return map[string]any{"Total": len(day), "Cats": catRows(day), "Words": TopWords(day, 20), "Authors": TopAuthors(day, 10)}
+}
+
+// liveTiles son los números de arriba del análisis, sobre los mensajes ya
+// filtrados por el selector. Lo "típico" es la mediana de las franjas de
+// 5 min anteriores con mensajes, y solo se dice con al menos 6.
+func liveTiles(msgs []Message, concurrent int64, sc scope, now time.Time) []Tile {
+	slots := map[int]int{}
+	people, recent := map[string]bool{}, map[string]bool{}
+	supers, questions := 0, 0
+	byCur := map[string]int64{}
+	for _, m := range msgs {
+		people[m.Author] = true
+		if m.Super != "" {
+			supers++
+			byCur[m.Currency] += m.AmountMicros
+		}
+		if Classify(m.Text) == CatPregunta {
+			questions++
+		}
+		if m.Source != "chat" || m.At.After(now) {
+			continue
+		}
+		k := int(now.Sub(m.At) / slotStep)
+		slots[k]++
+		if k == 0 {
+			recent[m.Author] = true
+		}
+	}
+	var past []float64
+	for k, n := range slots {
+		if k > 0 {
+			past = append(past, float64(n))
+		}
+	}
+	rate := "en los últimos 5 min"
+	if len(past) >= 6 {
+		if typ := median(past); typ > 0 {
+			diff := math.Round((float64(slots[0]) - typ) / typ * 100)
+			word := "sobre"
+			if diff < 0 {
+				diff, word = -diff, "bajo"
+			}
+			rate = fmt.Sprintf("%.0f %% %s lo típico %s", diff, word, sc.typical)
+		}
+	}
+	watching, wnote := "—", "sin dato de espectadores"
+	if concurrent > 0 {
+		watching = miles(concurrent)
+		wnote = pct(float64(len(recent))*100/float64(concurrent)) + " escribió en los últimos 5 min"
+	}
+	var snote string
+	switch len(byCur) {
+	case 0:
+	case 1:
+		for c, v := range byCur {
+			snote = currencyLabel(c) + " " + money(v)
+		}
+	default:
+		snote = fmt.Sprintf("en %d monedas", len(byCur))
+	}
+	return []Tile{
+		{"Mensajes por minuto", decimal(float64(slots[0]) / 5), rate},
+		{"Personas que escribieron", miles(len(people)), "en " + sc.short},
+		{"Mirando ahora", watching, wnote},
+		{"Super Chats", miles(supers), snote},
+		{"Preguntas", miles(questions), "por reglas"},
+	}
+}
 
 // analysisData arma las tarjetas del análisis con los mensajes ya filtrados
 // (de un vivo, del día del canal o del programa en curso).
@@ -529,6 +733,7 @@ func analysisData(msgs []Message, viewers []ViewerSample, ids []string, videos [
 	return map[string]any{
 		"Hours": hours, "A": a, "Topics": bars(a.Topics), "Tech": bars(a.Tech),
 		"FilterLine": strings.Join(filterLine, ", "), "Part": part, "Super": sup,
+		"Tiles": liveTiles(msgs, concurrent, sc, now), "Cats": catRows(msgs),
 	}
 }
 
@@ -585,7 +790,7 @@ func (s *Server) channelAnalysis(w http.ResponseWriter, snap Snapshot, ch Channe
 		msgs = segmentMessages(snap.Msgs, Segment{VideoID: v.ID, Program: prog, Start: start, State: SegLive}, titles)
 		start = start.Add(-segmentLead)
 		viewers, pids, concurrent = s.st.Viewers(v.ID, start), []string{v.ID}, v.Concurrent
-		span, sc = prog+" (programa en curso)", scopeProgram
+		span, sc = programLabel(prog)+" (programa en curso)", scopeProgram
 	} else {
 		if ver == "programa" {
 			note = "No hay un programa al aire ahora: se muestra todo el día del canal."
@@ -605,7 +810,7 @@ func (s *Server) channelAnalysis(w http.ResponseWriter, snap Snapshot, ch Channe
 		for _, v := range lives {
 			concurrent += v.Concurrent
 		}
-		span = "hoy"
+		span = "todo el día del canal"
 	}
 	video := ""
 	if len(lives) > 0 {
@@ -613,13 +818,31 @@ func (s *Server) channelAnalysis(w http.ResponseWriter, snap Snapshot, ch Channe
 	}
 	data := analysisData(msgs, viewers, pids, snap.Videos, concurrent, now, hours, sc)
 	data["Canal"], data["Video"], data["Ver"], data["Label"], data["Span"], data["Note"] = ch.ID, video, ver, channelName(ch), span, note
-	data["Day"] = dayStrip(segs, ch, from, now, s.quotaPaused(snap))
+	data["Monitor"] = monitorView(snap.Msgs, now)
 	cardVer := "dia"
 	if ver == "programa" && len(lives) > 0 {
 		cardVer = "programa"
 	}
 	data["Claude"] = s.claudeCard(snap, ch, video, cardVer, local, "")
+	data["ClaudeLine"] = s.claudeLine(snap, ch.ID, now)
 	s.render(w, "vivo-analisis", data)
+}
+
+// claudeLine es la línea de Claude debajo del selector, con el análisis activo.
+func (s *Server) claudeLine(snap Snapshot, canal string, now time.Time) string {
+	if s.analyst == nil || snap.Claude.Off != "" {
+		return ""
+	}
+	var last time.Time
+	for _, a := range s.st.Analyses(canal, claudeFrom(now)) {
+		if !a.To.Before(dayStart(now)) && a.At.After(last) {
+			last = a.At
+		}
+	}
+	if last.IsZero() {
+		return "resumen al cerrar cada programa · todavía sin análisis hoy"
+	}
+	return "resumen al cerrar cada programa · último análisis " + last.Local().Format("15:04")
 }
 
 // claudeAnalyze es el botón "Analizar ahora": solo valida y encola. Nunca
@@ -1119,16 +1342,11 @@ func decimal(f float64) string {
 
 func pct(f float64) string { return decimal(f) + " %" }
 
-func (s *Server) extra(w http.ResponseWriter, r *http.Request) {
-	snap := s.st.Snapshot()
-	day := since(snap.Msgs, time.Now().Add(-24*time.Hour))
-	s.render(w, "extra", map[string]any{
-		"Words":   TopWords(day, 20),
-		"Authors": TopAuthors(day, 10),
-	})
-}
-
 func (s *Server) export(w http.ResponseWriter, r *http.Request) {
+	if key := r.URL.Query().Get("tramo"); key != "" {
+		s.exportProgram(w, key, r.URL.Query().Get("dia"))
+		return
+	}
 	snap := s.st.Snapshot()
 	titles := videoTitles(snap.Videos)
 	w.Header().Set("Content-Type", "text/csv; charset=utf-8")
@@ -1179,6 +1397,8 @@ func miles(n any) string {
 // ClaudeCard es la tarjeta 7, "Análisis con Claude". Todo va como string:
 // html/template escapa los textos del modelo y de los usuarios.
 type ClaudeCard struct {
+	Title          string
+	DayLink        string // con "Todo el día del canal": link a Programas, lo único que se muestra
 	Off            string // apagado o no disponible: lo único que se muestra
 	Active         bool   // el análisis está activo (cambia la nota de la tarjeta 2)
 	Note, Notice   string // el estado y la respuesta a un pedido del botón que no entró
@@ -1230,15 +1450,25 @@ const claudeOffText = "El análisis con Claude está apagado. Para activarlo, mi
 // del tramo al aire y el botón; con "Todo el día", un bloque por programa.
 func claudeView(in claudeInput) ClaudeCard {
 	st := in.Status
+	title := "Resumen de Claude del programa en curso"
+	switch {
+	case in.Canal == "":
+		title = "Resumen de Claude"
+	case in.Ver == "dia":
+		title = "Resúmenes de Claude"
+	}
 	switch {
 	case !in.Configured:
-		return ClaudeCard{Off: claudeOffText}
+		return ClaudeCard{Title: title, Off: claudeOffText}
 	case st.Off != "":
-		return ClaudeCard{Off: "El análisis con Claude se apagó hasta reiniciar el monitor. " + st.Off}
+		return ClaudeCard{Title: title, Off: "El análisis con Claude se apagó hasta reiniciar el monitor. " + st.Off}
 	case in.Canal == "":
-		return ClaudeCard{Off: "El análisis con Claude es por canal: elegí el botón del canal para verlo."}
+		return ClaudeCard{Title: title, Off: "El análisis con Claude es por canal: elegí el botón del canal para verlo."}
+	case in.Ver == "dia":
+		// Los resúmenes de cada programa del día se ven en Programas de hoy.
+		return ClaudeCard{Title: title, Active: true, DayLink: "/programas?" + url.Values{"canal": {in.Canal}}.Encode()}
 	}
-	c := ClaudeCard{Active: true, Notice: in.Notice, LastErr: st.LastErr,
+	c := ClaudeCard{Title: title, Active: true, Notice: in.Notice, LastErr: st.LastErr,
 		Spent: "Gastado hoy en Claude: US$ " + usd(st.Spent) + " de " + usd(st.Tope)}
 	if st.Capped {
 		c.Note = "Se llegó al tope de gasto de Claude de hoy (US$ " + usd(st.Tope) + "): se retoma mañana"
@@ -1249,22 +1479,6 @@ func claudeView(in claudeInput) ClaudeCard {
 		if b, ok := best[a.Key]; !ok || b.Partial || !a.Partial {
 			best[a.Key] = a
 		}
-	}
-	if in.Ver == "dia" {
-		var list []ClaudeAnalysis
-		for _, a := range best {
-			if !a.To.Before(dayStart(in.Now)) {
-				list = append(list, a)
-			}
-		}
-		sort.Slice(list, func(i, j int) bool { return list[i].From.Before(list[j].From) })
-		for _, a := range list {
-			c.Blocks = append(c.Blocks, claudeBlock(a, in.Msgs, true))
-		}
-		if len(c.Blocks) == 0 && c.Note == "" {
-			c.Note = "Todavía no hay programas de hoy analizados: cada programa se analiza solo cuando termina."
-		}
-		return c
 	}
 	key := segmentKey(in.Canal, in.Cur)
 	busy := in.HasCur && st.Busy == key
@@ -1339,4 +1553,204 @@ func plural(n int, one, many string) string {
 		return "1 " + one
 	}
 	return miles(n) + " " + many
+}
+
+// Pantalla Canales, en solo lectura: los canales se cambian con -canal y los
+// intervalos con -chat-seg-pico y -chat-seg. Nada acá escribe ni llama a la API.
+
+// ChannelRow es la tarjeta de un canal en Canales.
+type ChannelRow struct {
+	Name, Input, Role string
+	Live              bool
+	Status, How       string
+	Hours, Chat       string
+}
+
+// QuotaPart es un pedazo de la barra de cuota (Class elige el color).
+type QuotaPart struct {
+	Class, Label, N string
+	W               float64 // % de quotaScale
+}
+
+// chatText describe los intervalos del chat, que valen para todos los vivos.
+func chatText(cs ChatSettings) string {
+	if cs.PeakFrom == cs.PeakTo {
+		return "cada " + humanDur(cs.Off) + " todo el día (sin horario pico), por turnos entre todos los vivos"
+	}
+	return fmt.Sprintf("cada %s en el pico (%02d a %02d h) y cada %s fuera, por turnos entre todos los vivos",
+		humanDur(cs.Peak), cs.PeakFrom, cs.PeakTo, humanDur(cs.Off))
+}
+
+var weekdayShort = [...]string{"dom", "lun", "mar", "mié", "jue", "vie", "sáb"}
+
+// hoursText son las horas en vivo de cada uno de los últimos 7 días.
+func hoursText(lh HoursOnAir) string {
+	if lh.NoHistory {
+		return "sin historial (para la cuota se suponen 24 h en vivo)"
+	}
+	var parts []string
+	for _, d := range lh.Days {
+		parts = append(parts, fmt.Sprintf("%s %s: %s h", weekdayShort[d.Day.Weekday()], d.Day.Format("02/01"), decimal(d.Hours)))
+	}
+	return strings.Join(parts, " · ")
+}
+
+func (s *Server) channelsPage(w http.ResponseWriter, r *http.Request) {
+	now := s.clock()
+	snap := s.st.Status()
+	data := s.channelsData(snap, now)
+	data["Tab"], data["Channel"] = "canales", snap.Channel
+	data["Claude"] = s.claudeSetup(snap, now)
+	data["FastEvery"], data["FastFor"], data["FastMax"] = humanDur(fastEvery), humanDur(fastFor), fastUnitsPerCut()
+	every := 3 * time.Minute
+	for _, c := range snap.Channels {
+		if c.Every > 0 {
+			every = c.Every
+		}
+	}
+	data["Every"] = humanDur(every)
+	s.render(w, "canales.html", data)
+}
+
+// channelsState es el estado de los canales y la cuota (cada 5 s).
+func (s *Server) channelsState(w http.ResponseWriter, r *http.Request) {
+	s.render(w, "canales-estado", s.channelsData(s.st.Status(), s.clock()))
+}
+
+// channelsData arma las tarjetas de los canales y la cuota estimada.
+func (s *Server) channelsData(snap Snapshot, now time.Time) map[string]any {
+	cs := s.chatSettings()
+	week := s.st.Lives(now.Add(-7 * 24 * time.Hour))
+	paused := s.quotaPaused(snap)
+	ids := map[string]bool{}
+	var rows []ChannelRow
+	for i, ch := range snap.Channels {
+		ids[ch.ID] = true
+		row := ChannelRow{Name: channelName(ch), Input: ch.Input, Role: "canal extra", Chat: chatText(cs)}
+		if row.Input == "" {
+			row.Input = ch.ID
+		}
+		if i == 0 {
+			row.Role = "canal principal"
+		}
+		live := liveOf(snap.Videos, ch.ID)
+		row.Live = len(live) > 0
+		segs := ProgramSegments(week, ch.ID, live, claudeFrom(now), now)
+		if cur, ok := currentSegment(snap.Videos, segs, ch.ID, ""); row.Live {
+			row.Status = "Al aire"
+			if ok {
+				row.Status += ": " + programLabel(cur.Program) + " desde " + cur.Start.Local().Format("15:04")
+				if n := nthLive(segs, cur.VideoID, now); n != "" {
+					row.Status += " · " + n
+				}
+			}
+		} else {
+			row.Status = "Sin vivo"
+			if !ch.WaitSince.IsZero() {
+				row.Status += " desde " + ch.WaitSince.Local().Format("15:04")
+			}
+			row.Status += " · " + searchText(ch, now, paused)
+		}
+		row.How = howItAirs(ProgramSegments(week, ch.ID, live, now.Add(-7*24*time.Hour), now))
+		row.Hours = hoursText(LiveHours(week, map[string]bool{ch.ID: true}, cs.PeakFrom, cs.PeakTo, now))
+		rows = append(rows, row)
+	}
+	budget := s.budget
+	if budget <= 0 {
+		budget = 9000
+	}
+	// En esta etapa todos los vivos se leen por turnos: un solo grupo con las
+	// horas en vivo de la unión de los canales.
+	lh := LiveHours(week, ids, cs.PeakFrom, cs.PeakTo, now)
+	q := EstimateQuota(len(snap.Channels), lh.Cuts, []ChatGroup{{PeakEvery: cs.Peak, OffEvery: cs.Off, PeakHours: lh.Peak, OffHours: lh.Off}}, budget)
+	parts := []QuotaPart{
+		{"q-vid", "Revisar videos y vivos", miles(q.Videos + q.Fast), 0},
+		{"q-com", "Comentarios", "~" + miles(q.Comments), 0},
+		{"q-chat", "Chat de todos los vivos (por turnos)", miles(q.Chat[0]), 0},
+	}
+	left := 100.0
+	for i, n := range []int{q.Videos + q.Fast, q.Comments, q.Chat[0]} {
+		parts[i].W = min(float64(n)*100/quotaScale, left)
+		left -= parts[i].W
+	}
+	hours := "sin historial: se suponen 24 h en vivo"
+	if !lh.NoHistory {
+		hours = fmt.Sprintf("%s h en vivo por día en el pico y %s h fuera, según los últimos 7 días", decimal(lh.Peak), decimal(lh.Off))
+	}
+	return map[string]any{
+		"Rows": rows, "Quota": q, "Parts": parts, "Hours": hours, "Used": miles(snap.Units),
+		"Total": miles(q.Total), "Limit": miles(q.Limit), "Budget": miles(budget),
+		"LimitX": float64(q.Limit) * 100 / quotaScale, "BudgetX": float64(budget) * 100 / quotaScale,
+		"Aria": fmt.Sprintf("Cuota estimada por día: %s unidades de %s (videos y vivos %s, comentarios %s, chat %s); el chat se pausa en %s y todo se frena en %s",
+			miles(q.Total), miles(quotaScale), miles(q.Videos+q.Fast), miles(q.Comments), miles(q.Chat[0]), miles(q.Limit), miles(budget)),
+		"ChatNow": chatNow(cs, now), "Reserve": miles(reserveForComments),
+	}
+}
+
+// chatNow es el intervalo que vale en este momento.
+func chatNow(cs ChatSettings, now time.Time) string {
+	if peakHour(now.Local().Hour(), cs.PeakFrom, cs.PeakTo) {
+		return "Ahora: cada " + humanDur(cs.Peak) + " (horario pico)."
+	}
+	return "Ahora: cada " + humanDur(cs.Off) + " (fuera del horario pico)."
+}
+
+// ClaudeSetup es la tarjeta "Análisis con Claude" de Canales: nunca la clave
+// ni parte de ella, solo si está cargada.
+type ClaudeSetup struct {
+	Chip, ChipClass    string
+	Model, Tope, Spent string
+	Last, Warn         string
+}
+
+func (s *Server) claudeSetup(snap Snapshot, now time.Time) ClaudeSetup {
+	st := snap.Claude
+	c := ClaudeSetup{Model: s.claudeModel, Spent: "US$ " + usd(st.Spent), Tope: "sin tope (apagado)", Warn: s.claudeWarn}
+	if c.Model == "" {
+		c.Model = defaultClaudeModel
+	}
+	switch {
+	case s.analyst != nil && st.Off != "":
+		// Claude rechazó la clave o el modelo: el análisis no corre hasta reiniciar.
+		c.Chip, c.ChipClass = "Apagado hasta reiniciar", "warn"
+		if st.Model != "" {
+			c.Model = st.Model
+		}
+		c.Tope = "US$ " + usd(st.Tope) + " por día"
+	case s.analyst != nil:
+		c.Chip, c.ChipClass = "Clave cargada", "ok"
+		if st.Model != "" {
+			c.Model = st.Model
+		}
+		c.Tope = "US$ " + usd(st.Tope) + " por día"
+	case strings.Contains(s.claudeWarn, "CLAUDE_API_KEY"):
+		c.Chip, c.ChipClass = "Falta CLAUDE_API_KEY", "warn"
+	case s.claudeUSD == 0 && s.claudeWarn == "":
+		c.Chip, c.ChipClass = "Apagado (-claude-usd 0)", "off"
+	default:
+		c.Chip, c.ChipClass = "Apagado", "off"
+	}
+	if s.analyst == nil && s.claudeUSD > 0 {
+		c.Tope = "US$ " + usd(int64(math.Round(s.claudeUSD*1e6))) + " por día (apagado)"
+	}
+	switch {
+	case st.Off != "":
+		c.Warn = st.Off
+	case st.LastErr != "":
+		c.Warn = st.LastErr
+	}
+	var last ClaudeAnalysis
+	var lastCh string
+	for _, ch := range snap.Channels {
+		for _, a := range s.st.Analyses(ch.ID, claudeFrom(now)) {
+			if !a.To.Before(dayStart(now)) && a.At.After(last.At) {
+				last, lastCh = a, channelName(ch)
+			}
+		}
+	}
+	c.Last = "Todavía no hubo análisis hoy."
+	if !last.At.IsZero() {
+		c.Last = fmt.Sprintf("Último análisis: %s, %s de %s.", last.At.Local().Format("15:04"), programLabel(last.Program), lastCh)
+	}
+	return c
 }

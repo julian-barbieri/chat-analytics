@@ -12,6 +12,7 @@ import (
 	"math"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"regexp"
 	"slices"
@@ -574,10 +575,16 @@ func TestLiveChatSelection(t *testing.T) {
 
 	w := get("/parcial/vivo/chat?canal=UC2&video=v2")
 	body := w.Body.String()
-	if w.Header().Get("HX-Retarget") != "" || !strings.Contains(body, "Mostrando Otra Radio · en vivo") ||
-		!strings.Contains(body, "En pausa: Radio Test · en vivo") || !strings.Contains(body, "hola desde la tarde") ||
-		strings.Contains(body, "hola desde la mañana") {
+	if w.Header().Get("HX-Retarget") != "" || !strings.Contains(body, "hola desde la tarde") || strings.Contains(body, "hola desde la mañana") {
 		t.Errorf("chat de UC2:\n%s", body)
+	}
+	// Los botones van en la tarjeta Canal: UC2 apretado y UC1 no.
+	card := get("/parcial/vivo/canal?canal=UC2&video=v2").Body.String()
+	if on, ok := pressedBtn(card, "/parcial/vivo?canal=UC2"); !on || !ok {
+		t.Errorf("tarjeta Canal de UC2 sin su botón apretado:\n%s", card)
+	}
+	if on, ok := pressedBtn(card, "/parcial/vivo?canal=UC1"); on || !ok || !strings.Contains(card, "Los demás canales se siguen leyendo y guardando") {
+		t.Errorf("tarjeta Canal de UC2: el botón de UC1:\n%s", card)
 	}
 	// Un link viejo a un vivo que terminó elige el canal de ese vivo, no el
 	// primero que esté en vivo de cualquier canal.
@@ -586,13 +593,15 @@ func TestLiveChatSelection(t *testing.T) {
 		strings.Contains(w.Body.String(), "UC2") {
 		t.Errorf("vivo terminado: retarget %q\n%s", w.Header().Get("HX-Retarget"), w.Body.String())
 	}
-	if body := get("/parcial/vivo/analisis?canal=UC1&video=v1").Body.String(); !strings.Contains(body, "Análisis de Radio Test") {
+	if body := get("/parcial/vivo/analisis?canal=UC1&video=v1").Body.String(); !strings.Contains(body, "Análisis de LA MAÑANA (programa en curso)") ||
+		!strings.Contains(body, "Radio Test · 1 mensaje") {
 		t.Errorf("análisis de UC1:\n%s", body)
 	}
 }
 
-// El resumen ya no trae el gráfico de mensajes cada 5 minutos (lo pidió el usuario),
-// pero sigue mostrando las categorías.
+// El resumen ya no trae el gráfico de mensajes cada 5 minutos (lo pidió el
+// usuario) y, desde las tres pantallas (CA1.18), es solo la franja de estado:
+// sin tiles ni categorías.
 func TestSummaryWithoutActivityChart(t *testing.T) {
 	st, err := OpenStore(t.TempDir() + "/datos.jsonl")
 	if err != nil {
@@ -602,8 +611,13 @@ func TestSummaryWithoutActivityChart(t *testing.T) {
 	w := httptest.NewRecorder()
 	(&Server{st: st, budget: 9000}).Routes().ServeHTTP(w, httptest.NewRequest("GET", "/parcial/resumen", nil))
 	body := w.Body.String()
-	if w.Code != 200 || strings.Contains(body, "Mensajes cada 5 minutos") || !strings.Contains(body, "Categorías de hoy") {
+	if w.Code != 200 || !strings.Contains(body, "Actualizado ") {
 		t.Errorf("resumen (%d):\n%s", w.Code, body)
+	}
+	for _, not := range []string{"Mensajes cada 5 minutos", "Categorías de hoy", `class="tiles"`, "Mensajes hoy", "Cuota usada hoy", `class="lives"`} {
+		if strings.Contains(body, not) {
+			t.Errorf("el resumen no debería tener %q", not)
+		}
 	}
 }
 
@@ -630,10 +644,11 @@ func TestDashboardWithoutRemovedSections(t *testing.T) {
 		path      string
 		want, not []string
 	}{
-		{"/", []string{"/parcial/extra"}, []string{"Últimos mensajes", "/parcial/feed", `name="fuente"`}},
-		{"/parcial/extra", []string{"Palabras más repetidas", "Quiénes más escriben"}, []string{"Chat por programa", "Videos recientes"}},
-		{"/parcial/vivo/analisis?video=v1", []string{"4. Filtros para YouTube Studio", "5. Momentos con más participación"},
-			[]string{"Spam e insultos repetidos", "6. Momentos"}},
+		{"/", nil, []string{"Últimos mensajes", "/parcial/feed", `name="fuente"`, "/parcial/extra"}},
+		// Palabras y autores pasaron al bloque "Todo el monitor" del análisis (CA1.18).
+		{"/parcial/vivo/analisis?video=v1", []string{"Filtros para YouTube Studio", "Momentos con más participación",
+			"Todo el monitor · últimas 24 h", "Palabras más repetidas", "Quiénes más escriben"},
+			[]string{"Spam e insultos repetidos", "4. Filtros", "5. Momentos", "Chat por programa", "Videos recientes"}},
 	}
 	for _, c := range cases {
 		w := get(c.path)
@@ -649,8 +664,10 @@ func TestDashboardWithoutRemovedSections(t *testing.T) {
 			}
 		}
 	}
-	if w := get("/parcial/feed"); w.Code != 404 {
-		t.Errorf("/parcial/feed = %d, quería 404", w.Code)
+	for _, path := range []string{"/parcial/feed", "/parcial/extra"} {
+		if w := get(path); w.Code != 404 {
+			t.Errorf("%s = %d, quería 404", path, w.Code)
+		}
 	}
 }
 
@@ -2369,10 +2386,10 @@ func TestParticipationViewersView(t *testing.T) {
 	}
 }
 
-// section5 recorta la tarjeta 5 del parcial de análisis.
+// section5 recorta la tarjeta de momentos (la que era la 5) del parcial de análisis.
 func section5(t *testing.T, body string) string {
 	t.Helper()
-	i := strings.Index(body, "5. Momentos con más participación")
+	i := strings.Index(body, `id="momentos"`)
 	if i < 0 {
 		t.Fatalf("no está la tarjeta 5")
 	}
@@ -2463,7 +2480,7 @@ func TestLiveParticipationView(t *testing.T) {
 		"<title>" + span + " · LA MAÑANA · 6 mensajes · 6 personas · 150 mirando (4,0 %) · N.º 1 de los 5 con más participación</title>",
 		"sin dato de espectadores", `class="bar top"`, `class="pmarks"`, `>1</span>`, `class="pticks"`,
 		"Participación típica del vivo: 4,0 %", "150 mirando ahora", "máx. 4,0 %",
-		"<th>Momento</th>", "<td class=\"n\">150</td>", "<td class=\"n\">6</td>", "4,0 %",
+		"<th scope=\"col\">Momento</th>", "<td class=\"n\">150</td>", "<td class=\"n\">6</td>", "4,0 %",
 		peak.Local().Format("02/01 15:04") + " a " + peak.Add(5*time.Minute).Local().Format("15:04"), "LA MAÑANA",
 		`<tr class="det"><td colspan="4">`, "Para el reel:", `target="_blank" rel="noopener"`,
 		// v1 está en curso: YouTube ignora t=, así que se linkea el vivo y se dice cuánto retroceder.
@@ -3370,7 +3387,7 @@ func TestLiveAnalysisSuper(t *testing.T) {
 	)
 	body := getBody(h, "/parcial/vivo/analisis?video=v1")
 	for _, want := range []string{
-		"6. Super Chats y Super Stickers",
+		"<h2>Super Chats y Super Stickers</h2>",
 		"<th>Moneda</th><th class=\"n\">Cantidad</th><th class=\"n\">Total</th>",
 		"<th>Programa</th><th>Moneda</th><th class=\"n\">Cantidad</th><th class=\"n\">Total</th>",
 		"<td>ARS</td><td class=\"n\">2</td><td class=\"n\">8.500,00</td>",
@@ -3395,7 +3412,7 @@ func TestLiveAnalysisSuper(t *testing.T) {
 
 	empty := getBody(superStore(t, Message{ID: "c1", Source: "chat", VideoID: "v1", Author: "Ana", Text: "hola", At: now}),
 		"/parcial/vivo/analisis?video=v1")
-	if !strings.Contains(empty, "6. Super Chats y Super Stickers") ||
+	if !strings.Contains(empty, "<h2>Super Chats y Super Stickers</h2>") ||
 		!strings.Contains(empty, "Sin Super Chats ni Super Stickers en las últimas 24 h.") || strings.Contains(empty, "<th>Moneda</th>") {
 		t.Errorf("sin pagos:\n%s", empty)
 	}
@@ -3610,11 +3627,16 @@ func TestLiveChatByChannel(t *testing.T) {
 	}
 
 	// B con su vivo nuevo: el feed junta los dos vivos de B de hoy y nada de A.
-	check("B en vivo", get("/parcial/vivo/chat?canal=UCB&video=b2"), "", []string{
-		"Mostrando Radio B · en vivo", "hola desde B1", "hola desde B2",
+	check("B en vivo", get("/parcial/vivo/chat?canal=UCB&video=b2"), "", []string{"hola desde B1", "hola desde B2"},
+		[]string{"hola desde A", "hola suelto", "chat de un video viejo"})
+	// Los botones van en la tarjeta Canal, que nunca recarga la sección (CA1.3).
+	check("tarjeta de B", get("/parcial/vivo/canal?canal=UCB&video=b2"), "", []string{
 		`hx-get="/parcial/vivo?canal=UCA"`, `hx-push-url="/?canal=UCB"`, `hx-get="/parcial/vivo?video=x1"`, `hx-push-url="/?vivo=x1"`,
-		"En pausa: Radio A · en vivo, OTRA COSA en VIVO",
-	}, []string{"hola desde A", "hola suelto", "chat de un video viejo"})
+		">Radio A · en vivo</button>", ">Radio B · en vivo</button>", ">OTRA COSA en VIVO</button>", "Los demás canales se siguen leyendo y guardando",
+	}, []string{"En pausa", "Mostrando"})
+	if on, _ := pressedBtn(get("/parcial/vivo/canal?canal=UCB&video=b2").Body.String(), "/parcial/vivo?canal=UCB"); !on {
+		t.Errorf("tarjeta de B: el botón de B no está apretado")
+	}
 	// La vista seguía en b1, que terminó: se recarga la sección del mismo canal
 	// con b2, conservando lo elegido en el análisis (que el chat manda con hx-include).
 	check("B cambió de vivo", get("/parcial/vivo/chat?canal=UCB&video=b1&ver=dia&horas=24"), "#vivo",
@@ -3622,14 +3644,18 @@ func TestLiveChatByChannel(t *testing.T) {
 			`hx-get="/parcial/vivo/analisis?canal=UCB&video=b2&ver=dia&horas=24"`}, []string{"canal=UCA", "video=a1"})
 	// Un pedido solo con video= de un vivo en curso del canal (un link de
 	// antes) muestra ese chat sin recargar la sección.
-	check("solo video= en curso", get("/parcial/vivo/chat?video=b2"), "", []string{"Mostrando Radio B · en vivo", "hola desde B2", "hola desde B1"},
+	check("solo video= en curso", get("/parcial/vivo/chat?video=b2"), "", []string{"hola desde B2", "hola desde B1"},
 		[]string{"hola desde A"})
 	// ?vivo= de un vivo terminado elige el canal de ese vivo.
 	check("link viejo", get("/parcial/vivo?video=b1"), "", []string{`hx-get="/parcial/vivo/chat?canal=UCB&video=b2"`}, []string{"canal=UCA"})
 	check("link a un vivo de A", get("/parcial/vivo?video=a1"), "", []string{`canal=UCA&video=a1`}, []string{"canal=UCB"})
 	// El vivo suelto (CA1.11): botón propio y su chat solo.
-	check("suelto", get("/parcial/vivo/chat?video=x1"), "", []string{"Mostrando OTRA COSA en VIVO", "hola suelto", `hx-get="/parcial/vivo?canal=UCB"`},
-		[]string{"hola desde A", "hola desde B"})
+	check("suelto", get("/parcial/vivo/chat?video=x1"), "", []string{"hola suelto"}, []string{"hola desde A", "hola desde B"})
+	if card := get("/parcial/vivo/canal?video=x1").Body.String(); !strings.Contains(card, `hx-get="/parcial/vivo?canal=UCB"`) {
+		t.Errorf("suelto: la tarjeta Canal no tiene el botón de B:\n%s", card)
+	} else if on, _ := pressedBtn(card, "/parcial/vivo?video=x1"); !on {
+		t.Errorf("suelto: el botón del vivo suelto no está apretado")
+	}
 
 	// B se queda sin vivo: espera el próximo sin saltar a A y muestra lo de hoy.
 	st.SetChannels([]ChannelStatus{{ID: "UCA", Name: "Radio A", Live: true},
@@ -3637,10 +3663,12 @@ func TestLiveChatByChannel(t *testing.T) {
 	st.SetVideos("Radio A", []Video{a1, x1})
 	check("B sin vivo, venía de b2", get("/parcial/vivo/chat?canal=UCB&video=b2"), "#vivo",
 		[]string{`hx-get="/parcial/vivo/chat?canal=UCB&video="`}, []string{"canal=UCA", "video=a1"})
-	check("B esperando", get("/parcial/vivo/chat?canal=UCB&video="), "", []string{
-		"Mostrando Radio B · esperando el próximo vivo", "Esperando el próximo vivo de Radio B",
-		"buscando cada 1 min hasta " + now.Add(19*time.Minute).Format("15:04"), "hola desde B1", "hola desde B2",
-	}, []string{"hola desde A", "No hay vivos en este momento", "chat de un video viejo"})
+	check("B esperando", get("/parcial/vivo/chat?canal=UCB&video="), "", []string{"hola desde B1", "hola desde B2"},
+		[]string{"hola desde A", "No hay vivos en este momento", "chat de un video viejo"})
+	check("tarjeta de B esperando", get("/parcial/vivo/canal?canal=UCB&video="), "", []string{
+		">Radio B · esperando el próximo vivo</button>", "Esperando el próximo vivo de Radio B",
+		"buscando cada 1 min hasta " + now.Add(19*time.Minute).Format("15:04"),
+	}, []string{"No hay vivos en este momento", "EN VIVO"})
 	// La página se abrió antes de la primera revisión: el chat pide solo
 	// video= vacío. Al aparecer los canales se recarga la sección con el canal
 	// elegido aunque no tenga vivo, para que aparezcan la tira y el selector.
@@ -3991,11 +4019,11 @@ func TestChannelDayStrip(t *testing.T) {
 		for _, s := range samples {
 			st.AddLives(s.At, []Video{{ID: s.VideoID, ChannelID: s.ChannelID, Channel: s.Channel, Title: s.Title, LiveStatus: "live"}})
 		}
-		return getBody((&Server{st: st, budget: 9000}).Routes(), "/parcial/vivo/analisis?canal=UCB&video=&ver=dia")
+		return getBody((&Server{st: st, budget: 9000}).Routes(), "/parcial/vivo/canal?canal=UCB&video=")
 	}
-	// block devuelve lo que tiene que estar por cada bloque: aria-label y <title> con el mismo texto.
+	// block devuelve lo que tiene que estar por cada bloque: aria-label y title con el mismo texto (CA1.3).
 	block := func(text string) []string {
-		return []string{`aria-label="` + text + `"`, "<title>" + text + "</title>"}
+		return []string{`aria-label="` + text + `"`, `title="` + text + `"`}
 	}
 	cases := []struct {
 		name    string
@@ -4036,14 +4064,15 @@ func TestChannelDayStrip(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			body := setup(t, c.ch, c.vids, c.samples, c.units)
-			i := strings.Index(body, `aria-label="Hoy en el canal"`)
-			if i < 0 {
+			i := strings.Index(body, `<ol class="tira" aria-label="Hoy en el canal desde las 00:00: `)
+			if i < 0 || !strings.Contains(body, `<div class="lbl">Hoy en el canal</div>`) {
 				t.Fatalf("falta la tira:\n%s", body)
 			}
 			tira := body[i:]
-			tira = tira[:strings.Index(tira, "</section>")]
-			if !strings.Contains(tira, "<h2>Hoy en el canal</h2>") || !strings.Contains(tira, `role="img"`) {
-				t.Errorf("falta el título o el role de la tira:\n%s", tira)
+			tira = tira[:strings.Index(tira, "</ol>")]
+			// Cada bloque con su estado como clase y un ancho proporcional a sus minutos.
+			if !regexp.MustCompile(`<li class="tb (fin|aire|sin)" style="flex-grow: [0-9]+"`).MatchString(tira) || strings.Contains(tira, "<title>") {
+				t.Errorf("bloques sin clase de estado o sin flex-grow:\n%s", tira)
 			}
 			n := 0
 			for _, b := range c.blocks {
@@ -4060,8 +4089,8 @@ func TestChannelDayStrip(t *testing.T) {
 					}
 				}
 			}
-			if got := strings.Count(tira, "<title>"); got != n {
-				t.Errorf("%d bloques con <title>, quería %d", got, n)
+			if got := strings.Count(tira, ` title="`); got != n {
+				t.Errorf("%d bloques con title, quería %d", got, n)
 			}
 			for _, s := range c.not {
 				if strings.Contains(body, s) {
@@ -4121,18 +4150,18 @@ func TestLiveAnalysisByChannel(t *testing.T) {
 		want, not []string
 	}{
 		{"canal=UCB&video=b2&ver=programa", []string{
-			"Análisis de Radio B · LA TARDE (programa en curso) · 3 mensajes", "¿Repiten la entrevista de la tarde?", "¿Qué pasó con la tarde tan temprano?",
+			"Análisis de LA TARDE (programa en curso)", "Radio B · 3 mensajes", "¿Repiten la entrevista de la tarde?", "¿Qué pasó con la tarde tan temprano?",
 			"<td>ARS</td>", `hx-get="/parcial/vivo/analisis?canal=UCB&video=b2&ver=programa&horas=6" hx-trigger="every 30s"`,
-			`hx-get="/parcial/vivo/analisis?canal=UCB&video=b2&ver=programa&horas=24"`, `id="ver-programa" class="vbtn" aria-pressed="true"`,
-			`id="ver-dia" class="vbtn" aria-pressed="false"`, `hx-get="/parcial/vivo/analisis?canal=UCB&video=b2&ver=dia&horas=6"`,
+			`hx-get="/parcial/vivo/analisis?canal=UCB&video=b2&ver=programa&horas=24"`, `id="ver-programa" class="seg" aria-pressed="true"`,
+			`id="ver-dia" class="seg" aria-pressed="false"`, `hx-get="/parcial/vivo/analisis?canal=UCB&video=b2&ver=dia&horas=6"`,
 		}, []string{"programa de la mañana", "invitado del mediodía", "Radio A?", "de ayer", "EUR"}},
 		// Sin ver: con vivo, el programa en curso.
-		{"canal=UCB&video=b2", []string{"Análisis de Radio B · LA TARDE (programa en curso) · 3 mensajes"}, []string{"invitado del mediodía"}},
+		{"canal=UCB&video=b2", []string{"Análisis de LA TARDE (programa en curso)", "Radio B · 3 mensajes"}, []string{"invitado del mediodía"}},
 		{"canal=UCB&video=b2&ver=dia&horas=24", []string{
-			"Análisis de Radio B · hoy · 6 mensajes", "¿Cuándo vuelve el programa de la mañana?", "¿Quién era el invitado del mediodía?",
+			"Análisis de todo el día del canal", "Radio B · 6 mensajes", "¿Cuándo vuelve el programa de la mañana?", "¿Quién era el invitado del mediodía?",
 			"¿Repiten la entrevista de la tarde?", "<td>ARS</td>", "<td>EUR</td>",
 			`hx-get="/parcial/vivo/analisis?canal=UCB&video=b2&ver=dia&horas=24" hx-trigger="every 30s"`,
-			`id="ver-dia" class="vbtn" aria-pressed="true"`, `id="pwin-24" class="vbtn" aria-pressed="true"`,
+			`id="ver-dia" class="seg" aria-pressed="true"`, `id="pwin-24" class="vbtn" aria-pressed="true"`,
 			// Lo que manda el chat al recargar la sección, para conservar la elección.
 			`<input type="hidden" class="vq" name="ver" value="dia">`, `<input type="hidden" class="vq" name="horas" value="24">`,
 		}, []string{"Radio A?", "de ayer"}},
@@ -4453,14 +4482,19 @@ func TestWorkerChannelIDWithoutSnippet(t *testing.T) {
 	}
 	if ch := st.Status().Channels; len(ch) != 2 || !ch[0].Live || !ch[1].Live {
 		t.Errorf("canales = %+v, quería los dos en vivo", ch)
+	} else if ch[0].Input != "UC1" || ch[1].Input != "@otra" {
+		// Canales muestra lo que se pasó en -canal (el @handle), no solo el ID (CA1.19).
+		t.Errorf("Input = %q, %q; quería lo de -canal", ch[0].Input, ch[1].Input)
 	}
 	if ls := st.Lives(time.Time{}); len(ls) != 2 || ls[0].ChannelID == "" || ls[1].ChannelID == "" {
 		t.Errorf("muestras de vivos sin canal: %+v", ls)
 	}
 	w := httptest.NewRecorder()
-	(&Server{st: st, budget: 9000}).Routes().ServeHTTP(w, httptest.NewRequest("GET", "/parcial/vivo/chat?canal=UC2&video=p2", nil))
-	if w.Header().Get("HX-Retarget") != "" || !strings.Contains(w.Body.String(), "Mostrando Otra Radio · en vivo") {
-		t.Errorf("vista del canal 2 (retarget %q):\n%s", w.Header().Get("HX-Retarget"), w.Body.String())
+	h := (&Server{st: st, budget: 9000}).Routes()
+	h.ServeHTTP(w, httptest.NewRequest("GET", "/parcial/vivo/chat?canal=UC2&video=p2", nil))
+	card := getBody(h, "/parcial/vivo/canal?canal=UC2&video=p2")
+	if on, _ := pressedBtn(card, "/parcial/vivo?canal=UC2"); w.Header().Get("HX-Retarget") != "" || !on || !strings.Contains(card, "Otra Radio · en vivo") {
+		t.Errorf("vista del canal 2 (retarget %q):\n%s", w.Header().Get("HX-Retarget"), card)
 	}
 }
 
@@ -4497,10 +4531,10 @@ func TestClaudeCardOff(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			body := getBody(c.h, c.path)
 			last := -1
+			// El orden de En vivo (CA1.7), con la tarjeta de Claude apagada en su lugar.
 			for _, want := range []string{
-				"1. Temas de los que más se habla", "2. Preguntas para responder", "3. Quejas técnicas",
-				"4. Filtros para YouTube Studio", "5. Momentos con más participación", "6. Super Chats y Super Stickers",
-				"7. Análisis con Claude",
+				"Quejas técnicas", `id="claude-card"`, "Preguntas para producción", "Categorías", "Momentos con más participación",
+				"Super Chats y Super Stickers", "Filtros para YouTube Studio", "Temas (por reglas)",
 			} {
 				i := strings.Index(body, want)
 				if i < 0 {
@@ -4521,7 +4555,7 @@ func TestClaudeCardOff(t *testing.T) {
 					t.Errorf("falta %q", want)
 				}
 			}
-			for _, not := range []string{"hx-post", "Analizar ahora", "Gastado hoy en Claude", "tarjeta 7"} {
+			for _, not := range []string{"hx-post", "Analizar ahora", "Gastado hoy en Claude", "tarjeta 7", "Programas de hoy"} {
 				if strings.Contains(body, not) {
 					t.Errorf("apagado no debería tener %q", not)
 				}
@@ -4787,7 +4821,7 @@ func TestClaudeErrorsHideKey(t *testing.T) {
 					t.Errorf("la clave aparece en %s", where)
 				}
 			}
-			if !strings.Contains(card, "7. Análisis con Claude") {
+			if !strings.Contains(card, `id="claude-card"`) {
 				t.Errorf("falta la tarjeta:\n%s", card)
 			}
 		})
@@ -5459,8 +5493,9 @@ func TestAnalystClosesProgram(t *testing.T) {
 	if string(after) != string(before) {
 		t.Errorf("datos.jsonl cambió después del análisis")
 	}
-	if body := getBody(h, "/parcial/vivo/analisis?canal=UC1&video=v1&ver=dia"); !strings.Contains(body, "LA MAÑANA") || !strings.Contains(body, "Se habló del tránsito.") {
-		t.Errorf("el día no muestra los análisis")
+	// Los resúmenes de cada programa se ven en Programas de hoy (CA1.8).
+	if body := getBody(h, "/parcial/programas?canal=UC1"); !strings.Contains(body, "LA MAÑANA") || !strings.Contains(body, "Se habló del tránsito.") {
+		t.Errorf("Programas no muestra los análisis:\n%s", body)
 	}
 
 	// Al reabrir no repite nada.
@@ -5645,9 +5680,9 @@ func TestClaudeCard(t *testing.T) {
 		want, not []string
 	}{
 		{"sin análisis, desde la PC", setup{analyst: true, status: on, loopback: true}, "ver=programa", []string{
-			"7. Análisis con Claude", "Todavía no hay análisis de este programa: se hace solo cuando termina",
+			"Resumen de Claude del programa en curso", "Todavía no hay análisis de este programa: se hace solo cuando termina",
 			`hx-post="/claude/analizar"`, "Analizar ahora (≈ US$ 0,", "Gastado hoy en Claude: US$ 0,00 de 2,00", `aria-describedby="claude-gasto"`,
-			"Los grupos de preguntas de Claude están en la tarjeta 7. Para borradores de respuesta, descargá el CSV y usá el pedido del README",
+			"Las preguntas agrupadas por Claude están en su resumen de cada programa. Para borradores de respuesta, descargá el CSV y usá el pedido del README",
 		}, []string{"está apagado", "Sin borradores: para que Claude"}},
 		{"sin análisis, desde otra PC", setup{analyst: true, status: on}, "ver=programa", []string{
 			"Para pedir un análisis, abrí el dashboard en la PC del monitor",
@@ -5676,11 +5711,14 @@ func TestClaudeCard(t *testing.T) {
 			"ver=programa", []string{"Se llegó al tope de gasto de Claude de hoy (US$ 2,00): se retoma mañana"}, []string{"hx-post"}},
 		{"apagado por un error", setup{analyst: true, status: ClaudeStatus{Off: "Claude rechazó la clave (401): revisá CLAUDE_API_KEY y reiniciá el monitor"}, loopback: true},
 			"ver=programa", []string{"Claude rechazó la clave (401)"}, []string{"hx-post"}},
+		// Con "Todo el día" la tarjeta solo manda a Programas de hoy (CA1.8): los
+		// resúmenes de cada programa se ven ahí (TestProgramDetail).
 		{"todo el día", setup{analyst: true, status: on, add: []ClaudeAnalysis{
 			analysis(segmentKey("UC1", manana), "LA MAÑANA", false, func(a *ClaudeAnalysis) { a.From, a.To = day.Add(8*time.Hour), day.Add(9*time.Hour+57*time.Minute) }),
 			analysis(keyTarde, "LA TARDE", true, nil),
-		}}, "ver=dia", []string{"LA MAÑANA", "08:00", "Resumen &lt;script&gt;", `role="img"`}, []string{"Todavía no hay análisis de este programa"}},
-		{"todo el día sin análisis", setup{analyst: true, status: on}, "ver=dia", []string{"Todavía no hay programas de hoy analizados"}, nil},
+		}}, "ver=dia", []string{"Resúmenes de Claude", `<a href="/programas?canal=UC1">Los resúmenes de cada programa están en Programas de hoy</a>`},
+			[]string{"Todavía no hay análisis de este programa", "Resumen &lt;script&gt;", "hx-post", "Gastado hoy"}},
+		{"todo el día sin análisis", setup{analyst: true, status: on}, "ver=dia", []string{"Los resúmenes de cada programa están en Programas de hoy"}, nil},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -5880,5 +5918,1007 @@ func TestClaudeAnalyzePostQueued(t *testing.T) {
 	<-done
 	if body := w.Body.String(); w.Code != 200 || !strings.Contains(body, "En cola") || strings.Contains(body, "hx-post") {
 		t.Errorf("%d:\n%s", w.Code, body)
+	}
+}
+
+// TestDashboardTabs (CA1.1): las tres pantallas tienen el mismo encabezado y
+// las pestañas, con la actual marcada con aria-current.
+func TestDashboardTabs(t *testing.T) {
+	st, err := OpenStore(t.TempDir() + "/datos.jsonl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	st.SetChannels([]ChannelStatus{{ID: "UC1", Name: "Radio Test", Live: true}})
+	st.SetVideos("Radio Test", []Video{{ID: "v1", Title: "🔴RADIO TEST en VIVO | LA MAÑANA", ChannelID: "UC1", Channel: "Radio Test", LiveStatus: "live"}})
+	h := (&Server{st: st, budget: 9000}).Routes()
+	tabs := []struct{ href, label string }{{"/", "En vivo"}, {"/programas", "Programas de hoy"}, {"/canales", "Canales"}}
+	link := regexp.MustCompile(`<a href="([^"]*)"( aria-current="page")?>([^<]*)</a>`)
+	for _, cur := range tabs {
+		t.Run(cur.label, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			h.ServeHTTP(w, httptest.NewRequest("GET", cur.href, nil))
+			body := w.Body.String()
+			if w.Code != 200 {
+				t.Fatalf("%s = %d", cur.href, w.Code)
+			}
+			for _, want := range []string{"<h1>Monitor de YouTube</h1>", `<a href="/export.csv">Descargar CSV para Claude</a>`} {
+				if !strings.Contains(body, want) {
+					t.Errorf("falta %q", want)
+				}
+			}
+			i := strings.Index(body, `<nav class="tabs" aria-label="Secciones">`)
+			if i < 0 {
+				t.Fatalf("falta la navegación entre pantallas")
+			}
+			nav := body[i:]
+			nav = nav[:strings.Index(nav, "</nav>")]
+			links := link.FindAllStringSubmatch(nav, -1)
+			if len(links) != len(tabs) {
+				t.Fatalf("%d pestañas, quería %d:\n%s", len(links), len(tabs), nav)
+			}
+			for k, l := range links {
+				if l[1] != tabs[k].href || l[3] != tabs[k].label {
+					t.Errorf("pestaña %d = %q %q, quería %q %q", k, l[1], l[3], tabs[k].href, tabs[k].label)
+				}
+				if on := l[2] != ""; on != (tabs[k].href == cur.href) {
+					t.Errorf("pestaña %q: aria-current %v", tabs[k].label, on)
+				}
+			}
+			// Fuera de la navegación ningún link se marca como la pantalla actual.
+			if n := len(regexp.MustCompile(`<a [^>]*aria-current=`).FindAllString(body, -1)); n != 1 {
+				t.Errorf("%d links con aria-current, quería 1", n)
+			}
+		})
+	}
+}
+
+// pressedBtn dice si el botón que pide hxGet está apretado (y si está).
+func pressedBtn(body, hxGet string) (on, ok bool) {
+	m := regexp.MustCompile(`aria-pressed="(true|false)"\s+hx-get="` + regexp.QuoteMeta(hxGet) + `"`).FindStringSubmatch(body)
+	if m == nil {
+		return false, false
+	}
+	return m[1] == "true", true
+}
+
+// TestHowItAirs (CA1.4): cómo sale un canal según sus tramos de 7 días.
+func TestHowItAirs(t *testing.T) {
+	day := dayStart(noonToday())
+	seg := func(video, prog string, h int, state string) Segment {
+		at := day.Add(time.Duration(h) * time.Hour)
+		return Segment{VideoID: video, Program: prog, Start: at, End: at.Add(50 * time.Minute), State: state}
+	}
+	none := Segment{State: SegNone, Start: day, End: day.Add(time.Hour)}
+	cases := []struct {
+		name string
+		segs []Segment
+		want string
+	}{
+		{"sin tramos", nil, airsUnknown},
+		{"un programa", []Segment{seg("v1", "A", 8, SegLive)}, airsUnknown},
+		{"vivo de 24 h", []Segment{seg("v1", "A", 8, SegEnded), seg("v1", "B", 9, SegLive)}, airs24h},
+		{"vivo de 24 h aunque haya dos vivos", []Segment{seg("v1", "A", 8, SegEnded), seg("v2", "A", 10, SegEnded), seg("v2", "B", 11, SegLive)}, airs24h},
+		{"un vivo por programa", []Segment{seg("v1", "A", 8, SegEnded), none, seg("v2", "B", 10, SegLive)}, airsPerShow},
+		{"mismo programa después de un corte", []Segment{seg("v1", "A", 8, SegEnded), none, seg("v1", "A", 10, SegEnded)}, airsUnknown},
+		{"dos vivos en días distintos", []Segment{seg("v1", "A", -20, SegEnded), seg("v2", "A", 10, SegEnded)}, airsUnknown},
+	}
+	for _, c := range cases {
+		if got := howItAirs(c.segs); got != c.want {
+			t.Errorf("%s: %q, quería %q", c.name, got, c.want)
+		}
+	}
+}
+
+// TestLiveTiles (CA1.6): los tiles del alcance elegido.
+func TestLiveTiles(t *testing.T) {
+	now := noonToday()
+	chat := func(n int, ago time.Duration, author string) []Message {
+		var out []Message
+		for i := range n {
+			out = append(out, Message{ID: fmt.Sprint(ago, author, i), Source: "chat", VideoID: "v1", Author: fmt.Sprint(author, i%3),
+				Text: "hola", At: now.Add(-ago - time.Duration(i)*time.Second)})
+		}
+		return out
+	}
+	past := func(n, per int) []Message { // n franjas anteriores con per mensajes cada una
+		var out []Message
+		for k := 1; k <= n; k++ {
+			out = append(out, chat(per, time.Duration(k)*5*time.Minute+time.Minute, fmt.Sprint("p", k))...)
+		}
+		return out
+	}
+	pay := func(id, cur string, micros int64) Message {
+		return Message{ID: id, Source: "chat", VideoID: "v1", Author: "Pago" + id, Text: "gracias", At: now.Add(-time.Hour),
+			Super: SuperChat, Currency: cur, AmountMicros: micros}
+	}
+	ask := Message{ID: "q", Source: "chat", VideoID: "v1", Author: "Ana", Text: "¿A qué hora vuelve?", At: now.Add(-2 * time.Hour)}
+	cases := []struct {
+		name       string
+		msgs       []Message
+		concurrent int64
+		sc         scope
+		want       []Tile
+	}{
+		{"sin mensajes", nil, 0, scopeProgram, []Tile{
+			{"Mensajes por minuto", "0,0", "en los últimos 5 min"}, {"Personas que escribieron", "0", "en este programa"},
+			{"Mirando ahora", "—", "sin dato de espectadores"}, {"Super Chats", "0", ""}, {"Preguntas", "0", "por reglas"}}},
+		{"menos de 6 franjas", append(past(5, 2), chat(4, time.Minute, "a")...), 300, scopeDay, []Tile{
+			{"Mensajes por minuto", "0,8", "en los últimos 5 min"}, {"Personas que escribieron", "13", "en el día"},
+			{"Mirando ahora", "300", "1,0 % escribió en los últimos 5 min"}, {"Super Chats", "0", ""}, {"Preguntas", "0", "por reglas"}}},
+		{"sobre lo típico", append(append(past(6, 2), chat(4, time.Minute, "a")...), ask), 0, scopeProgram, []Tile{
+			{"Mensajes por minuto", "0,8", "100 % sobre lo típico de este programa"}, {"Personas que escribieron", "16", "en este programa"},
+			{"Mirando ahora", "—", "sin dato de espectadores"}, {"Super Chats", "0", ""}, {"Preguntas", "1", "por reglas"}}},
+		{"bajo lo típico, una moneda", append(append(past(6, 4), chat(2, time.Minute, "a")...), pay("1", "ARS", 50_000_000_000), pay("2", "ARS", 2_300_000_000)), 0, scopeDay, []Tile{
+			{"Mensajes por minuto", "0,4", "50 % bajo lo típico del día"}, {"Personas que escribieron", "22", "en el día"},
+			{"Mirando ahora", "—", "sin dato de espectadores"}, {"Super Chats", "2", "ARS 52.300,00"}, {"Preguntas", "0", "por reglas"}}},
+		{"dos monedas", []Message{pay("1", "ARS", 5_000_000), pay("2", "USD", 2_000_000)}, 50, scopeLast24, []Tile{
+			{"Mensajes por minuto", "0,0", "en los últimos 5 min"}, {"Personas que escribieron", "2", "en las últimas 24 h"},
+			{"Mirando ahora", "50", "0,0 % escribió en los últimos 5 min"}, {"Super Chats", "2", "en 2 monedas"}, {"Preguntas", "0", "por reglas"}}},
+	}
+	for _, c := range cases {
+		if got := liveTiles(c.msgs, c.concurrent, c.sc, now); fmt.Sprint(got) != fmt.Sprint(c.want) {
+			t.Errorf("%s:\n got %v\nwant %v", c.name, got, c.want)
+		}
+	}
+}
+
+// liveStore arma un canal con dos vivos hoy: b1 (LA MAÑANA, terminó) y b2
+// (LA TARDE, al aire desde hace una hora, 120 mirando).
+func liveStore(t *testing.T, now time.Time) *Store {
+	t.Helper()
+	st, err := OpenStore(t.TempDir() + "/datos.jsonl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	const titleB1, titleB2 = "🔴 [EN VIVO] LA MAÑANA | RADIO B", "🔴 [EN VIVO] LA TARDE | RADIO B"
+	st.SetChannels([]ChannelStatus{{ID: "UCB", Name: "Radio B", Input: "@radiob", Live: true, Every: 3 * time.Minute}})
+	st.SetVideos("Radio B", []Video{{ID: "b2", Title: titleB2, ChannelID: "UCB", Channel: "Radio B", LiveStatus: "live", Concurrent: 120}})
+	samples := append(livesEvery("b1", "UCB", "Radio B", titleB1, now.Add(-3*time.Hour), now.Add(-2*time.Hour)),
+		livesEvery("b2", "UCB", "Radio B", titleB2, now.Add(-time.Hour), now.Add(-time.Minute))...)
+	for _, s := range samples {
+		st.AddLives(s.At, []Video{{ID: s.VideoID, ChannelID: s.ChannelID, Channel: s.Channel, Title: s.Title, LiveStatus: "live"}})
+	}
+	st.Add([]Message{{ID: "m1", Source: "chat", VideoID: "b2", Author: "Ana", Text: "hola", At: now.Add(-time.Minute), Program: "LA TARDE"}})
+	return st
+}
+
+// TestLiveChannelCard (CA1.3): la tarjeta Canal con vivo, con un vivo de 24 h
+// y esperando, sin HX-Retarget.
+func TestLiveChannelCard(t *testing.T) {
+	now := noonLocal(t)
+	hm := func(t time.Time) string { return t.Local().Format("15:04") }
+	cases := []struct {
+		name      string
+		setup     func(st *Store)
+		path      string
+		want, not []string
+	}{
+		{"segundo vivo del día", nil, "/parcial/vivo/canal?canal=UCB&video=b1", []string{
+			`<span class="live">EN VIVO</span>`, `<strong class="prog">LA TARDE</strong>`, "desde las " + hm(now.Add(-time.Hour)), "2.º vivo de hoy",
+			"120 mirando", `<a href="https://www.youtube.com/watch?v=b2" target="_blank" rel="noopener">Abrir en YouTube</a>`,
+			"Cómo sale: " + airsPerShow, "A las " + hm(now.Add(-time.Hour)) + " empezó un vivo nuevo", `class="tb aire"`, `class="tb fin"`, `class="tb sin"`,
+			`aria-pressed="true"`,
+		}, []string{"Esperando el próximo vivo"}},
+		{"vivo de 24 h", func(st *Store) {
+			for _, s := range livesEvery("b2", "UCB", "Radio B", "🔴 [EN VIVO] EL MEDIODÍA | RADIO B", now.Add(-110*time.Minute), now.Add(-62*time.Minute)) {
+				st.AddLives(s.At, []Video{{ID: s.VideoID, ChannelID: s.ChannelID, Channel: s.Channel, Title: s.Title, LiveStatus: "live"}})
+			}
+		}, "/parcial/vivo/canal?canal=UCB&video=b2", []string{"Cómo sale: " + airs24h, "desde las " + hm(now.Add(-time.Hour)), "2.º vivo de hoy"}, nil},
+		{"esperando", func(st *Store) {
+			st.SetChannels([]ChannelStatus{{ID: "UCB", Name: "Radio B", WaitSince: now.Add(-time.Minute), FastUntil: now.Add(19 * time.Minute), Every: 3 * time.Minute}})
+			st.SetVideos("Radio B", nil)
+		}, "/parcial/vivo/canal?canal=UCB&video=b2", []string{
+			"Esperando el próximo vivo de Radio B (buscando cada 1 min hasta " + hm(now.Add(19*time.Minute)) + ")",
+			">Radio B · esperando el próximo vivo</button>", `class="tb sin"`,
+		}, []string{"EN VIVO", "Abrir en YouTube", "mirando"}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			st := liveStore(t, now)
+			if c.setup != nil {
+				c.setup(st)
+			}
+			w := httptest.NewRecorder()
+			(&Server{st: st, budget: 9000, now: func() time.Time { return now }}).Routes().ServeHTTP(w, httptest.NewRequest("GET", c.path, nil))
+			body := w.Body.String()
+			if w.Header().Get("HX-Retarget") != "" || w.Header().Get("HX-Reswap") != "" {
+				t.Errorf("la tarjeta Canal no recarga la sección")
+			}
+			for _, s := range c.want {
+				if !strings.Contains(body, s) {
+					t.Errorf("falta %q", s)
+				}
+			}
+			for _, s := range c.not {
+				if strings.Contains(body, s) {
+					t.Errorf("no debería tener %q", s)
+				}
+			}
+			if t.Failed() {
+				t.Logf("tarjeta:\n%s", body)
+			}
+		})
+	}
+}
+
+// TestLiveScreenOrder (CA1.7): el orden de las tarjetas de En vivo y los
+// títulos sin número.
+func TestLiveScreenOrder(t *testing.T) {
+	now := noonLocal(t)
+	st := liveStore(t, now)
+	h := (&Server{st: st, budget: 9000, now: func() time.Time { return now }}).Routes()
+	inOrder := func(name, body string, ids []string) {
+		t.Helper()
+		last := -1
+		for _, id := range ids {
+			i := strings.Index(body, id)
+			if i < 0 {
+				t.Errorf("%s: falta %s", name, id)
+				continue
+			}
+			if i < last {
+				t.Errorf("%s: %s está fuera de orden", name, id)
+			}
+			last = i
+		}
+	}
+	// La página tiene un lugar por parcial: el chat va entre el análisis de arriba y el de abajo.
+	inOrder("/", getBody(h, "/"), []string{`id="estado"`, `id="canal"`, `id="vivo-analisis"`, `id="chat"`, `id="vivo-abajo"`})
+	for _, ver := range []string{"programa", "dia"} {
+		body := getBody(h, "/parcial/vivo/analisis?canal=UCB&video=b2&ver="+ver)
+		inOrder(ver, body, []string{`id="ver-programa" class="seg"`, `class="atitle"`, `class="tiles"`, `id="quejas"`, `id="claude-card"`,
+			`id="preguntas"`, `id="categorias"`, `id="momentos"`, `<div id="vivo-abajo" hx-swap-oob="true">`, `id="supers"`, `id="filtros"`, `id="monitor"`})
+		if regexp.MustCompile(`<h[23][^>]*>\s*[0-9]+\.\s`).MatchString(body) {
+			t.Errorf("%s: hay títulos numerados", ver)
+		}
+		for _, want := range []string{"Todo el monitor · últimas 24 h", "Palabras más repetidas", "Quiénes más escriben", "Temas (por reglas)"} {
+			if !strings.Contains(body, want) {
+				t.Errorf("%s: falta %q", ver, want)
+			}
+		}
+	}
+}
+
+// TestLiveAnalysisClaudeLine (CA1.5): con el análisis con Claude activo, la
+// línea de estado debajo del selector.
+func TestLiveAnalysisClaudeLine(t *testing.T) {
+	now := noonLocal(t)
+	st := liveStore(t, now)
+	srv := &Server{st: st, budget: 9000, now: func() time.Time { return now }}
+	path := "/parcial/vivo/analisis?canal=UCB&video=b2&ver=programa"
+	if body := getBody(srv.Routes(), path); strings.Contains(body, "resumen al cerrar cada programa") {
+		t.Errorf("apagado no debería tener la línea de Claude")
+	}
+	srv.analyst = NewAnalyst()
+	st.SetClaudeStatus(ClaudeStatus{On: true, Model: defaultClaudeModel, Tope: 2_000_000})
+	if body := getBody(srv.Routes(), path); !strings.Contains(body, `<span class="ia">Claude</span> resumen al cerrar cada programa · todavía sin análisis hoy`) ||
+		!strings.Contains(body, `class="seg" aria-pressed="true"`) || !strings.Contains(body, "Análisis de LA TARDE (programa en curso)") {
+		t.Errorf("sin análisis:\n%s", body)
+	}
+	at := now.Add(-90 * time.Minute)
+	st.AddAnalysis(ClaudeAnalysis{At: at, Key: "UCB|b1|LA MAÑANA|x", ChannelID: "UCB", VideoID: "b1", Program: "LA MAÑANA",
+		From: now.Add(-3 * time.Hour), To: now.Add(-2 * time.Hour)})
+	if body := getBody(srv.Routes(), "/parcial/vivo/analisis?canal=UCB&video=b2&ver=dia"); !strings.Contains(body, "resumen al cerrar cada programa · último análisis "+at.Format("15:04")) ||
+		!strings.Contains(body, "Análisis de todo el día del canal") {
+		t.Errorf("con análisis:\n%s", body)
+	}
+}
+
+// programDay arma, con now a las 12:00, las muestras y los mensajes de dos
+// canales: el de analystServer (UC1: AYER, CRUCE, POCO, LA MAÑANA y LA TARDE
+// al aire en v1) y otro (UC2: un vivo por programa, OTRO1 terminó y OTRO2 al
+// aire), con mensajes de UC2 que usan el nombre de un programa de UC1.
+func programDay(now time.Time) ([]ChannelStatus, []LiveSample, []Video, []Message) {
+	day := dayStart(now)
+	chans := []ChannelStatus{{ID: "UC1", Name: "Radio Test"}, {ID: "UC2", Name: "Otra Radio"}}
+	videos := []Video{
+		{ID: "v1", Title: testTitle + "LA TARDE", ChannelID: "UC1", Channel: "Radio Test", LiveStatus: "live"},
+		{ID: "w2", Title: "OTRA RADIO en VIVO | OTRO2", ChannelID: "UC2", Channel: "Otra Radio", LiveStatus: "live"},
+	}
+	var samples []LiveSample
+	add := func(video, ch, chName, title string, from, to time.Time) {
+		samples = append(samples, livesEvery(video, ch, chName, title, from, to)...)
+	}
+	add("v3", "UC1", "Radio Test", testTitle+"AYER", day.Add(-5*time.Hour), day.Add(-3*time.Hour))
+	add("v0", "UC1", "Radio Test", testTitle+"CRUCE", day.Add(-time.Hour), day.Add(time.Hour))
+	add("v2", "UC1", "Radio Test", testTitle+"POCO", day.Add(6*time.Hour), day.Add(7*time.Hour))
+	add("v1", "UC1", "Radio Test", testTitle+"LA MAÑANA", day.Add(8*time.Hour), day.Add(9*time.Hour+57*time.Minute))
+	add("v1", "UC1", "Radio Test", testTitle+"LA TARDE", day.Add(10*time.Hour), now.Add(-time.Minute))
+	add("w1", "UC2", "Otra Radio", "OTRA RADIO en VIVO | OTRO1", day.Add(7*time.Hour), day.Add(9*time.Hour))
+	add("w2", "UC2", "Otra Radio", "OTRA RADIO en VIVO | OTRO2", day.Add(9*time.Hour+30*time.Minute), now.Add(-time.Minute))
+	var msgs []Message
+	msgs = append(msgs, chatRun("ayer", "v3", "AYER", day.Add(-5*time.Hour), time.Minute, 25)...)
+	msgs = append(msgs, chatRun("cruce", "v0", "CRUCE", day.Add(-50*time.Minute), 4*time.Minute, 25)...)
+	msgs = append(msgs, chatRun("poco", "v2", "POCO", day.Add(6*time.Hour), time.Minute, 5)...)
+	msgs = append(msgs, chatRun("man", "v1", "LA MAÑANA", day.Add(8*time.Hour), time.Minute, 25)...)
+	msgs = append(msgs, chatRun("tar", "v1", "LA TARDE", day.Add(10*time.Hour), time.Minute, 25)...)
+	msgs = append(msgs, chatRun("o1", "w1", "OTRO1", day.Add(7*time.Hour), time.Minute, 7)...)
+	msgs = append(msgs, chatRun("o2", "w2", "OTRO2", day.Add(10*time.Hour), time.Minute, 4)...)
+	// De UC2 pero con el programa de UC1: nunca entra en las filas de UC1.
+	msgs = append(msgs, chatRun("ajeno", "w2", "LA TARDE", day.Add(10*time.Hour), time.Minute, 3)...)
+	pay := Message{ID: "pago", Source: "chat", VideoID: "v1", Program: "LA MAÑANA", Author: "Pago", Text: "¿Saludan a Rosario?",
+		At: day.Add(9 * time.Hour), Super: SuperChat, Currency: "ARS", AmountMicros: 1_000_000_000}
+	return chans, samples, videos, append(msgs, pay)
+}
+
+// TestProgramRows (CA1.9): las filas de Programas por día y por canal, con
+// los mensajes del mismo filtro que segmentMessages.
+func TestProgramRows(t *testing.T) {
+	now := noonToday()
+	chans, samples, videos, msgs := programDay(now)
+	titles := videoTitles(videos)
+	keyMan := segmentKey("UC1", Segment{VideoID: "v1", Program: "LA MAÑANA", Start: dayStart(now).Add(8 * time.Hour)})
+	analyses := []ClaudeAnalysis{
+		{Key: keyMan, ChannelID: "UC1", Program: "LA MAÑANA", Partial: true, From: dayStart(now).Add(8 * time.Hour)},
+		{Key: keyMan, ChannelID: "UC1", Program: "LA MAÑANA", From: dayStart(now).Add(8 * time.Hour), Result: ClaudeResult{Summary: "final"}},
+	}
+	type row struct {
+		ch, prog, hours  string
+		n, people, sup   int
+		onAir            bool
+		closed, analysis string
+	}
+	cases := []struct {
+		name, dia string
+		chans     []ChannelStatus
+		want      []row
+	}{
+		{"hoy, los dos canales", "hoy", chans, []row{
+			{"UC1", "LA TARDE", "10:00–", 25, 3, 0, true, SegLive, ""},
+			{"UC1", "LA MAÑANA", "08:00–09:57", 26, 4, 1, false, closedTitle, "final"},
+			{"UC1", "POCO", "06:00–07:00", 5, 3, 0, false, closedEnded, ""},
+			{"UC1", "CRUCE", "23:00–01:00", 25, 3, 0, false, closedEnded, ""},
+			{"UC2", "OTRO2", "09:30–", 4, 3, 0, true, SegLive, ""},
+			{"UC2", "OTRO1", "07:00–09:00", 7, 3, 0, false, closedEnded, ""},
+		}},
+		{"ayer, un canal", "ayer", chans[:1], []row{
+			// Ayer se corta a las 00:00 (la muestra de las 00:00 entra): en "Ayer" el cruce termina ahí.
+			{"UC1", "CRUCE", "23:00–00:00", 14, 3, 0, false, closedCut, ""},
+			{"UC1", "AYER", "19:00–21:00", 25, 3, 0, false, closedEnded, ""},
+		}},
+		{"7 días: el cruce de medianoche aparece una vez", "7d", chans[:1], []row{
+			{"UC1", "LA TARDE", "10:00–", 25, 3, 0, true, SegLive, ""},
+			{"UC1", "LA MAÑANA", "08:00–09:57", 26, 4, 1, false, closedTitle, "final"},
+			{"UC1", "POCO", "06:00–07:00", 5, 3, 0, false, closedEnded, ""},
+			{"UC1", "CRUCE", "23:00–01:00", 25, 3, 0, false, closedEnded, ""},
+			{"UC1", "AYER", "19:00–21:00", 25, 3, 0, false, closedEnded, ""},
+		}},
+		{"filtro de canal", "hoy", chans[1:], []row{
+			{"UC2", "OTRO2", "09:30–", 4, 3, 0, true, SegLive, ""},
+			{"UC2", "OTRO1", "07:00–09:00", 7, 3, 0, false, closedEnded, ""},
+		}},
+	}
+	for _, c := range cases {
+		_, days := dayRange(c.dia, now)
+		segs := programSegs(c.chans, samples, videos, days, now)
+		rows := programRows(segs, msgs, analyses, titles)
+		var got []row
+		for _, r := range rows {
+			a := ""
+			if r.Analysis != nil {
+				a = r.Analysis.Result.Summary
+			}
+			got = append(got, row{r.Channel.ID, r.Seg.Program, r.Hours, r.Msgs, r.People, r.Supers, r.OnAir, r.Closed, a})
+			// Mismo filtro que "Programa en curso" y que la 009.
+			if want := len(segmentMessages(msgs, r.Seg, titles)); r.Msgs != want {
+				t.Errorf("%s: %s tiene %d mensajes y segmentMessages %d", c.name, r.Seg.Program, r.Msgs, want)
+			}
+			if r.Key != segmentKey(r.Channel.ID, r.Seg) {
+				t.Errorf("%s: clave %q", c.name, r.Key)
+			}
+		}
+		if fmt.Sprint(got) != fmt.Sprint(c.want) {
+			t.Errorf("%s:\n got %v\nwant %v", c.name, got, c.want)
+		}
+	}
+	// La pregunta del Super Chat cuenta en LA MAÑANA.
+	_, days := dayRange("hoy", now)
+	for _, r := range programRows(programSegs(chans, samples, videos, days, now), msgs, nil, titles) {
+		if r.Seg.Program == "LA MAÑANA" && r.Questions != 1 {
+			t.Errorf("LA MAÑANA: %d preguntas, quería 1", r.Questions)
+		}
+	}
+}
+
+// BenchmarkProgramRows (CA1.13): 70.000 mensajes de 2 canales en 7 días.
+// Referencia: menos de 100 ms por pedido en la PC de desarrollo.
+func BenchmarkProgramRows(b *testing.B) {
+	now := noonToday()
+	_, days := dayRange("7d", now)
+	var samples []LiveSample
+	var msgs []Message
+	var videos []Video
+	chans := []ChannelStatus{{ID: "UC1", Name: "Uno"}, {ID: "UC2", Name: "Dos"}}
+	for c, ch := range chans {
+		for d := 6; d >= 0; d-- {
+			start := dayStart(now).AddDate(0, 0, -d)
+			video := fmt.Sprintf("v%d-%d", c, d)
+			for p := range 6 { // un vivo por día con 6 programas de 4 h
+				from := start.Add(time.Duration(p*4) * time.Hour)
+				to := from.Add(4*time.Hour - 3*time.Minute)
+				if to.After(now) {
+					to = now
+				}
+				if from.After(now) {
+					break
+				}
+				title := fmt.Sprintf("CANAL %d en VIVO | PROGRAMA %d", c, p)
+				samples = append(samples, livesEvery(video, ch.ID, ch.Name, title, from, to)...)
+				for i := range 850 {
+					at := from.Add(time.Duration(i) * 4 * time.Hour / 850)
+					if at.After(now) {
+						break
+					}
+					text := "saludos desde Rosario, gran programa"
+					if i%4 == 0 { // una de cada cuatro es pregunta: pasa por las regex de Classify
+						text = "¿a qué hora vuelve el invitado?"
+					}
+					msgs = append(msgs, Message{ID: fmt.Sprint(video, p, i), Source: "chat", VideoID: video, Author: fmt.Sprint("a", i%200),
+						Text: text, At: at, Program: fmt.Sprintf("PROGRAMA %d", p)})
+				}
+			}
+			if d == 0 {
+				videos = append(videos, Video{ID: video, ChannelID: ch.ID, Channel: ch.Name, LiveStatus: "live"})
+			}
+		}
+	}
+	titles := videoTitles(videos)
+	b.ReportMetric(float64(len(msgs)), "mensajes")
+	b.ResetTimer()
+	for range b.N {
+		programRows(programSegs(chans, samples, videos, days, now), msgs, nil, titles)
+	}
+}
+
+// programServer arma el Server de Programas con los datos de programDay.
+func programServer(t *testing.T, now time.Time, analyst bool) (*Store, *Server) {
+	t.Helper()
+	st, err := OpenStore(t.TempDir() + "/datos.jsonl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	chans, samples, videos, msgs := programDay(now)
+	st.SetChannels(chans)
+	st.SetVideos("Radio Test", videos)
+	for _, s := range samples {
+		st.AddLives(s.At, []Video{{ID: s.VideoID, ChannelID: s.ChannelID, Channel: s.Channel, Title: s.Title, LiveStatus: "live"}})
+	}
+	st.Add(msgs)
+	srv := &Server{st: st, budget: 9000, now: func() time.Time { return now }}
+	if analyst {
+		srv.analyst = NewAnalyst()
+		st.SetClaudeStatus(ClaudeStatus{On: true, Model: defaultClaudeModel, Tope: 2_000_000})
+	}
+	return st, srv
+}
+
+// TestProgramsPage (CA1.10): la pantalla Programas con sus filtros, la tabla y
+// los refrescos.
+func TestProgramsPage(t *testing.T) {
+	now := noonToday()
+	day := dayStart(now)
+	_, srv := programServer(t, now, false)
+	h := srv.Routes()
+	keyMan := segmentKey("UC1", Segment{VideoID: "v1", Program: "LA MAÑANA", Start: day.Add(8 * time.Hour)})
+	today := weekdays[now.Weekday()] + " " + now.Format("02/01")
+	cases := []struct {
+		name, path string
+		want, not  []string
+	}{
+		{"hoy", "/programas", []string{
+			"<h1>Monitor de YouTube</h1>", "Programas de hoy · " + today,
+			`<label class="field" for="f-canal"><span class="lbl">Canal</span>`, `<label class="field" for="f-dia"><span class="lbl">Día</span>`,
+			`id="f-canal" class="sel" name="canal" hx-get="/parcial/programas" hx-trigger="change"`, `hx-push-url="true"`,
+			`<option value="" selected>Todos los canales</option>`, `<option value="hoy" selected>Hoy</option>`,
+			`<th scope="col">Programa</th>`, `hx-trigger="every 60s"`, "LA TARDE", "OTRO2", "CRUCE", `<span class="live">AL AIRE</span>`,
+			// La fila elegida por defecto es el último programa que terminó.
+			`<tr class="sel">`, `hx-get="/parcial/programas?dia=hoy&amp;tramo=` + attrQuery(keyMan) + `"`,
+			`hx-push-url="/programas?dia=hoy&amp;tramo=` + attrQuery(keyMan) + `"`, `id="detalle"`, "LA MAÑANA",
+		}, []string{"AYER", "Actualizado a las"}},
+		{"ayer", "/programas?dia=ayer", []string{"Programas de ayer · ", "AYER", "CRUCE", "Actualizado a las 12:00", `<option value="ayer" selected>Ayer</option>`},
+			[]string{"every 60s", "LA TARDE", "AL AIRE"}},
+		{"7 días de un canal", "/programas?dia=7d&canal=UC2", []string{"Programas de los últimos 7 días", "OTRO1", "OTRO2",
+			`<option value="UC2" selected>Otra Radio</option>`}, []string{"LA TARDE", "CRUCE", "every 60s"}},
+		{"día y canal inválidos", "/programas?dia=mañana&canal=UCX", []string{"Programas de hoy · " + today, "LA TARDE", "OTRO2",
+			`<option value="" selected>Todos los canales</option>`}, nil},
+		{"un programa elegido", "/programas?tramo=" + url.QueryEscape(segmentKey("UC1", Segment{VideoID: "v2", Program: "POCO", Start: day.Add(6 * time.Hour)})),
+			[]string{`<h2 id="det-h">POCO</h2>`}, []string{`<h2 id="det-h">LA MAÑANA</h2>`}},
+		// Una clave que ya no está no cae en silencio en otro programa (CA1.11).
+		{"programa que ya no está", "/programas?tramo=UC1%7Cx", []string{"Ese programa ya no está guardado.", "LA TARDE"},
+			[]string{`<tr class="sel">`, `<h2 id="det-h">`}},
+		{"detalle sin tramo: el último que terminó", "/parcial/programas/detalle", []string{`<h2 id="det-h">LA MAÑANA</h2>`},
+			[]string{"Ese programa ya no está guardado", "<h1>"}},
+	}
+	for _, c := range cases {
+		body := getBody(h, c.path)
+		for _, s := range c.want {
+			if !strings.Contains(body, s) {
+				t.Errorf("%s: falta %q", c.name, s)
+			}
+		}
+		for _, s := range c.not {
+			if strings.Contains(body, s) {
+				t.Errorf("%s: no debería tener %q", c.name, s)
+			}
+		}
+		if n := strings.Count(body, `<tr class="sel">`); n > 1 {
+			t.Errorf("%s: %d filas elegidas", c.name, n)
+		}
+		if t.Failed() {
+			t.Logf("%s:\n%s", c.name, body)
+			return
+		}
+	}
+
+	// Un select cambia la URL a la de la pantalla; el refresco de "Hoy", no.
+	r := httptest.NewRequest("GET", "/parcial/programas?dia=ayer", nil)
+	r.Header.Set("HX-Request", "true")
+	r.Header.Set("HX-Trigger", "f-dia")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	if got := w.Header().Get("HX-Push-Url"); got != "/programas?dia=ayer" || strings.Contains(w.Body.String(), "<h1>") {
+		t.Errorf("select: HX-Push-Url %q", got)
+	}
+	r.Header.Set("HX-Trigger", "programas")
+	w = httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	if got := w.Header().Get("HX-Push-Url"); got != "" {
+		t.Errorf("refresco: HX-Push-Url %q", got)
+	}
+
+	// Sin programas: lo dice y, si los datos empiezan después, desde cuándo hay.
+	st, err := OpenStore(t.TempDir() + "/datos.jsonl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	st.SetChannels([]ChannelStatus{{ID: "UC1", Name: "Radio Test"}})
+	empty := &Server{st: st, budget: 9000, now: func() time.Time { return now }}
+	if body := getBody(empty.Routes(), "/programas"); !strings.Contains(body, "Todavía no hay programas guardados para ese día.") || strings.Contains(body, "guardados desde") {
+		t.Errorf("sin datos:\n%s", body)
+	}
+	st.AddLives(day.Add(9*time.Hour), []Video{{ID: "v1", ChannelID: "UC1", Channel: "Radio Test", Title: testTitle + "X", LiveStatus: "live"}})
+	if body := getBody(empty.Routes(), "/programas?dia=ayer"); !strings.Contains(body, "Todavía no hay programas guardados para ese día. Hay programas guardados desde el "+now.Format("02/01")+".") {
+		t.Errorf("datos desde hoy:\n%s", body)
+	}
+}
+
+// TestProgramDetail (CA1.11): el detalle de un programa con y sin análisis de
+// Claude, la clave desconocida y el escape.
+func TestProgramDetail(t *testing.T) {
+	now := noonToday()
+	day := dayStart(now)
+	man := Segment{VideoID: "v1", Program: "LA MAÑANA", Start: day.Add(8 * time.Hour)}
+	keyMan := segmentKey("UC1", man)
+	keyPoco := segmentKey("UC1", Segment{VideoID: "v2", Program: "POCO", Start: day.Add(6 * time.Hour)})
+	keyCruce := segmentKey("UC1", Segment{VideoID: "v0", Program: "CRUCE", Start: day.Add(-time.Hour)})
+	final := ClaudeAnalysis{At: day.Add(10 * time.Hour), Key: keyMan, ChannelID: "UC1", VideoID: "v1", Program: "LA MAÑANA",
+		From: man.Start, To: day.Add(9*time.Hour + 57*time.Minute), Model: defaultClaudeModel, Sent: 26, Total: 26,
+		Result: ClaudeResult{Summary: "Se habló <script>alert(1)</script> del tránsito.", Sentiment: ClaudeSentiment{Positive: 60, Neutral: 30, Negative: 10},
+			Topics: []ClaudeGroup{{Text: "tránsito", Msgs: 5, People: 2}}, Questions: []ClaudeGroup{{Text: "¿Saludan a Rosario?", Msgs: 1, People: 1, Examples: []string{"pago"}}}}}
+	cases := []struct {
+		name      string
+		analyst   bool
+		add       []ClaudeAnalysis
+		path      string
+		want, not []string
+	}{
+		{"con análisis", true, []ClaudeAnalysis{final}, "/parcial/programas/detalle?tramo=" + url.QueryEscape(keyMan), []string{
+			`<h2 id="det-h">LA MAÑANA</h2>`, "Radio Test · 08:00 a 09:57 · " + closedTitle + " · 26 mensajes de 4 personas",
+			`href="/export.csv?tramo=` + attrQuery(keyMan) + `"`, ">CSV de este programa</a>", `href="https://www.youtube.com/watch?v=v1"`, ">Abrir en YouTube</a>",
+			"Resumen del chat <span class=\"ia\">Claude</span>", "Se habló &lt;script&gt;alert(1)&lt;/script&gt; del tránsito.",
+			"Temas de conversación <span class=\"ia\">Claude</span>", "tránsito · 5 mensajes · 2 personas", "Sentimiento del programa <span class=\"ia\">Claude</span>",
+			`aria-label="Sentimiento: 60 % positivo, 30 % neutro, 10 % negativo"`, "¿Saludan a Rosario?", "<td>ARS</td><td class=\"n\">1</td><td class=\"n\">1.000,00</td>",
+		}, []string{"<script>alert", `Temas de conversación <span class="chip">por reglas</span>`, `Preguntas <span class="chip">por reglas</span>`}},
+		{"sin análisis, apagado", false, nil, "/parcial/programas/detalle?tramo=" + url.QueryEscape(keyPoco), []string{
+			`<h2 id="det-h">POCO</h2>`, "Radio Test · 06:00 a 07:00 · " + closedEnded + " · 6 mensajes de 4 personas", claudeOffText,
+			`Temas de conversación <span class="chip">por reglas</span>`, `Preguntas <span class="chip">por reglas</span>`, "Sin Super Chats ni Super Stickers.",
+		}, []string{`<span class="ia">Claude</span>`}},
+		{"sin análisis, activo", true, nil, "/parcial/programas/detalle?tramo=" + url.QueryEscape(keyMan), []string{
+			"Todavía no hay resumen: se hace solo cuando termina el programa.", `Preguntas <span class="chip">por reglas</span>`, "¿Saludan a Rosario?",
+		}, nil},
+		{"al aire", true, nil, "/parcial/programas/detalle?tramo=" + url.QueryEscape(segmentKey("UC1", Segment{VideoID: "v1", Program: "LA TARDE", Start: day.Add(10 * time.Hour)})),
+			[]string{"10:00 a ahora · " + SegLive}, nil},
+		{"clave desconocida", true, nil, "/parcial/programas/detalle?tramo=UC1%7Cx%7CNADA%7C2026", []string{"Ese programa ya no está guardado."}, []string{`<h2 id="det-h">`}},
+		{"sin tramo: el último que terminó", true, []ClaudeAnalysis{final}, "/parcial/programas?canal=UC1", []string{`<h2 id="det-h">LA MAÑANA</h2>`, "del tránsito."}, nil},
+		// En "Ayer" el cruce de medianoche se corta a las 00:00: lo dice, y el CSV
+		// lleva el día para traer los mismos mensajes que la fila.
+		{"ayer: el cruce sigue después de las 00:00", true, nil, "/parcial/programas?dia=ayer&canal=UC1&tramo=" + url.QueryEscape(keyCruce), []string{
+			`<h2 id="det-h">CRUCE</h2>`, " · " + closedCut + " · 14 mensajes de 3 personas", `href="/export.csv?dia=ayer&amp;tramo=` + attrQuery(keyCruce) + `"`,
+		}, []string{closedEnded}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			st, srv := programServer(t, now, c.analyst)
+			for _, a := range c.add {
+				st.AddAnalysis(a)
+			}
+			st.Add([]Message{{ID: "inj", Source: "chat", VideoID: "v2", Program: "POCO", Author: "<b>Inyector</b>", Text: "<script>hola", At: day.Add(6*time.Hour + 30*time.Second)}})
+			body := getBody(srv.Routes(), c.path)
+			for _, s := range c.want {
+				if !strings.Contains(body, s) {
+					t.Errorf("falta %q", s)
+				}
+			}
+			for _, s := range c.not {
+				if strings.Contains(body, s) {
+					t.Errorf("no debería tener %q", s)
+				}
+			}
+			if strings.Contains(body, "<script>hola") || strings.Contains(body, "<b>Inyector") {
+				t.Errorf("texto de usuarios sin escapar")
+			}
+			if t.Failed() {
+				t.Logf("detalle:\n%s", body)
+			}
+		})
+	}
+}
+
+// TestExportProgram (CA1.12): el CSV de un programa y su nombre.
+func TestExportProgram(t *testing.T) {
+	now := noonToday()
+	day := dayStart(now)
+	_, srv := programServer(t, now, false)
+	h := srv.Routes()
+	keyMan := segmentKey("UC1", Segment{VideoID: "v1", Program: "LA MAÑANA", Start: day.Add(8 * time.Hour)})
+	get := func(path string) *httptest.ResponseRecorder {
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, httptest.NewRequest("GET", path, nil))
+		return w
+	}
+	w := get("/export.csv?tramo=" + url.QueryEscape(keyMan))
+	rows, err := csv.NewReader(w.Body).ReadAll()
+	if w.Code != 200 || err != nil || len(rows) != 27 || strings.Join(rows[0], ",") != strings.Join(csvHeader, ",") {
+		t.Fatalf("CSV del programa: %d, %v, %d filas", w.Code, err, len(rows))
+	}
+	for _, r := range rows[1:] {
+		if r[3] != "LA MAÑANA" {
+			t.Errorf("fila de otro programa: %v", r)
+		}
+	}
+	if got, want := w.Header().Get("Content-Disposition"), `attachment; filename="mensajes_la-manana_`+day.Format("2006-01-02")+`_0800.csv"`; got != want {
+		t.Errorf("Content-Disposition = %q, quería %q", got, want)
+	}
+	// El cruce de medianoche: con dia=ayer, el tramo cortado a las 00:00 (como su
+	// fila); sin día, el programa entero (como en "Hoy").
+	keyCruce := segmentKey("UC1", Segment{VideoID: "v0", Program: "CRUCE", Start: day.Add(-time.Hour)})
+	for q, want := range map[string]int{"dia=ayer&": 14, "dia=hoy&": 25, "": 25} {
+		if rows, _ := csv.NewReader(get("/export.csv?" + q + "tramo=" + url.QueryEscape(keyCruce)).Body).ReadAll(); len(rows) != want+1 {
+			t.Errorf("CSV del cruce con %q: %d mensajes, quería %d", q, len(rows)-1, want)
+		}
+	}
+	if w := get("/export.csv?tramo=UC1%7Cnada"); w.Code != 404 {
+		t.Errorf("clave desconocida = %d", w.Code)
+	}
+	if rows, _ := csv.NewReader(get("/export.csv").Body).ReadAll(); len(rows) != len(srv.st.Snapshot().Msgs)+1 {
+		t.Errorf("sin tramo: %d filas, quería todos los mensajes", len(rows))
+	}
+	start := time.Date(2026, 11, 5, 14, 0, 0, 0, time.Local)
+	for in, want := range map[string]string{
+		"LA MAÑANA": "la-manana", `"Ñandú" / ¿Qué pasó?`: "nandu-que-paso", "": "programa", "  -- ": "programa", "Año 2026 · Ü": "ano-2026-u",
+	} {
+		if got := csvName(in, start); got != "mensajes_"+want+"_2026-11-05_1400.csv" {
+			t.Errorf("csvName(%q) = %q", in, got)
+		}
+	}
+}
+
+// attrQuery es una clave en la query de un atributo, como la escribe
+// html/template (el "+" de los espacios va como &#43;).
+func attrQuery(key string) string { return strings.ReplaceAll(url.QueryEscape(key), "+", "&#43;") }
+
+// TestEstimateQuota (CA1.15): la cuota estimada por día con las cifras del
+// README y el caso por canal de canales-continuos (CA2.7).
+func TestEstimateQuota(t *testing.T) {
+	day24 := ChatGroup{PeakEvery: time.Minute, OffEvery: 3 * time.Minute, PeakHours: 13, OffHours: 11}
+	cases := []struct {
+		name     string
+		channels int
+		cuts     float64
+		groups   []ChatGroup
+		videos   int
+		chat     []int
+		total    int
+		fits     bool
+		text     string
+	}{
+		{"1 canal, por defecto, sin historial", 1, 0, []ChatGroup{day24}, 1440, []int{5000}, 7440, true,
+			"Entra en el día. Quedan 60 unidades antes de que se pause el chat"},
+		{"2 canales sin historial", 2, 0, []ChatGroup{day24}, 1920, []int{5000}, 7920, false, "No entra: faltan 420 unidades"},
+		{"2 canales con 6 cortes por día", 2, 6, []ChatGroup{day24}, 1920, []int{5000}, 8160, false, "No entra: faltan 660 unidades"},
+		{"por canal (CA2.7 de canales-continuos)", 2, 0, []ChatGroup{
+			{PeakEvery: 2 * time.Minute, OffEvery: 5 * time.Minute, PeakHours: 13, OffHours: 11},
+			{PeakEvery: 3 * time.Minute, OffEvery: 5 * time.Minute, PeakHours: 13, OffHours: 5},
+		}, 1920, []int{2610, 1600}, 7130, true, "Entra en el día. Quedan 370 unidades antes de que se pause el chat"},
+		{"un canal en pausa no lee chat", 2, 0, []ChatGroup{day24, {PeakEvery: time.Minute, OffEvery: time.Minute, PeakHours: 13, OffHours: 11, Paused: true}},
+			1920, []int{5000, 0}, 7920, false, "No entra: faltan 420 unidades"},
+	}
+	for _, c := range cases {
+		q := EstimateQuota(c.channels, c.cuts, c.groups, 9000)
+		if q.Videos != c.videos || q.Comments != 1000 || fmt.Sprint(q.Chat) != fmt.Sprint(c.chat) || q.Total != c.total ||
+			q.Fits != c.fits || q.Text != c.text || q.Limit != 7500 || q.Fast != int(c.cuts*40) {
+			t.Errorf("%s: %+v", c.name, q)
+		}
+	}
+}
+
+// TestLiveHours (CA1.15): las horas en vivo por día de los últimos 7 días.
+func TestLiveHours(t *testing.T) {
+	// Zona fija: con un cambio de horario en la semana, "7 días antes" no caería a las 12:00.
+	orig := time.Local
+	t.Cleanup(func() { time.Local = orig })
+	time.Local = time.FixedZone("prueba", -3*3600)
+	now := noonToday()
+	day := dayStart(now)
+	var samples []LiveSample
+	// Siete días con un vivo de 12:00 a 14:00 (pico) y otro de 22:00 a 23:00
+	// (fuera): el primero arranca justo 7 días antes de now.
+	for k := 7; k >= 1; k-- {
+		d := day.AddDate(0, 0, -k)
+		samples = append(samples, livesEvery("a", "UC1", "Uno", "A", d.Add(12*time.Hour), d.Add(14*time.Hour-3*time.Minute))...)
+		samples = append(samples, livesEvery("b", "UC1", "Uno", "B", d.Add(22*time.Hour), d.Add(23*time.Hour-3*time.Minute))...)
+	}
+	samples = append(samples, livesEvery("x", "UC9", "Otro", "X", day.Add(-48*time.Hour), now)...) // de otro canal
+	near := func(a, b float64) bool { return math.Abs(a-b) < 0.01 }
+
+	lh := LiveHours(samples, map[string]bool{"UC1": true}, 7, 20, now)
+	if lh.NoHistory || !near(lh.Peak, 2) || !near(lh.Off, 1) || !near(lh.Cuts, 13.0/7) {
+		t.Errorf("con historial: %+v", lh)
+	}
+	if len(lh.Days) != 7 || !lh.Days[0].Day.Equal(day) || lh.Days[0].Hours != 0 || !near(lh.Days[1].Hours, 3) || !near(lh.Days[6].Hours, 3) {
+		t.Errorf("días: %+v", lh.Days)
+	}
+	if lh := LiveHours(samples, map[string]bool{"UC1": true}, 0, 0, now); !near(lh.Peak, 0) || !near(lh.Off, 3) {
+		t.Errorf("sin horario pico todo cuenta como fuera: %+v", lh)
+	}
+	// Menos de 24 h de muestras: se suponen 24 h en vivo y no hay cortes.
+	recent := livesEvery("r", "UC2", "Dos", "R", now.Add(-2*time.Hour), now)
+	if lh := LiveHours(recent, map[string]bool{"UC2": true}, 7, 20, now); !lh.NoHistory || lh.Peak != 13 || lh.Off != 11 || lh.Cuts != 0 {
+		t.Errorf("sin historial: %+v", lh)
+	}
+	if lh := LiveHours(nil, map[string]bool{"UC2": true}, 22, 6, now); !lh.NoHistory || lh.Peak != 8 || lh.Off != 16 {
+		t.Errorf("sin muestras, pico que cruza la medianoche: %+v", lh)
+	}
+}
+
+// channelsServer arma la pantalla Canales con un canal al aire y otro esperando.
+func channelsServer(t *testing.T, now time.Time, two bool) *Server {
+	t.Helper()
+	st := liveStore(t, now)
+	chans := []ChannelStatus{{ID: "UCB", Name: "Radio B", Input: "@radiob", Live: true, Every: 3 * time.Minute}}
+	if two {
+		chans = append(chans, ChannelStatus{ID: "UCC", Name: "Radio C", Input: "UCC", WaitSince: now.Add(-2 * time.Minute),
+			FastUntil: now.Add(18 * time.Minute), Every: 3 * time.Minute})
+	}
+	st.SetChannels(chans)
+	st.AddUnits(37)
+	return &Server{st: st, budget: 9000, now: func() time.Time { return now }}
+}
+
+// TestChannelsPageReadOnly (CA1.14, CA1.15): Canales en solo lectura, con el
+// estado de cada canal y la cuota estimada.
+func TestChannelsPageReadOnly(t *testing.T) {
+	now := noonLocal(t)
+	hm := func(t time.Time) string { return t.Local().Format("15:04") }
+	cases := []struct {
+		name, path string
+		two        bool
+		want       []string
+	}{
+		{"dos canales", "/canales", true, []string{
+			"<h3>Radio B</h3>", "@radiob · canal principal", "<h3>Radio C</h3>", "UCC · canal extra", `<span class="live">EN VIVO</span>`,
+			`<span class="chip">Esperando el próximo vivo</span>`, "Al aire: LA TARDE desde " + hm(now.Add(-time.Hour)) + " · 2.º vivo de hoy",
+			"Sin vivo desde " + hm(now.Add(-2*time.Minute)) + " · buscando cada 1 min hasta " + hm(now.Add(18*time.Minute)),
+			"Cómo sale: " + airsPerShow, "Cómo sale: " + airsUnknown, "sin historial",
+			"cada 1 min en el pico (07 a 20 h) y cada 3 min fuera, por turnos entre todos los vivos",
+			"Qué pasa cuando termina un programa", "cada 1 min durante 20 min y después cada 3 min", "a lo sumo 40 unidades",
+			"Cuota de YouTube con esta configuración", "<strong>7.920</strong>", "No entra: faltan 420 unidades", "Usadas hoy: 37",
+			`<div class="qbar" role="img" aria-label="Cuota estimada por día: 7.920 unidades de 10.000`, `style="left: 75.00%"`, `style="left: 90.00%"`,
+			`style="width: 19.20%"`, `style="width: 10.00%"`, `style="width: 50.00%"`,
+			"Por ahora los canales y los intervalos se cambian con -canal, -chat-seg-pico y -chat-seg (ver README)",
+			`hx-get="/parcial/canales/estado" hx-trigger="every 5s"`,
+		}},
+		{"un canal", "/canales", false, []string{"<strong>7.440</strong>", "Entra en el día. Quedan 60 unidades antes de que se pause el chat"}},
+		{"estado", "/parcial/canales/estado", true, []string{"<h3>Radio B</h3>", "<h3>Radio C</h3>", "<strong>7.920</strong>", "Usadas hoy: 37"}},
+	}
+	for _, c := range cases {
+		w := httptest.NewRecorder()
+		channelsServer(t, now, c.two).Routes().ServeHTTP(w, httptest.NewRequest("GET", c.path, nil))
+		body := w.Body.String()
+		if w.Code != 200 {
+			t.Errorf("%s: %d", c.name, w.Code)
+		}
+		for _, s := range c.want {
+			if !strings.Contains(body, s) {
+				t.Errorf("%s: falta %q", c.name, s)
+			}
+		}
+		// Solo lectura: ningún formulario, campo, POST ni botón de guardar.
+		for _, s := range []string{"<form", "<input", "<select", "hx-post", "Guardar"} {
+			if strings.Contains(body, s) {
+				t.Errorf("%s: no debería tener %q", c.name, s)
+			}
+		}
+		if c.path == "/parcial/canales/estado" && strings.Contains(body, "<h1>") {
+			t.Errorf("el estado es un parcial")
+		}
+		if t.Failed() {
+			t.Logf("%s:\n%s", c.name, body)
+			return
+		}
+	}
+}
+
+// TestChannelsClaudeReadOnly (CA1.16): la tarjeta de Claude de Canales dice si
+// hay clave, pero nunca la muestra.
+func TestChannelsClaudeReadOnly(t *testing.T) {
+	now := noonLocal(t)
+	env := func(key string) func(string) string {
+		return func(name string) string {
+			if name == "CLAUDE_API_KEY" {
+				return key
+			}
+			return ""
+		}
+	}
+	cases := []struct {
+		name      string
+		getenv    func(string) string
+		usd       float64
+		model     string
+		want, not []string
+	}{
+		{"apagado", env(testClaudeKey), 0, defaultClaudeModel, []string{`<span class="chip off">Apagado (-claude-usd 0)</span>`, "sin tope (apagado)"}, []string{"Último aviso"}},
+		{"falta la clave", env(""), 2, defaultClaudeModel, []string{`<span class="chip warn">Falta CLAUDE_API_KEY</span>`, "US$ 2,00 por día (apagado)",
+			"Último aviso: falta CLAUDE_API_KEY"}, nil},
+		{"modelo sin precio", env(testClaudeKey), 2, "claude-x", []string{`<span class="chip off">Apagado</span>`, "Último aviso: -claude-modelo: no conozco el precio"}, nil},
+		{"apagado hasta reiniciar", env(testClaudeKey), 2, defaultClaudeModel, []string{`<span class="chip warn">Apagado hasta reiniciar</span>`,
+			"Último aviso: Claude rechazó la clave (401)"}, []string{"Clave cargada", "chip ok"}},
+		{"clave cargada", env(testClaudeKey), 2, defaultClaudeModel, []string{`<span class="chip ok">Clave cargada</span>`, defaultClaudeModel, "US$ 2,00 por día",
+			"Gastado hoy", "US$ 0,13", "Último análisis: ", "LA MAÑANA de Radio B.",
+			"<summary>Qué se le manda a Claude y qué se guarda</summary>", "Un pedido por programa", "sin nombres de usuario", "datos.analisis.jsonl", "30 días"}, nil},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			srv := channelsServer(t, now, false)
+			ccfg, warn := claudeConfig(c.getenv, c.usd, c.model)
+			srv.claudeWarn, srv.claudeModel, srv.claudeUSD = warn, c.model, c.usd
+			if ccfg.On {
+				srv.analyst = NewAnalyst()
+				st := ClaudeStatus{On: true, Model: ccfg.Model, Tope: ccfg.Budget}
+				if c.name == "apagado hasta reiniciar" {
+					st.On, st.Off = false, "Claude rechazó la clave (401): revisá CLAUDE_API_KEY y reiniciá el monitor"
+				}
+				srv.st.SetClaudeStatus(st)
+				srv.st.AddClaudeSpend(125_000)
+				srv.st.AddAnalysis(ClaudeAnalysis{At: now.Add(-time.Hour), Key: "k", ChannelID: "UCB", Program: "LA MAÑANA",
+					From: now.Add(-3 * time.Hour), To: now.Add(-2 * time.Hour)})
+			}
+			body := getBody(srv.Routes(), "/canales")
+			for _, s := range c.want {
+				if !strings.Contains(body, s) {
+					t.Errorf("falta %q", s)
+				}
+			}
+			for _, s := range append(c.not, testClaudeKey, "sk-ant", "<input", "<select", "hx-post") {
+				if strings.Contains(body, s) {
+					t.Errorf("no debería tener %q", s)
+				}
+			}
+			if t.Failed() {
+				i := strings.Index(body, `id="ia-h"`)
+				t.Logf("tarjeta:\n%s", body[max(i, 0):])
+			}
+		})
+	}
+}
+
+// TestTemplateTokens (CA1.17): todo var(--x) de las plantillas está definido
+// en los dos temas y los style="…" solo llevan valores calculados.
+func TestTemplateTokens(t *testing.T) {
+	files, err := templatesFS.ReadDir("templates")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var all strings.Builder
+	for _, f := range files {
+		b, err := templatesFS.ReadFile("templates/" + f.Name())
+		if err != nil {
+			t.Fatal(err)
+		}
+		all.Write(b)
+	}
+	src := all.String()
+	block := func(open string) map[string]string {
+		i := strings.Index(src, open)
+		if i < 0 {
+			t.Fatalf("falta el bloque %q", open)
+		}
+		body := src[i+len(open) : i+strings.Index(src[i:], "}")]
+		defs := map[string]string{}
+		for _, m := range regexp.MustCompile(`(--[a-z0-9-]+):\s*([^;]+);`).FindAllStringSubmatch(body, -1) {
+			defs[m[1]] = strings.TrimSpace(m[2])
+		}
+		return defs
+	}
+	light, dark := block(":root {"), block(`:root:not([data-theme="light"]) {`)
+	used := map[string]bool{}
+	for _, m := range regexp.MustCompile(`var\((--[a-z0-9-]+)\)`).FindAllStringSubmatch(src, -1) {
+		used[m[1]] = true
+	}
+	for _, name := range []string{"--link", "--link-hover", "--sent-pos", "--sent-neu", "--sent-neg", "--series-2", "--series-3",
+		"--series-4", "--series-5", "--ia-bg", "--ia-text", "--field-border", "--on-accent"} {
+		used[name] = true // los colores nuevos del diseño, aunque todavía no se usen
+	}
+	for name := range used {
+		if light[name] == "" || dark[name] == "" {
+			t.Errorf("%s: claro %q, oscuro %q", name, light[name], dark[name])
+		}
+	}
+	if light["--text-muted"] != "#6b6a65" || light["--link"] != "#1f63b8" {
+		t.Errorf("--text-muted %q y --link %q no son los del diseño", light["--text-muted"], light["--link"])
+	}
+	allowed := map[string]bool{"width": true, "left": true, "flex-grow": true}
+	for _, m := range regexp.MustCompile(`style="([^"]*)"`).FindAllStringSubmatch(src, -1) {
+		for _, decl := range strings.Split(m[1], ";") {
+			if strings.TrimSpace(decl) == "" {
+				continue
+			}
+			prop, val, _ := strings.Cut(decl, ":")
+			if !allowed[strings.TrimSpace(prop)] || strings.ContainsAny(val, "#") || strings.Contains(val, "var(") || strings.Contains(val, "rgb") {
+				t.Errorf("style con algo que no es un valor calculado: %q", m[1])
+			}
+		}
+	}
+}
+
+// TestChannelsPageHours (CA1.14, CA1.15): con 7 días de muestras la tarjeta
+// lista las horas en vivo por día y ya no dice "sin historial".
+func TestChannelsPageHours(t *testing.T) {
+	now := noonLocal(t)
+	srv := channelsServer(t, now, false)
+	day := dayStart(now)
+	for k := 6; k >= 1; k-- {
+		d := day.AddDate(0, 0, -k)
+		for _, s := range livesEvery("h"+fmt.Sprint(k), "UCB", "Radio B", "🔴 [EN VIVO] PROG | RADIO B", d.Add(10*time.Hour), d.Add(12*time.Hour-3*time.Minute)) {
+			srv.st.AddLives(s.At, []Video{{ID: s.VideoID, ChannelID: s.ChannelID, Channel: s.Channel, Title: s.Title, LiveStatus: "live"}})
+		}
+	}
+	body := getBody(srv.Routes(), "/canales")
+	if strings.Contains(body, "sin historial") {
+		t.Errorf("con una semana de muestras no debería decir sin historial")
+	}
+	for _, k := range []int{1, 6} {
+		d := day.AddDate(0, 0, -k)
+		if want := weekdayShort[d.Weekday()] + " " + d.Format("02/01") + ": 2,0 h"; !strings.Contains(body, want) {
+			t.Errorf("falta %q", want)
+		}
+	}
+	if t.Failed() {
+		t.Logf("canales:\n%s", body)
+	}
+}
+
+// TestLiveHoursLocalSlots: las franjas de 5 min de LiveHours van sobre la hora
+// local, así un vivo de 10:00 a 11:57 cuenta 2 h aunque la zona no esté
+// alineada a 5 min con UTC (como la de noonLocal) y a cualquier hora del día.
+func TestLiveHoursLocalSlots(t *testing.T) {
+	orig := time.Local
+	t.Cleanup(func() { time.Local = orig })
+	for _, off := range []int{-3 * 60, -6*60 - 44, -6*60 - 46, 11*60 + 32} {
+		for _, at := range []time.Duration{30 * time.Minute, 12 * time.Hour, 23*time.Hour + 30*time.Minute} {
+			time.Local = time.FixedZone("prueba", off*60)
+			now := dayStart(time.Now()).Add(at)
+			day := dayStart(now)
+			var samples []LiveSample
+			for k := 6; k >= 1; k-- {
+				d := day.AddDate(0, 0, -k)
+				samples = append(samples, livesEvery("v", "UC1", "Uno", "A", d.Add(10*time.Hour), d.Add(12*time.Hour-3*time.Minute))...)
+			}
+			lh := LiveHours(samples, map[string]bool{"UC1": true}, 7, 20, now)
+			if lh.NoHistory || lh.Days[1].Hours != 2 || lh.Days[6].Hours != 2 || lh.Days[0].Hours != 0 {
+				t.Errorf("zona %+d min, %s: días %+v", off, at, lh.Days)
+			}
+		}
 	}
 }

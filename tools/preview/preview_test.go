@@ -328,6 +328,11 @@ func TestPreviewStartup(t *testing.T) {
 		fakeData(t, datos, time.Now())
 		writeFile(t, filepath.Join(src, "datos.cuota.json"), `{"Day":"`+pacificToday()+`","Units":120}`)
 		writeFile(t, filepath.Join(src, "datos.espectadores.jsonl"), `{"VideoID":"vivoViejo11","At":"2026-10-30T10:00:00Z","Viewers":5}`+"\n")
+		// Los vivos y los análisis se copian (ADR 0007); el gasto de Claude y los canales, no.
+		writeFile(t, filepath.Join(src, "datos.vivos.jsonl"), `{"At":"2026-10-30T10:00:00Z","VideoID":"vivoViejo11","ChannelID":"UCsintetico","Channel":"Canal Sintético","Title":"SINTÉTICO en VIVO | PROGRAMA"}`+"\n")
+		writeFile(t, filepath.Join(src, "datos.analisis.jsonl"), `{"Key":"UCsintetico|vivoViejo11|PROGRAMA|2026-10-30T10:00:00Z","ChannelID":"UCsintetico","Program":"PROGRAMA"}`+"\n")
+		writeFile(t, filepath.Join(src, "datos.claude.json"), `{"Day":"2026-10-30","Micros":999}`)
+		writeFile(t, filepath.Join(src, "datos.canales.json"), `{}`)
 		writeFile(t, filepath.Join(src, "otro.txt"), "no se copia")
 		out := &lockedBuffer{}
 		p, err := prepare(config{Repo: repo, Datos: datos, Addr: freeAddr(t), tmp: tmp, out: out})
@@ -347,10 +352,10 @@ func TestPreviewStartup(t *testing.T) {
 		if runtime.GOOS != "windows" && info.Mode().Perm() != 0o700 {
 			t.Errorf("permisos de la copia %v, quiero 0700", info.Mode().Perm())
 		}
-		if got := strings.Join(entries(t, p.dir), ","); got != "datos.cuota.json,datos.espectadores.jsonl,datos.jsonl" {
+		if got := strings.Join(entries(t, p.dir), ","); got != "datos.analisis.jsonl,datos.cuota.json,datos.espectadores.jsonl,datos.jsonl,datos.vivos.jsonl" {
 			t.Errorf("copió %s", got)
 		}
-		for _, n := range []string{"datos.jsonl", "datos.cuota.json", "datos.espectadores.jsonl"} {
+		for _, n := range []string{"datos.jsonl", "datos.cuota.json", "datos.espectadores.jsonl", "datos.vivos.jsonl", "datos.analisis.jsonl"} {
 			a, _ := os.ReadFile(filepath.Join(src, n))
 			b, _ := os.ReadFile(filepath.Join(p.dir, n))
 			if !bytes.Equal(a, b) {
@@ -397,6 +402,26 @@ func TestPreviewStartup(t *testing.T) {
 		}
 		if !strings.Contains(out.String(), "aviso:") || !strings.Contains(out.String(), "sin datos") {
 			t.Errorf("no avisó que arranca sin datos: %s", out)
+		}
+	})
+
+	t.Run("sin vivos ni análisis", func(t *testing.T) {
+		src := t.TempDir()
+		datos := filepath.Join(src, "datos.jsonl")
+		fakeData(t, datos, time.Now())
+		writeFile(t, filepath.Join(src, "datos.cuota.json"), `{"Day":"`+pacificToday()+`","Units":1}`)
+		writeFile(t, filepath.Join(src, "datos.espectadores.jsonl"), `{"VideoID":"vivoViejo11","At":"2026-10-30T10:00:00Z","Viewers":5}`+"\n")
+		out := &lockedBuffer{}
+		p, err := prepare(config{Repo: repo, Datos: datos, Addr: freeAddr(t), tmp: t.TempDir(), out: out})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer p.cleanup()
+		if got := strings.Join(entries(t, p.dir), ","); got != "datos.cuota.json,datos.espectadores.jsonl,datos.jsonl" {
+			t.Errorf("copió %s", got)
+		}
+		if strings.Contains(out.String(), "aviso:") {
+			t.Errorf("sin los archivos nuevos no hay que avisar: %s", out)
 		}
 	})
 

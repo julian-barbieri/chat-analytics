@@ -44,7 +44,7 @@ type running struct {
 
 func main() {
 	repo := flag.String("repo", ".", "raíz del repo de yt-monitor con la rama que querés ver (tiene que tener go.mod y main.go)")
-	datos := flag.String("datos", "datos.jsonl", "ruta al datos.jsonl real; también se copian datos.cuota.json y datos.espectadores.jsonl de la misma carpeta")
+	datos := flag.String("datos", "datos.jsonl", "ruta al datos.jsonl real; también se copian datos.cuota.json, datos.espectadores.jsonl, datos.vivos.jsonl y datos.analisis.jsonl de la misma carpeta (no datos.claude.json ni datos.canales.json)")
 	addr := flag.String("addr", "localhost:8081", "dirección de la vista previa: solo localhost, 127.0.0.1 o ::1")
 	cut := flag.Bool("cortar", false, "corta la vista previa que esté corriendo y borra su copia temporal")
 	flag.Usage = func() {
