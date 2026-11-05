@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -695,4 +696,83 @@ func TestPreviewStop(t *testing.T) {
 			}
 		}
 	})
+}
+
+// TestFakeClaudeMessages (CA14): la API simulada atiende POST /v1/messages
+// con la clave falsa y responde un análisis fijo que cumple el esquema.
+func TestFakeClaudeMessages(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "datos.jsonl")
+	fakeData(t, path, time.Now())
+	fake, err := loadFake(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewServer(fake)
+	defer srv.Close()
+	const secret = "texto sintético que no se guarda"
+	post := func(method, route, key string) (int, string) {
+		t.Helper()
+		body := `{"model":"claude-haiku-5-5","max_tokens":4000,"messages":[{"role":"user","content":"` + secret + `"}]}`
+		req, _ := http.NewRequest(method, srv.URL+route, strings.NewReader(body))
+		req.Header.Set("x-api-key", key)
+		res, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer res.Body.Close()
+		b, _ := io.ReadAll(res.Body)
+		return res.StatusCode, string(b)
+	}
+	code, body := post("POST", "/v1/messages", fakeClaudeKey)
+	var r struct {
+		Model   string `json:"model"`
+		Stop    string `json:"stop_reason"`
+		Content []struct{ Type, Text string }
+		Usage   struct {
+			In  int `json:"input_tokens"`
+			Out int `json:"output_tokens"`
+		} `json:"usage"`
+	}
+	if code != 200 || json.Unmarshal([]byte(body), &r) != nil || r.Model != "claude-haiku-5-5" || r.Stop != "end_turn" ||
+		len(r.Content) != 1 || r.Content[0].Type != "text" || r.Usage.In <= 0 || r.Usage.In > 10_000 || r.Usage.Out <= 0 {
+		t.Fatalf("respuesta = %d %s", code, body)
+	}
+	var res struct {
+		Resumen     string
+		Sentimiento struct{ Positivo, Neutro, Negativo int }
+		Temas       []struct{ Mensajes []int }
+		Preguntas   []struct{ Mensajes []int }
+		Quejas      []struct{ Mensajes []int }
+	}
+	dec := json.NewDecoder(strings.NewReader(r.Content[0].Text))
+	if err := dec.Decode(&res); err != nil || !strings.Contains(res.Resumen, "simulado") || len(res.Preguntas) == 0 {
+		t.Errorf("análisis simulado = %v %s", err, r.Content[0].Text)
+	}
+	for _, gs := range [][]struct{ Mensajes []int }{res.Temas, res.Preguntas, res.Quejas} {
+		for _, g := range gs {
+			for _, n := range g.Mensajes {
+				if n < 1 || n > 3 {
+					t.Errorf("número de mensaje %d fuera de 1 a 3", n)
+				}
+			}
+		}
+	}
+	if strings.Contains(body, secret) {
+		t.Errorf("el falso devolvió el texto recibido")
+	}
+	if n := fake.badKeys.Load(); n != 0 {
+		t.Errorf("badKeys = %d", n)
+	}
+	if code, _ := post("POST", "/v1/messages", "sk-ant-real"); code != 403 || fake.badKeys.Load() != 1 {
+		t.Errorf("clave ajena: %d, badKeys = %d", code, fake.badKeys.Load())
+	}
+	for _, c := range [][2]string{{"GET", "/v1/messages"}, {"POST", "/v1/complete"}, {"POST", "/v1/messages/batches"}} {
+		if code, _ := post(c[0], c[1], fakeClaudeKey); code != 404 {
+			t.Errorf("%s %s = %d, quiero 404", c[0], c[1], code)
+		}
+	}
+	// Lo que llega no se guarda: el falso no tiene dónde.
+	if strings.Contains(fmt.Sprintf("%+v", fake), secret) {
+		t.Errorf("el falso guardó el texto recibido")
+	}
 }

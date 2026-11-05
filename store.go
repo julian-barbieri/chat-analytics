@@ -33,7 +33,12 @@ type Store struct {
 	quota     string // archivo con la cuota gastada en el día, para que sobreviva a reinicios
 	vpath     string // serie de espectadores por vivo, aparte para no tocar el formato de datos.jsonl
 	lpath     string // muestras de los vivos en curso por canal (datos.vivos.jsonl), también aparte
+	apath     string // análisis de Claude (datos.analisis.jsonl), aparte de los mensajes
+	cpath     string // gasto del día en Claude (datos.claude.json)
 	msgs      []Message
+	analyses  []ClaudeAnalysis
+	spend     claudeDay
+	claude    ClaudeStatus
 	viewers   []ViewerSample
 	lives     []LiveSample
 	channels  []ChannelStatus
@@ -75,6 +80,42 @@ type ChannelStatus struct {
 	Every     time.Duration // cada cuánto se revisa con el resto (la revisión de videos)
 }
 
+// ClaudeAnalysis es un análisis de Claude de un tramo (un programa de un
+// vivo). Se guarda en datos.analisis.jsonl, nunca en datos.jsonl. Los
+// ejemplos van por Message.ID: lo único escrito por el modelo son los textos.
+type ClaudeAnalysis struct {
+	At                                 time.Time // cuándo se analizó
+	Key                                string    // canal|vivo|programa|inicio del tramo (segmentKey)
+	ChannelID, VideoID, Program, Model string    // Model: el que figura en la respuesta
+	From, To                           time.Time // el tramo; los mensajes empiezan hasta 5 min antes (el título cambia tarde)
+	Partial                            bool      // pedido con el botón, con el programa al aire
+	Sent, Total                        int       // mensajes mandados y del tramo
+	InputTokens, OutputTokens          int
+	CostMicros                         int64
+	StopReason, RefusalCategory        string // para medir refusals y cortes
+	Result                             ClaudeResult
+	Error                              string // ya sin la clave
+}
+
+// ClaudeStatus es el estado del análisis con Claude para la vista. Lo
+// escribe solo RunAnalyst; va solo en memoria.
+type ClaudeStatus struct {
+	On          bool
+	Off         string // por qué se apagó (401, 403, 404): hasta reiniciar
+	Model, Busy string // Busy: clave del tramo que se está analizando
+	Queued      []string
+	LastErr     string
+	Capped      bool  // el último pedido no entraba en el tope del día
+	Tope, Spent int64 // micro-dólares
+}
+
+// claudeDay es lo que se guarda en <datos>.claude.json: el día local (no del
+// Pacífico, como la cuota de YouTube) y lo gastado en micro-dólares.
+type claudeDay struct {
+	Day    string
+	Micros int64
+}
+
 // quotaDay es lo que se guarda en <datos>.cuota.json: el día del Pacífico y lo gastado.
 type quotaDay struct {
 	Day   string
@@ -83,12 +124,16 @@ type quotaDay struct {
 
 func OpenStore(path string) (*Store, error) {
 	base := strings.TrimSuffix(path, ".jsonl")
-	s := &Store{path: path, quota: base + ".cuota.json", vpath: base + ".espectadores.jsonl", lpath: base + ".vivos.jsonl", seen: map[string]bool{}}
+	s := &Store{path: path, quota: base + ".cuota.json", vpath: base + ".espectadores.jsonl", lpath: base + ".vivos.jsonl",
+		apath: base + ".analisis.jsonl", cpath: base + ".claude.json", seen: map[string]bool{}}
 	if b, err := os.ReadFile(s.quota); err == nil {
 		var q quotaDay
 		if json.Unmarshal(b, &q) == nil {
 			s.unitsDay, s.units = q.Day, q.Units
 		}
+	}
+	if b, err := os.ReadFile(s.cpath); err == nil {
+		json.Unmarshal(b, &s.spend)
 	}
 	cutoff := time.Now().Add(-retention)
 	f, err := os.Open(path)
@@ -120,6 +165,13 @@ func OpenStore(path string) (*Store, error) {
 		return nil, err
 	}
 	s.lives = lives
+	// La retención se cuenta desde el mensaje más viejo analizado (los del
+	// tramo empiezan segmentLead antes de From), no desde la hora del análisis.
+	analyses, err := loadJSONL(s.apath, func(a ClaudeAnalysis) bool { return !a.From.Add(-segmentLead).Before(cutoff) })
+	if err != nil {
+		return nil, err
+	}
+	s.analyses = analyses
 	return s, nil
 }
 
@@ -359,6 +411,86 @@ func (s *Store) rollDay() {
 	}
 }
 
+// AddClaudeSpend suma lo gastado en Claude (micro-dólares) y lo guarda.
+func (s *Store) AddClaudeSpend(micros int64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.rollClaudeDay()
+	s.spend.Micros += micros
+	b, _ := json.Marshal(s.spend)
+	tmp := s.cpath + ".tmp"
+	if os.WriteFile(tmp, b, 0o644) == nil {
+		os.Rename(tmp, s.cpath)
+	}
+}
+
+// ClaudeSpend es lo gastado hoy en Claude (micro-dólares).
+func (s *Store) ClaudeSpend() int64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.rollClaudeDay()
+	return s.spend.Micros
+}
+
+// rollClaudeDay reinicia el gasto de Claude a las 00:00 locales: el tope es
+// por día de la radio, no del Pacífico.
+func (s *Store) rollClaudeDay() {
+	if day := time.Now().Local().Format("2006-01-02"); day != s.spend.Day {
+		s.spend = claudeDay{Day: day}
+	}
+}
+
+// AddAnalysis guarda un análisis de Claude al final de datos.analisis.jsonl.
+func (s *Store) AddAnalysis(a ClaudeAnalysis) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.analyses = append(s.analyses, a)
+	// Si no se puede abrir el archivo, el análisis queda igual en memoria.
+	f, err := os.OpenFile(s.apath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	json.NewEncoder(f).Encode(a)
+}
+
+// Analyses devuelve los análisis de un canal con tramos desde since, en el
+// orden en que se hicieron. Los análisis no se modifican después de
+// guardarlos, así que compartir sus listas internas es seguro.
+func (s *Store) Analyses(channelID string, since time.Time) []ClaudeAnalysis {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var out []ClaudeAnalysis
+	for _, a := range s.analyses {
+		if a.ChannelID == channelID && !a.From.Before(since) {
+			out = append(out, a)
+		}
+	}
+	return out
+}
+
+// SetClaudeStatus guarda el estado del análisis con Claude (lo llama RunAnalyst).
+func (s *Store) SetClaudeStatus(c ClaudeStatus) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	c.Queued = append([]string(nil), c.Queued...)
+	s.claude = c
+}
+
+// MessagesOf devuelve una copia de los mensajes de esos vivos desde since:
+// el analista no necesita copiar todo el histórico en cada vuelta.
+func (s *Store) MessagesOf(ids map[string]bool, since time.Time) []Message {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var out []Message
+	for _, m := range s.msgs {
+		if ids[m.VideoID] && !m.At.Before(since) {
+			out = append(out, m)
+		}
+	}
+	return out
+}
+
 func (s *Store) SetError(err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -389,6 +521,7 @@ type Snapshot struct {
 	ChatNotes map[string]string
 	ChatInfo  map[string]ChatInfo
 	Updated   time.Time
+	Claude    ClaudeStatus
 }
 
 func (s *Store) Snapshot() Snapshot {
@@ -409,7 +542,11 @@ func (s *Store) Status() Snapshot {
 
 func (s *Store) status() Snapshot {
 	s.rollDay()
+	s.rollClaudeDay()
+	cl := s.claude
+	cl.Queued, cl.Spent = append([]string(nil), cl.Queued...), s.spend.Micros
 	return Snapshot{
+		Claude:  cl,
 		Channel: s.channel, Channels: append([]ChannelStatus(nil), s.channels...), Videos: append([]Video(nil), s.videos...),
 		Units: s.units, LastErr: s.lastErr, LastErrT: s.lastErrT, ChatNote: s.chatNote,
 		ChatNotes: maps.Clone(s.chatNotes), ChatInfo: maps.Clone(s.chatInfo), Updated: s.updated,

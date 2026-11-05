@@ -1,6 +1,6 @@
 # Spec: análisis con Claude por canal y por programa (parte 2 de "canales en continuo")
 
-- **Estado:** aprobada (etapa A). **Depende de la etapa 1 de canales en continuo**
+- **Estado:** implementada (etapa A; falta CA18 en el navegador, la revisión y el PR). **Depende de la etapa 1 de canales en continuo**
   (`feat/canales-continuos`, spec `docs/specs/2026-11-05-canales-continuos.md`), que ya
   entró a `main` (PR 20). Antes de implementar se rebasa `feat/analisis-claude` sobre
   `origin/main` y se revisan las citas a archivo:línea de esa etapa. La etapa 2
@@ -55,7 +55,7 @@ con el pedido de README:120-122 (`main`). La tarjeta 2 del dashboard lo dice:
 | `Store.LastChatOf(ids, n)` | `store.go:425-435` |
 | `Segment`, `SegEnded` / `SegLive` / `SegNone`, `segmentGap` | `analyze.go:529-547` |
 | `dayStart` (00:00 locales) | `analyze.go:550-553` |
-| `ProgramSegments(samples, channelID, from, now)` | `analyze.go:560-604` |
+| `ProgramSegments(samples, channelID, live, from, now)` (en `main`, con `live`: los vivos en curso del canal) | `analyze.go` |
 | `channelAnalysis` (selector "Programa en curso" / "Todo el día del canal"; mensajes del programa = vivo actual, `programOf == prog`, desde el inicio del tramo menos 5 min) | `server.go:487-569`, el filtro en `server.go:519-534` |
 | `scope`, `analysisData` | `server.go:456-485` |
 | Plantilla `vivo-analisis` con las tarjetas 1 a 6 | `templates/partials.html:87-222` |
@@ -132,21 +132,21 @@ Tests nuevos en `monitor_test.go` (y en `tools/preview` para CA13 y CA14), escri
 reales. El primero falla hoy en ejecución (no por compilación): guardar esa salida para el
 PR.
 
-- [ ] CA1 (falla hoy): sin análisis con Claude configurado (el `Server` de hoy, sin
+- [x] CA1 (falla hoy): sin análisis con Claude configurado (el `Server` de hoy, sin
   analista), la vista de análisis muestra la tarjeta "7. Análisis con Claude" con el
   estado apagado ("El análisis con Claude está apagado. Para activarlo, mirá la sección
   del README.") y **ningún** `hx-post`; las tarjetas 1 a 6 no cambian — se verifica con
   `TestClaudeCardOff`, armado con `superStore` + `getBody("/parcial/vivo/analisis?video=v1")`
   (solo API que ya existe en `main` y en la etapa 1, así hoy falla al buscar el texto) y un
   caso con `?canal=…` sobre la etapa 1.
-- [ ] CA2: `claudeConfig(getenv, usd, modelo)` (pura): `-claude-usd 0` (el valor por
+- [x] CA2: `claudeConfig(getenv, usd, modelo)` (pura): `-claude-usd 0` (el valor por
   defecto) → apagado sin aviso; `usd > 0` sin `CLAUDE_API_KEY` → apagado con el aviso
   "falta CLAUDE_API_KEY: ponela en el archivo de la clave o como variable de entorno (ver
   README.md); sigo sin análisis con Claude"; modelo que no está en `claudePrices` →
   apagado con aviso que nombra el modelo; `CLAUDE_BASE_URL` cambia la URL base (solo
   pruebas). En ningún caso el aviso contiene la clave. El arranque sigue igual en los tres
   casos — se verifica con `TestClaudeConfig` (tabla con un `getenv` falso).
-- [ ] CA3: forma del pedido. `POST <base>/v1/messages` con `x-api-key`,
+- [x] CA3: forma del pedido. `POST <base>/v1/messages` con `x-api-key`,
   `anthropic-version` (constante `anthropicVersion`) y `content-type: application/json`.
   El cuerpo tiene `model`, `max_tokens` (`claudeMaxTokens`), `system`, **un solo**
   mensaje `user` (sin prefill de `assistant`) y `output_config` con
@@ -158,7 +158,7 @@ PR.
   `TestClaudeRequest` (el falso guarda el pedido, lo decodifica en un
   `map[string]any` para afirmar los campos que **no** tienen que estar, y responde un
   bloque `thinking` seguido de un `text` con JSON válido).
-- [ ] CA4: errores en español y **la clave nunca aparece**: 400, 401 (con la clave
+- [x] CA4: errores en español y **la clave nunca aparece**: 400, 401 (con la clave
   repetida en el cuerpo del falso), 403, 404 (modelo inexistente), 413, 429 con
   `retry-after`, 500, 529, servidor cerrado (error de red), JSON roto, texto que no cumple
   el esquema, `stop_reason: "refusal"` (con `stop_details.category`) y
@@ -170,7 +170,7 @@ PR.
   / red reintentan ese tramo a lo sumo 2 veces más (a los 5 y 15 min, o lo que diga
   `retry-after` si es mayor) — se verifica con `TestClaudeErrorsHideKey` (tabla) y
   `TestAnalystRetries` (el falso cuenta pedidos: un `refusal` se pide una sola vez).
-- [ ] CA5: lo que se manda (`claudePrompt`, pura): una línea por mensaje con número local
+- [x] CA5: lo que se manda (`claudePrompt`, pura): una línea por mensaje con número local
   y hora (`[12] 14:05 texto`), **sin** `Author`, sin `ID`, sin likes ni montos; se saltean
   los que `Classify` marca como spam (links y teléfonos); cada texto se corta en 300 runas;
   con más de `claudeMaxMsgs` (1.500) se toma una muestra pareja que conserva el orden, el
@@ -178,14 +178,14 @@ PR.
   horario del tramo. El texto de los mensajes va entre delimitadores y el `system` dice
   que es material a analizar, no instrucciones — se verifica con `TestClaudePrompt` (un
   mensaje con nombre de autor testigo y otro con `https://` no aparecen en el pedido).
-- [ ] CA6: validación de la respuesta (`validClaudeResult`, pura): se descartan números de
+- [x] CA6: validación de la respuesta (`validClaudeResult`, pura): se descartan números de
   mensaje fuera de rango o repetidos, se cortan las listas (5 temas, 8 grupos de
   preguntas, 5 quejas) y los textos (resumen 800 runas, el resto 200), el sentimiento se
   normaliza a 100 y un resultado sin resumen es un error ("Claude devolvió un análisis que
   no entiendo"). Las cantidades de mensajes y de personas de cada grupo **se cuentan en
   Go** con los números válidos y los `Author` locales, no se toman del modelo — se verifica
   con `TestClaudeResultValidate`.
-- [ ] CA7: costo y tope. `claudeCost(modelo, entrada, salida)` (pura) usa `claudePrices`
+- [x] CA7: costo y tope. `claudeCost(modelo, entrada, salida)` (pura) usa `claudePrices`
   con los precios verificados (tabla de "Datos verificados"), incluido el escalón de Haiku
   5.5 por encima de 100.000 tokens de entrada; el costo real se calcula con el `model` que
   figura en la respuesta, y un modelo que no está en la tabla se cobra al precio más caro
@@ -200,13 +200,13 @@ PR.
   Sonnet, Opus, Haiku con 100.000 y con 100.001 tokens, modelo desconocido),
   `TestStoreClaudeSpend` y `TestAnalystBudget` (el falso cuenta pedidos; con tope chico
   recibe 0).
-- [ ] CA8: resultados en `datos.analisis.jsonl`, un `ClaudeAnalysis` por línea, **nunca**
+- [x] CA8: resultados en `datos.analisis.jsonl`, un `ClaudeAnalysis` por línea, **nunca**
   en `datos.jsonl`: al abrir se descartan los que tienen `From` de hace más de 30 días, las
   líneas ilegibles y las demasiado largas, y se reescribe con tmp + `os.Rename`; si no
   existe se arranca vacío. Después de un análisis, `datos.jsonl` queda byte a byte igual —
   se verifica con `TestStoreAnalysesOpen` (tabla, como `TestStoreLivesOpen`) y un chequeo
   dentro de `TestAnalystClosesProgram`.
-- [ ] CA9: análisis automático al cerrar un programa: con muestras de vivos y mensajes
+- [x] CA9: análisis automático al cerrar un programa: con muestras de vivos y mensajes
   armados en el test, `RunAnalyst` (tick achicado) analiza **una vez** cada tramo
   `SegEnded` que terminó hoy, del más nuevo al más viejo; al arrancar con historial
   analiza los de hoy que ya terminaron y no tienen análisis, dentro del tope (decisión
@@ -218,7 +218,7 @@ PR.
   al cancelar el contexto, también con un pedido en curso, antes del cleanup de
   `t.TempDir()` — se verifica con `TestAnalystClosesProgram` y `TestSegmentMessages`,
   también con `-race`.
-- [ ] CA10: botón "Analizar ahora" del programa en curso: `POST /claude/analizar` con
+- [x] CA10: botón "Analizar ahora" del programa en curso: `POST /claude/analizar` con
   `canal=UC…` **solo encola** (el falso de Claude no recibe nada mientras corre el handler)
   y responde la tarjeta en estado "En cola"; el analista lo hace como análisis parcial
   (`Partial: true`, hasta ahora) que se reemplaza en la vista por el final al cerrar el
@@ -230,7 +230,7 @@ PR.
   es de `-canal` → 400. El botón solo se dibuja si el `GET` vino de loopback; si no, "Para
   pedir un análisis, abrí el dashboard en la PC del monitor" — se verifica con
   `TestClaudeAnalyzePost` (tabla).
-- [ ] CA11: la tarjeta 7 en el análisis del canal. Con "Programa en curso": el último
+- [x] CA11: la tarjeta 7 en el análisis del canal. Con "Programa en curso": el último
   análisis del tramo actual (parcial) o "Todavía no hay análisis de este programa: se hace
   solo cuando termina" + botón con el costo estimado según los mensajes del tramo (por
   ejemplo "≈ US$ 0,06"). Con "Todo el día del canal": un bloque por programa de hoy ya
@@ -246,29 +246,29 @@ PR.
   resumen del falso aparece como `&lt;script&gt;`); no se usa `template.HTML`. En un vivo
   suelto (`?video=`) con el análisis activo: "El análisis con Claude es por canal" — se
   verifica con `TestClaudeCard` (tabla de estados).
-- [ ] CA12: el análisis con Claude no toca la cuota de YouTube ni el worker: `git diff
+- [x] CA12: el análisis con Claude no toca la cuota de YouTube ni el worker: `git diff
   main -- worker.go youtube.go` vacío, `TestFlowAgainstFakeAPI` con el mismo `yt.Units`, y
   ningún handler llama al cliente: `grep -n "AnalyzeChat" server.go` vacío.
-- [ ] CA13: la vista previa nunca llega a Anthropic: `childEnv` saca los `CLAUDE_API_KEY`,
+- [x] CA13: la vista previa nunca llega a Anthropic: `childEnv` saca los `CLAUDE_API_KEY`,
   `CLAUDE_BASE_URL` y `ANTHROPIC_API_KEY` heredados (sin importar mayúsculas) y pone
   `CLAUDE_API_KEY=<fakeClaudeKey>` y `CLAUDE_BASE_URL=<la API simulada>`; el dashboard de
   la vista previa arranca con `-claude-usd` chico (por ejemplo 1) — se verifica
   extendiendo `TestPreviewCutPaths` (`tools/preview/edges_test.go:356-380`, que hoy pone
   una `YT_API_KEY` testigo y comprueba que el hijo no la recibe) con testigos de las tres
   variables y la línea de argumentos del hijo.
-- [ ] CA14: la API simulada de la vista previa atiende `POST /v1/messages`: si el header
+- [x] CA14: la API simulada de la vista previa atiende `POST /v1/messages`: si el header
   `x-api-key` no es la clave falsa, 403 y suma a `badKeys` (que ya se informa al cortar,
   `tools/preview/main.go:151-153`); con la clave falsa responde un análisis fijo que cumple
   el esquema (números de mensaje 1 a 3, resumen que dice que es simulado), `stop_reason:
   "end_turn"`, `model` igual al pedido y un `usage` chico; cualquier otro método o ruta de
   `/v1/` da 404. Los textos que llegan no se guardan ni se loguean — se verifica con
   `TestFakeClaudeMessages` en `tools/preview` (con datos sintéticos).
-- [ ] CA15: el formato de `datos.jsonl` y del CSV no cambia: `git diff main -- youtube.go`
+- [x] CA15: el formato de `datos.jsonl` y del CSV no cambia: `git diff main -- youtube.go`
   no toca `Message`, `csvHeader` igual, `TestStoreSuper`, `TestCSVSuper` y
   `TestStoreDedupAndRetention` en verde.
-- [ ] CA16: `go run . -h` (no toca ninguna API) describe `-claude-usd` (0 = apagado) y
+- [x] CA16: `go run . -h` (no toca ninguna API) describe `-claude-usd` (0 = apagado) y
   `-claude-modelo` (por defecto `claude-sonnet-5-5`).
-- [ ] CA17: README (sección nueva "Análisis con Claude desde el dashboard": cómo
+- [x] CA17: README (sección nueva "Análisis con Claude desde el dashboard": cómo
   activarlo, qué se manda y qué no, costo estimado, tope sugerido `-claude-usd 2`,
   archivos), AGENTS.md, CLAUDE.md y el comentario de `.gitignore:4` con los textos de
   "Reglas que cambian"; ADR 0006 nuevo y ADR 0003 con la línea de estado "modificada por
@@ -757,6 +757,48 @@ apagado": hoy falla en ejecución porque la tarjeta no existe. Guardar la salida
     de Claude y saca sus claves del entorno"; y AGENTS.md, párrafo de la vista previa
     ("una API de YouTube simulada (sin la clave real)") pasa a "una API de YouTube y de
     Claude simulada (sin las claves reales)".
+
+## Notas de implementación (etapa A)
+
+- Las citas archivo:línea de la etapa 1 se movieron al mergear (PR 20); vale el código.
+  `ProgramSegments` recibe además `live` (vivos en curso del canal).
+- `anthropicVersion = "2023-06-01"` (valor documentado de la Messages API).
+- `Analyst.Request(canal, video, now)`: el botón manda también el vivo que se mira
+  (`hx-vals` con `canal` y `video`), para el caso raro de dos vivos del mismo canal a la vez.
+- `ClaudeStatus` suma `Capped` (el último pedido no entraba en el tope) para el cartel.
+- `ClaudeAnalysis.From` es el inicio del tramo (no el inicio menos 5 min); los mensajes
+  empiezan igual 5 min antes (`segmentLead`). Un tramo terminado toma mensajes hasta 5 min
+  después de su última muestra.
+- El último tramo de un vivo que no figura al aire espera `segmentGap` sin muestras antes
+  de analizarse: al arrancar, la lista de videos todavía no se revisó y el programa al aire
+  se vería "terminado".
+- Los pedidos del botón con menos de `minClaudeMsgs` también quedan en "Muy pocos mensajes
+  para analizar" sin gastar. En la vista previa (no copia `datos.vivos.jsonl`), el tramo al
+  aire empieza al arrancarla y no tiene mensajes nuevos: se ve "sin análisis" y, al tocar el
+  botón, "En cola" y "Muy pocos mensajes"; el estado con resultado lo cubre `TestClaudeCard`.
+- `AnalystConfig.Now` / `AnalystConfig.Tick` y `Server.now` (nil en producción: reloj y
+  ticker reales) dejan a los tests del análisis fijar la hora sin cambiar `time.Local`.
+  Cambiarlo con goroutines vivas era una carrera de datos con `time.sendTime` (los timers de
+  canal leen `time.Local` al disparar), ~1 de cada 60 corridas con `-race`. Esos tests usan
+  `noonToday()`, un tick hecho con `time.Sleep` y esperas sin `time.After`. `noonLocal`
+  queda solo en los tres tests que ya lo usaban, con un desfase de minutos enteros (con
+  segundos, las horas leídas de vuelta del JSON cambiaban).
+
+- Revisión, vuelta 1: si el pedido salió y no volvió `usage` (timeout del cliente, corte,
+  respuesta ilegible o de más de 4 MB, 200 sin `usage`), `ClaudeReply.MaybeBilled` y el
+  analista suma `claudeWorstCase` del pedido; un error de conexión (no salió) no suma.
+  Timeout del cliente: 5 min. El cliente no sigue redirecciones (la clave no viaja a otro
+  host). La clave se tapa antes de cortar el mensaje de la API. `normalize100` acota los
+  valores. La respuesta del botón dice "En cola" con el `ok` de `Request`. La retención
+  de los análisis cuenta desde `From - segmentLead`.
+
+Pendientes conocidos (de la revisión, no se hacen en la etapa A):
+
+- En un programa al aire que cruza la medianoche, la tarjeta 7 arma el tramo desde
+  `claudeFrom` (00:00 menos 12 h) y "Programa en curso" desde `dayStart` (00:00): el
+  número de mensajes de la vista y el del análisis pueden no coincidir esa noche.
+- La estimación de tokens con bytes/3 (peor caso) y bytes/4 (botón) es la hipótesis H4:
+  revisarla con `InputTokens` de la primera semana.
 
 ## Puntos de contacto con canales editables (etapa 2 de canales)
 

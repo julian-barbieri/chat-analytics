@@ -124,7 +124,8 @@ func run(ctx context.Context, cfg config) error {
 		return fmt.Errorf("no pude compilar la rama: %v\n%s", err, out)
 	}
 
-	args := []string{"-dashboard", p.addr}
+	// Con el análisis con Claude activo contra la API simulada y un tope chico (ADR 0006).
+	args := []string{"-dashboard", p.addr, "-claude-usd", "1"}
 	if p.budget > 0 {
 		args = append(args, "-cuota", strconv.Itoa(p.budget))
 	}
@@ -276,18 +277,20 @@ func (p *prepared) setChild(pid int) error {
 	return nil
 }
 
-// childEnv saca YT_API_KEY y YT_BASE_URL heredados y pone la clave falsa y la API
-// simulada: la vista previa nunca puede llegar a YouTube.
+// childEnv saca las claves y URLs de YouTube y de Claude heredadas y pone las claves
+// falsas y la API simulada: la vista previa (que usa una copia de los datos reales)
+// nunca puede llegar a YouTube ni mandar mensajes a Anthropic.
 func childEnv(env []string, base string) []string {
-	out := make([]string, 0, len(env)+2)
+	out := make([]string, 0, len(env)+4)
 	for _, kv := range env {
 		k, _, _ := strings.Cut(kv, "=")
-		if strings.EqualFold(k, "YT_API_KEY") || strings.EqualFold(k, "YT_BASE_URL") {
+		switch strings.ToUpper(k) {
+		case "YT_API_KEY", "YT_BASE_URL", "CLAUDE_API_KEY", "CLAUDE_BASE_URL", "ANTHROPIC_API_KEY":
 			continue
 		}
 		out = append(out, kv)
 	}
-	return append(out, "YT_API_KEY="+fakeKey, "YT_BASE_URL="+base)
+	return append(out, "YT_API_KEY="+fakeKey, "YT_BASE_URL="+base, "CLAUDE_API_KEY="+fakeClaudeKey, "CLAUDE_BASE_URL="+base)
 }
 
 // stop corta la vista previa en curso. No depende de señales: deja el aviso de corte en

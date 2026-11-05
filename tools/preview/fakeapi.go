@@ -14,10 +14,11 @@ import (
 )
 
 const (
-	fakeKey   = "vista-previa" // la única clave que recibe el dashboard de la vista previa
-	uploadsID = "UUvistaprevia"
-	livesID   = "UULVvistaprevia" // la lista de vivos que ChannelVideos arma con UU → UULV
-	retention = 30 * 24 * time.Hour
+	fakeKey       = "vista-previa"        // la única clave de YouTube que recibe el dashboard de la vista previa
+	fakeClaudeKey = "vista-previa-claude" // y la única de Claude (ADR 0006)
+	uploadsID     = "UUvistaprevia"
+	livesID       = "UULVvistaprevia" // la lista de vivos que ChannelVideos arma con UU → UULV
+	retention     = 30 * 24 * time.Hour
 )
 
 // fakeVideo es lo que el falso sabe de un video, sacado de los mensajes copiados.
@@ -111,6 +112,11 @@ func (f *fakeAPI) add(id string, chat bool, at time.Time, program string) {
 
 func (f *fakeAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	f.requests.Add(1)
+	// Claude manda la clave en el header x-api-key, no en la URL: va antes del chequeo de key.
+	if strings.HasPrefix(r.URL.Path, "/v1/") {
+		f.claude(w, r)
+		return
+	}
 	q := r.URL.Query()
 	if q.Get("key") != fakeKey {
 		// Si llegara la clave real (por ejemplo, heredada del entorno), no se usa.
@@ -153,6 +159,38 @@ func (f *fakeAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	default:
 		apiError(w, http.StatusNotFound, "vista previa: "+r.URL.Path+" no está simulado")
 	}
+}
+
+// fakeAnalysis es lo que "responde Claude" en la vista previa: cumple el esquema del
+// análisis y cita los mensajes 1 a 3.
+const fakeAnalysis = `{"resumen":"Análisis simulado de la vista previa: no lo armó Claude y los mensajes no salieron de esta PC.",` +
+	`"sentimiento":{"positivo":50,"neutro":30,"negativo":20,"tono":"simulado"},` +
+	`"temas":[{"tema":"Tema simulado","mensajes":[1,2,3]}],` +
+	`"preguntas":[{"pregunta":"Pregunta simulada","mensajes":[1,2]}],` +
+	`"quejas":[{"queja":"Queja simulada","mensajes":[3]}]}`
+
+// claude imita POST /v1/messages de la API de Claude. Del pedido solo lee el modelo:
+// los textos de los mensajes copiados no se guardan ni se loguean.
+func (f *fakeAPI) claude(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost || r.URL.Path != "/v1/messages" {
+		apiError(w, http.StatusNotFound, "vista previa: "+r.URL.Path+" no está simulado")
+		return
+	}
+	if r.Header.Get("x-api-key") != fakeClaudeKey {
+		// Si llegara la clave real (por ejemplo, heredada del entorno), no se usa.
+		f.badKeys.Add(1)
+		apiError(w, http.StatusForbidden, "vista previa: clave inesperada")
+		return
+	}
+	var req struct {
+		Model string `json:"model"`
+	}
+	json.NewDecoder(io.LimitReader(r.Body, 8<<20)).Decode(&req)
+	writeJSON(w, map[string]any{
+		"id": "msg_vista_previa", "type": "message", "role": "assistant", "model": req.Model,
+		"content":     []any{map[string]any{"type": "text", "text": fakeAnalysis}},
+		"stop_reason": "end_turn", "usage": map[string]any{"input_tokens": 1200, "output_tokens": 300},
+	})
 }
 
 // item arma el video como lo devuelve videos.list. Sin activeLiveChatId (el worker no
