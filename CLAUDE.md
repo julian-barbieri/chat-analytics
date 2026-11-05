@@ -49,7 +49,7 @@ docs/specs/          una spec por tarea (plantilla: SPEC_TEMPLATE.md)
 docs/decisions/      ADRs numerados (plantilla: ADR_TEMPLATE.md)
 .claude/agents/      agentes especializados: triage, implementer, tester, reviewer
 .claude/skills/      procedimientos repetibles (/factory, /fix-bug)
-.github/workflows/   CI: quality gates en cada PR
+.github/workflows/   CI (desactivado en GitHub; los gates se corren en local)
 tools/factory-board/ tablero de la factory (package main aparte, no va en el binario)
 tools/preview/       vista previa del dashboard de una rama con datos copiados y API simulada (ADR 0003)
 factory/             estado (jobs/) y actividad (events/) de la factory; en .gitignore; el tablero puede borrar con el tacho las tareas en `pr-abierto`
@@ -99,11 +99,15 @@ Una tarea está terminada solo si se cumple **todo**:
 5. Lo pedido en "Antes de dar algo por terminado" de `AGENTS.md` (README si cambian
    flags/cuota, navegador si cambió el dashboard, `TestClassify` si cambió el clasificador).
 6. Revisión del agente `reviewer` sin hallazgos bloqueantes pendientes.
-7. PR abierto contra `main` con resumen, link a la spec y evidencia de tests; CI verde.
+7. PR abierto contra `main` con resumen, link a la spec y evidencia de tests (salida de
+   los gates locales de los puntos 3 y 4: el CI de GitHub está desactivado).
 
 ## Quality gates automáticos
 
-- CI (`.github/workflows/ci.yml`) corre la tabla de comandos en cada PR y push a main.
+- El CI de GitHub (`.github/workflows/ci.yml`) está **desactivado** a pedido del usuario,
+  para mergear a `main` sin esperar checks. Los gates de la tabla de comandos se corren
+  en local (paso 6 de `/factory`) y su salida va en el PR. Para volver a prenderlo:
+  `gh workflow enable CI`.
 - Hooks de `.claude/settings.json`: después de editar un `.go`, `gofmt -w` y `go vet`
   (si vet falla, el error vuelve al agente). Antes de cada comando se bloquean `rm -rf`,
   `git push` forzado o a `main`, `git commit` en `main`, `git reset --hard`,
