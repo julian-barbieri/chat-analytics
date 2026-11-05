@@ -1,6 +1,7 @@
 # Spec: rediseño del dashboard en tres pantallas (En vivo, Programas de hoy, Canales), canales editables y Claude en tiempo real
 
-- **Estado:** borrador
+- **Estado:** borrador (con las respuestas de la persona a las preguntas del primer
+  borrador; ver "Decisiones de la persona" al final)
 - **Tipo:** mejora (feat)
 - **Rama:** tres etapas, tres PRs: `feat/rediseno-tres-pantallas` (etapa 1),
   `feat/canales-editables` (etapa 2) y `feat/claude-tiempo-real` (etapa 3). Cada una sale
@@ -16,9 +17,11 @@
   "Programas de hoy"), con datos de ejemplo; no está en el repo.
 - **Depende de:** la tarea 009 (análisis con Claude, spec
   `docs/specs/2026-11-05-analisis-claude.md` en `feat/analisis-claude`), que tiene que
-  entrar a `main` **antes** de empezar la etapa 1 (decisión 1). **Absorbe** la etapa 2 de
-  `docs/specs/2026-11-05-canales-continuos.md` (canales editables) como su etapa 2, y la
-  etapa C de la 009 (categorías por mensaje) dentro de su etapa 3.
+  entrar a `main` **antes** de empezar la etapa 1 (decisión 1).
+- **Absorbe:** la **etapa 2 de `docs/specs/2026-11-05-canales-continuos.md` (canales
+  editables) queda absorbida por esta spec** como su etapa 2: nadie la implementa por su
+  cuenta. También absorbe la etapa C de la 009 (categorías por mensaje) dentro de la etapa
+  3. (Esta tarea no edita esas specs; el orquestador marca su estado al aprobar.)
 - **Aprobada por / fecha:** pendiente.
 
 ## Contexto
@@ -56,6 +59,13 @@ persona en `-canal` (el `@handle`).
 **CSV.** `csvHeader` (`main.go:229-230`) termina en `sticker`; `categoria` es
 `Classify` (`main.go:232-246`).
 
+**Vista previa.** Copia `datos.jsonl`, `datos.cuota.json` y `datos.espectadores.jsonl` a
+la carpeta privada temporal (`tools/preview/copy.go:163-177`, texto del flag en
+`tools/preview/main.go:47`, afirmado en `tools/preview/preview_test.go:349-352`), **no**
+`datos.vivos.jsonl`. El hijo corre con el `-canal` por defecto (Rivadavia): como la API
+simulada no manda `id` en `/channels`, `LookupChannel` usa el ID pedido
+(`youtube.go:105-107`), así que las muestras copiadas de ese canal le corresponden.
+
 ### Qué deja la 009 al entrar (worktree `.claude/worktrees/analisis-claude`, sin commitear)
 
 Se leyó para diseñar encima; puede cambiar en su revisión (ver Riesgos).
@@ -75,6 +85,8 @@ Se leyó para diseñar encima; puede cambiar en su revisión (ver Riesgos).
   tramo y botón "Analizar ahora") y "Todo el día" (un bloque compacto por programa);
   `POST /claude/analizar`; helper `usd`.
 - Flags `-claude-usd` (0 = apagado) y `-claude-modelo` (`claude-sonnet-5-5`); ADR 0006.
+- La vista previa: API de Claude simulada (`/v1/messages`) y sin claves heredadas; no
+  copia `datos.analisis.jsonl` (esto cambia acá, decisión 11).
 
 **Reproducción:** no aplica (mejora). Línea de base en esta rama (Go 1.26.8, `bd64942`):
 
@@ -99,48 +111,9 @@ empezar cada etapa, ya con la 009 (y la etapa anterior) en `main`.
 Que el dashboard tenga tres pantallas con la misma estética (la del diseño, en claro y
 oscuro): **En vivo** (un canal a la vez, todo su análisis), **Programas de hoy** (cada
 programa con sus números y su resumen) y **Canales** (qué se sigue, cuánto cuesta y, desde
-la etapa 2, editarlo sin reiniciar); y, en la etapa 3, que Claude etiquete el chat en
-tandas para dar sentimiento, alertas, categorías, preguntas agrupadas y procedencia en
-tiempo real, con un tope de gasto que no se pasa.
-
-## Decisiones ya tomadas por la persona (Julian Barbieri, 2026-11-05)
-
-1. **Orden:** se implementa después de que la 009 entre a `main`. La spec se escribe ahora.
-2. **Una spec, tres etapas, tres PRs** (ramas de arriba). Etapa 1: rediseño y navegación
-   con lo que ya existe (reglas + 009); "Canales" en solo lectura, sin formularios ni
-   `POST` nuevos (la estimación de cuota se puede adelantar a esta etapa). Etapa 2: la
-   etapa 2 de canales-continuos con el formulario y los botones del diseño. Etapa 3:
-   Claude en tiempo real.
-3. **Extras de Claude en la etapa 3:** sentimiento por tandas (bloque con cambio cada
-   5 min, "Por qué hay mensajes negativos", "Qué está gustando"), alertas (quejas técnicas,
-   insultos), categorías de Claude por mensaje (con caída a `Classify` sin clave o con el
-   tope, y aviso), preguntas agrupadas con "Marcar respondida", "Desde dónde escriben"
-   (solo agregado), etiqueta "Claude" en el chat en vivo, check "Analizar el chat con
-   Claude" por canal, y en Canales la tarjeta "Análisis con Claude" con modelo, tandas y
-   tope editables (persistidos; los flags de la 009 son valores iniciales) más mensajes
-   analizados hoy, gasto de hoy y última tanda. También el resumen por momento en
-   "Momentos con más participación", las columnas de Claude en la tabla de Programas y el
-   detalle del programa (lo que ya dé la 009, en la etapa 1; lo demás en la 3).
-4. **Se conservan en En vivo** con la estética nueva: gráfico de participación + panel de
-   oyentes, Filtros para YouTube Studio, Palabras más repetidas, Quiénes más escriben y el
-   detalle de Super Chats. Lo demás que existe se mapea a su equivalente (ver "Mapa de lo
-   que existe").
-5. **"Programas de hoy" es una pantalla aparte** (cambia la decisión 6 de
-   canales-continuos): filtro de día Hoy / Ayer / Últimos 7 días y de canal, tabla
-   (programa, canal, horario, mensajes, personas, Super Chats, preguntas; sentimiento y "sin
-   responder" de Claude cuando existan) y detalle con "CSV de este programa" y "Abrir en
-   YouTube". Los programas salen de `ProgramSegments` / `datos.vivos.jsonl`. Cuidar el
-   costo de leer 7 días de mensajes.
-6. **"Marcar respondida":** solo en memoria (se pierde al reiniciar), solo desde la PC del
-   monitor (loopback + `sameOrigin`). No se publica nada en YouTube.
-7. **CSV** (informe y `GET /export.csv`): columnas nuevas al final, `sentimiento` y
-   `categoria_claude` (vacías sin dato); `categoria` sigue siendo la de reglas. Etiquetas
-   de Claude en un archivo aparte con retención de 30 días (tmp + `os.Rename` al abrir),
-   nunca en `datos.jsonl`.
-8. **Tiempo real por defecto:** `claude-sonnet-5-5`, tandas cada 1 min, editable desde
-   Canales; sin tanda si no hubo mensajes nuevos. Misma minimización que la 009.
-9. **Umbrales de alertas fijos en el código:** quejas técnicas 15 en 5 min; insultos 5 %
-   de los mensajes en 10 min.
+la etapa 2, editarlo sin reiniciar); y, en la etapa 3, que Claude (Haiku 5.5 por defecto)
+etiquete el chat en tandas para dar sentimiento, alertas, categorías, preguntas agrupadas y
+procedencia en tiempo real, con un tope de gasto que no se pasa.
 
 ## Mapa de lo que existe (después de la 009) y adónde va
 
@@ -148,8 +121,8 @@ tiempo real, con un tope de gasto que no se pasa.
 |---|---|---|
 | Encabezado "Monitor de YouTube" + "Descargar CSV para Claude" | Igual, en las tres pantallas, con las pestañas a la derecha | 1 |
 | Resumen: nombre del canal, "Actualizado HH:MM", error de la API, nota global del chat | `/parcial/resumen` queda solo con eso (franja de estado arriba de cada pantalla) | 1 |
-| Resumen: lista de todos los vivos en curso | **Se quita.** La reemplazan los botones de canal ("· en vivo") y la línea "EN VIVO" de la tarjeta Canal en En vivo, y el estado de cada canal en Canales | 1 |
-| Resumen: tiles globales (mensajes hoy, última hora, chat 5 min, preguntas hoy, spam e insultos hoy) | **Se quitan.** Los reemplazan los 5 tiles por alcance del diseño (ver CA1.6) | 1 |
+| Resumen: lista de todos los vivos en curso | **Se quita** (decisión 12). La reemplazan los botones de canal ("· en vivo") y la línea "EN VIVO" de la tarjeta Canal en En vivo, y el estado de cada canal en Canales | 1 |
+| Resumen: tiles globales (mensajes hoy, última hora, chat 5 min, preguntas hoy, spam e insultos hoy) | **Se quitan** (decisión 12). Los reemplazan los 5 tiles por alcance del diseño (CA1.6) | 1 |
 | Resumen: tile "Cuota usada hoy" | Canales, tarjeta de cuota ("Usadas hoy: N de 9.000") | 1 |
 | Resumen: "Categorías de hoy" (reglas, todos los mensajes) | Tarjeta "Categorías" de En vivo, del alcance elegido (por reglas; etapa 3: Claude con caída a reglas). La versión global queda en el bloque "Todo el monitor · últimas 24 h" | 1 / 3 |
 | Botones por canal y "Mostrando X · En pausa: Y" | Tarjeta "Canal" de En vivo (botones `vbtn`). "En pausa" se cambia por "Los demás canales se siguen leyendo y guardando" para no confundir con el "Pausar" de la etapa 2 | 1 |
@@ -163,14 +136,14 @@ tiempo real, con un tope de gasto que no se pasa.
 | 4. Filtros para YouTube Studio | En vivo, después de Super Chats | 1 |
 | 5. Momentos + gráfico de participación + panel de oyentes + 6 h / 24 h | Tarjeta "Momentos con más participación": gráfico y panel arriba, tabla del diseño abajo (etapa 3: resumen de Claude por momento) | 1 / 3 |
 | 6. Super Chats (detalle) | En vivo, después del Chat en vivo; el tile "Super Chats" lo resume | 1 |
-| Palabras más repetidas, Quiénes más escriben (`/parcial/extra`) | Bloque "Todo el monitor · últimas 24 h" al final de En vivo, con la versión global de Categorías (incluye comentarios). `/parcial/extra` desaparece (404) | 1 |
+| Palabras más repetidas, Quiénes más escriben (`/parcial/extra`) | Bloque "Todo el monitor · últimas 24 h" al final de En vivo, con la versión global de Categorías (incluye comentarios; decisión 12). `/parcial/extra` desaparece (404) | 1 |
 | 7. Análisis con Claude (009), modo "Programa en curso" | En vivo: tarjeta "Resumen de Claude del programa en curso" (mismo contenido y botón "Analizar ahora"). Etapa 3: queda compacta (resumen y sentimiento) porque preguntas y quejas pasan a las tarjetas de tiempo real | 1 / 3 |
 | 7. Análisis con Claude (009), modo "Todo el día" | Programas de hoy (columna y detalle). En En vivo con "Todo el día" queda un link "Los resúmenes de cada programa están en Programas de hoy" | 1 |
 | Estado de Claude de la 009 (clave, modelo, tope, gasto) | Canales, tarjeta "Análisis con Claude" (solo lectura en la 1, editable en la 3) | 1 / 3 |
 | Números "1." a "7." en los títulos | **Se quitan** (el diseño no los tiene) | 1 |
 
-No se quita ningún dato salvo la lista de vivos y los tiles globales del resumen (pregunta
-7). Comentarios de videos del canal principal: hoy solo aparecen en "Categorías de hoy",
+No se quita ningún dato salvo la lista de vivos y los tiles globales del resumen.
+Comentarios de videos del canal principal: hoy solo aparecen en "Categorías de hoy",
 Palabras y Quiénes (globales); siguen ahí, en el bloque "Todo el monitor".
 
 ## Criterios de aceptación
@@ -331,12 +304,28 @@ lista falla hoy **en ejecución** (no por compilación): guardar esa salida para
 - [ ] CA1.19: la cuota de YouTube no cambia: `git diff main -- youtube.go` vacío; en
   `worker.go` solo se agrega `Input` a `ChannelStatus` (lo que se pasó en `-canal`), sin
   pedidos nuevos; `TestFlowAgainstFakeAPI` con el mismo `yt.Units`.
-- [ ] CA1.20: README (sección 3 reescrita por pantalla, rutas), AGENTS.md (mapa, rutas,
-  estilo del dashboard) y CLAUDE.md con los textos de "Reglas que cambian"; ADR 0007 — se
-  verifica con `git diff --stat main` y `grep -n "/programas" README.md AGENTS.md`.
-- [ ] CA1.21: revisado en el navegador con la vista previa (paso 7b) en claro, oscuro y
+- [ ] CA1.20: README (sección 3 reescrita por pantalla, rutas, archivos que copia la vista
+  previa), AGENTS.md (mapa, rutas, estilo del dashboard, vista previa) y CLAUDE.md con los
+  textos de "Reglas que cambian"; ADR 0007 y la línea de estado del ADR 0003 — se verifica
+  con `git diff --stat main`, `grep -n "/programas" README.md AGENTS.md` y
+  `grep -n "0007" docs/decisions/0003-*.md`.
+- [ ] CA1.21: la vista previa copia también `datos.vivos.jsonl` y `datos.analisis.jsonl`
+  (decisión 11) con los mismos nombres que deriva `OpenStore`, a la misma carpeta privada
+  temporal (`0700`, dentro de `os.UserCacheDir()/yt-monitor-vista-previa/`), y se borran
+  al cortarla como el resto; si alguno no existe en el origen, se sigue sin él y sin aviso
+  (como `datos.cuota.json`); **no** copia `datos.claude.json` (el gasto arranca en 0) ni
+  `datos.canales.json` (la vista previa sigue con un solo canal, el de `-canal` por
+  defecto). El dashboard aplica la retención de 30 días al abrir la copia, como con
+  `datos.jsonl`. El texto del flag `-datos` lista los archivos copiados — se verifica con
+  `TestPreviewStartup` extendido en `tools/preview` (con datos sintéticos en
+  `t.TempDir()`: la lista de la carpeta pasa a ser
+  `datos.analisis.jsonl,datos.cuota.json,datos.espectadores.jsonl,datos.jsonl,datos.vivos.jsonl`,
+  con cada archivo igual byte a byte al origen; y un caso sin los dos archivos nuevos), y
+  `TestPreviewStop` / `TestPreviewCutPaths` sin cambios (la carpeta entera se borra).
+- [ ] CA1.22: revisado en el navegador con la vista previa (paso 7b) en claro, oscuro y
   ancho de celular, las tres pantallas, con los estados "en vivo", "esperando" y "sin
-  análisis de Claude". Verificación manual, anotada en el PR (ver pregunta 13).
+  análisis de Claude", y Programas con los programas copiados de hoy, ayer y 7 días.
+  Verificación manual, anotada en el PR.
 - [ ] Gates de `CLAUDE.md` → "Definición de terminado" en verde (`gofmt -l .` vacío,
   `go vet ./...`, `staticcheck`, build Linux y Windows, `go test -race -count=1 ./...`,
   `go test -count=5 ./...`, reviewer sin bloqueantes, PR con CI verde).
@@ -389,6 +378,10 @@ gana el archivo con aviso). CA2.10, CA2.12 y CA2.13 se reemplazan por estos:
 
 ### Etapa 3 — Claude en tiempo real (incluye la etapa C de la 009)
 
+Dos modelos (decisión 10): **tiempo real** (tandas, resúmenes de momentos) con
+`claude-haiku-5-5` por defecto, que desde Canales se puede pasar a Sonnet 5.5 (u Opus);
+**resúmenes de cada programa** (la 009: cierre y botón) con `claude-sonnet-5-5`, como hoy.
+
 - [ ] CA3.1 (falla hoy): `csvHeader` termina en `…, "sticker", "sentimiento",
   "categoria_claude"`; un mensaje sin etiqueta tiene las dos vacías, uno etiquetado tiene
   `positivo|neutro|negativo` y la clave de categoría (`pregunta`, `queja`, …); `categoria`
@@ -411,20 +404,27 @@ gana el archivo con aviso). CA2.10, CA2.12 y CA2.13 se reemplazan por estos:
   todos los conteos se hacen en Go — se verifica con `TestBatchResultValidate`.
 - [ ] CA3.4: tandas en `RunAnalyst` (la misma goroutine de la 009): cada `BatchEvery` (por
   defecto 1 min), por cada canal con "Analizar el chat con Claude", una tanda con los
-  mensajes de chat nuevos desde la última etiquetada; **sin mensajes nuevos no hay pedido**
-  (el falso recibe 0); prioridad: botón de la 009 > tanda vencida > programa terminado; un
-  mensaje no se manda dos veces; al arrancar se etiqueta solo desde 10 min antes
-  (`batchCatchUp`), no lo viejo; `RunAnalyst` vuelve al cancelar el contexto, también con
-  un pedido en curso — se verifica con `TestAnalystBatches` (tick achicado, falso que cuenta
-  pedidos y mensajes), también con `-race`.
-- [ ] CA3.5: tope y reparto: un solo tope diario (día local, contador de la 009). Las tandas
-  y los resúmenes de momentos usan como mucho `tope × (1 − claudeProgramShare)` con
-  `claudeProgramShare = 0,25`; los análisis de programa de la 009 y el botón pueden usar el
-  tope entero. Antes de cada tanda se chequea el peor caso (`claudeWorstCase` con
-  `claudeBatchMaxTokens` = 12.000 de salida); si no entra, no se manda y la pantalla dice
-  "Se llegó a la parte del tope para tiempo real (US$ X): las categorías vuelven a las
-  reglas hasta mañana" — se verifica con `TestAnalystBatchBudget` (tope chico: 0 tandas y
-  los cierres de programa siguen).
+  mensajes de chat nuevos desde la última etiquetada, pedida con el **modelo de tiempo
+  real** (`claude-haiku-5-5` por defecto); los análisis de programa siguen con el **modelo
+  de resúmenes** (`claude-sonnet-5-5` por defecto); el costo de cada pedido se calcula con
+  el `model` de su respuesta. **Sin mensajes nuevos no hay pedido** (el falso recibe 0);
+  prioridad: botón de la 009 > tanda vencida > programa terminado; un mensaje no se manda
+  dos veces; al arrancar se etiqueta solo desde 10 min antes (`batchCatchUp`), no lo viejo;
+  `RunAnalyst` vuelve al cancelar el contexto, también con un pedido en curso — se
+  verifica con `TestAnalystBatches` (tick achicado; el falso cuenta pedidos y mensajes y
+  guarda el `model` de cada uno: tandas con Haiku y cierre con Sonnet), también con
+  `-race`.
+- [ ] CA3.5: tope y reparto: un solo tope diario (día local, contador de la 009), con
+  valor inicial `-claude-usd` (README sugiere `-claude-usd 3`). Las tandas y los resúmenes
+  de momentos usan como mucho `tope × (1 − claudeProgramShare)` con
+  `claudeProgramShare = 0,25` (con US$ 3: US$ 2,25 para tiempo real); los análisis de
+  programa de la 009 y el botón pueden usar el tope entero (con US$ 3, al menos US$ 0,75
+  quedan siempre para ellos). Antes de cada tanda se chequea el peor caso
+  (`claudeWorstCase` con el modelo de tiempo real y `claudeBatchMaxTokens` = 12.000 de
+  salida); si no entra, no se manda y la pantalla dice "Se llegó a la parte del tope para
+  tiempo real (US$ X): las categorías vuelven a las reglas hasta mañana" — se verifica con
+  `TestAnalystBatchBudget` (tope chico: 0 tandas y los cierres de programa siguen; tope de
+  US$ 3: la parte de tiempo real es 2.250.000 micro-dólares).
 - [ ] CA3.6: `datos.etiquetas.jsonl`: un `ClaudeBatch` por línea (`At`, `ChannelID`,
   `From`, `To`, `Model`, tokens, `CostMicros`, `StopReason`, `Labels []MessageLabel{ID,
   VideoID, At, Sentiment, Cat, Tech, Group, Place}`, `NewGroups`, `Motives`, `Error`); al
@@ -471,45 +471,67 @@ gana el archivo con aviso). CA2.10, CA2.12 y CA2.13 se reemplazan por estos:
   primeros más "Otros"; nunca muestra autores ni mensajes sueltos — se verifica con
   `TestPlaces`.
 - [ ] CA3.13: resumen por momento: para cada momento del top (de "Programa en curso" y de
-  "Todo el día"), el analista pide una vez una oración sobre el chat de esa franja (misma
-  minimización) y la guarda como `ClaudeAnalysis` con `Kind: "momento"` (campo nuevo con
-  `omitempty`; las líneas de la 009 siguen leyéndose) y clave `momento|vivo|inicio`; a lo
-  sumo `claudeMomentMax` (10) por canal y por día, dentro de la parte del tope de tiempo
-  real; la tabla muestra "Claude · En el chat: …" debajo del momento — se verifica con
-  `TestMomentSummaries`.
+  "Todo el día"), el analista pide una vez, con el modelo de tiempo real, una oración sobre
+  el chat de esa franja (misma minimización) y la guarda como `ClaudeAnalysis` con
+  `Kind: "momento"` (campo nuevo con `omitempty`; las líneas de la 009 siguen leyéndose) y
+  clave `momento|vivo|inicio`; a lo sumo `claudeMomentMax` (10) por canal y por día,
+  dentro de la parte del tope de tiempo real; la tabla muestra "Claude · En el chat: …"
+  debajo del momento — se verifica con `TestMomentSummaries`.
 - [ ] CA3.14: Programas con Claude: columna "Sentimiento" (barra `sent` con `role="img"` y
   `aria-label` con los tres %; de las etiquetas del tramo, o de la 009 si no hay) y
   "Preguntas sin responder" (grupos del tramo no marcados); en el detalle, "Momento más
   negativo" y "Momento más positivo" (franjas con 20 o más), "Desde dónde escriben" y
   "Preguntas sin responder" — se verifica con `TestProgramRowsClaude` y
   `TestProgramDetailClaude`.
-- [ ] CA3.15: Canales: check "Analizar el chat con Claude" por canal y tarjeta "Análisis con
-  Claude" editable: modelo (los de `claudePrices`), "Analizar en tandas cada" (30 s, 1, 2,
-  5 min), "Tope de gasto por día (US$)" (0 a `maxClaudeUSD`, 50); se guardan en
-  `datos.canales.json` (campo `Claude` por canal y sección `Claude`) con `Settings.Update`;
-  sin esa sección valen los flags de la 009; el analista los toma sin reiniciar (cambia el
-  `Model` de su cliente en su propia goroutine). Con clave, `RunAnalyst` arranca siempre y
-  espera con tope 0; sin clave los controles quedan deshabilitados con "Falta
-  CLAUDE_API_KEY". Muestra "Mensajes analizados hoy N de M (K en la próxima tanda)",
-  "Gasto estimado de hoy US$ x,xx" y "Última tanda: hace N s · <sin errores | error>" — se
-  verifica con `TestSettingsClaude` y `TestChannelsClaudeCard`.
-- [ ] CA3.16: línea de estado en En vivo: "Claude · analizado hasta las HH:MM:SS · N s de
-  demora · tandas cada X" (del `To` y el `At` de la última tanda del canal) o el motivo por
-  el que no analiza — se verifica con `TestLiveAnalysisClaude`.
+- [ ] CA3.15: Canales: check "Analizar el chat con Claude" por canal (activado por defecto,
+  también en los que se agregan, si hay clave) y tarjeta "Análisis con Claude" editable:
+  "Modelo para tiempo real" (los de `claudePrices`; por defecto Haiku 5.5, "rápido y
+  barato, recomendado"), "Modelo para los resúmenes de cada programa" (por defecto Sonnet
+  5.5), "Analizar en tandas cada" (30 s, 1, 2, 5 min; por defecto 1 min) y "Tope de gasto
+  por día (US$)" (0 a `maxClaudeUSD`, 50). Al lado del modelo de tiempo real,
+  `claudeProjection` (pura) dice cuánto gastaría por día: con tandas de hoy, el gasto de
+  tiempo real de hoy llevado a 24 h y escalado por el precio del modelo elegido (en
+  `claudePrices` la relación entrada/salida es la misma en los tres: Sonnet = 20 × Haiku,
+  Opus = 40 × Haiku); sin tandas hoy, la hipótesis de la tabla de costos. Si no entra en la
+  parte de tiempo real del tope: "Con <modelo> el tiempo real gastaría ~US$ X por día y la
+  parte del tope es US$ Y: se cortaría a las ~HH:MM". Se guardan en `datos.canales.json`
+  (campo `Claude` por canal y sección `Claude`) con `Settings.Update`; sin esa sección
+  valen los flags (`-claude-modelo-vivo`, nuevo, por defecto `claude-haiku-5-5`;
+  `-claude-modelo`, de la 009, para los resúmenes; `-claude-usd`; `-claude-tanda-seg`,
+  nuevo, por defecto 60); el analista los toma sin reiniciar (cambia el `Model` de cada
+  pedido en su propia goroutine). Con clave, `RunAnalyst` arranca siempre y espera con
+  tope 0; sin clave los controles quedan deshabilitados con "Falta CLAUDE_API_KEY".
+  Muestra "Mensajes analizados hoy N de M (K en la próxima tanda)", "Gasto estimado de
+  hoy US$ x,xx" (separado en tiempo real y resúmenes) y "Última tanda: hace N s · <sin
+  errores | error>" — se verifica con `TestSettingsClaude`, `TestClaudeProjection` (Haiku
+  a Sonnet multiplica por 20; sin tandas usa la hipótesis; corte estimado) y
+  `TestChannelsClaudeCard`.
+- [ ] CA3.16: línea de estado en En vivo: "Claude (<modelo de tiempo real>) · analizado
+  hasta las HH:MM:SS · N s de demora · tandas cada X" (del `To` y el `At` de la última
+  tanda del canal) o el motivo por el que no analiza — se verifica con
+  `TestLiveAnalysisClaude`.
 - [ ] CA3.17: privacidad y clave: la tanda no lleva autores (testigo), y el camino de las
   tandas pasa por los mismos chequeos de clave de la 009 (`TestClaudeErrorsHideKey` con un
-  caso de tanda); la API simulada de la vista previa responde también el esquema de las
-  tandas (`TestFakeClaudeMessages` extendido en `tools/preview`).
+  caso de tanda). Vista previa: la API simulada responde también el esquema de las tandas
+  (distingue el pedido por el esquema) y la copia suma `datos.etiquetas.jsonl` con la regla
+  de CA1.21 (derivado de la decisión 11: sin eso, en la vista previa no habría nada
+  etiquetado porque la API simulada no tiene chat) — se verifica con
+  `TestFakeClaudeMessages` y `TestPreviewStartup` extendidos en `tools/preview`.
 - [ ] CA3.18: la cuota de YouTube no cambia: `git diff main -- youtube.go worker.go` vacío
   y `TestFlowAgainstFakeAPI` con el mismo `yt.Units`.
-- [ ] CA3.19: README (sección de Claude con tiempo real, costos, tope y reparto,
-  `datos.etiquetas.jsonl`, columnas del CSV), AGENTS.md, CLAUDE.md con los textos de
-  "Reglas que cambian" y ADR 0008 — se verifica con `git diff --stat main` y
-  `grep -n "datos.etiquetas.jsonl\|categoria_claude" README.md AGENTS.md`.
-- [ ] CA3.20: navegador con la vista previa (API de Claude simulada) en claro, oscuro y
+- [ ] CA3.19: `go run . -h` (no toca ninguna API) describe `-claude-modelo-vivo` (tiempo
+  real, por defecto `claude-haiku-5-5`), `-claude-modelo` (resúmenes de cada programa, por
+  defecto `claude-sonnet-5-5`) y `-claude-tanda-seg` (60) como valores iniciales cuando
+  `datos.canales.json` no tiene la sección `Claude`.
+- [ ] CA3.20: README (sección de Claude con tiempo real, los dos modelos, costos, tope
+  sugerido `-claude-usd 3` y su reparto, `datos.etiquetas.jsonl`, columnas del CSV),
+  AGENTS.md, CLAUDE.md con los textos de "Reglas que cambian" y ADR 0008 — se verifica con
+  `git diff --stat main`, `grep -n "datos.etiquetas.jsonl\|categoria_claude" README.md
+  AGENTS.md`, `grep -n "claude-usd 3" README.md` y `grep -n "claude-haiku-5-5" README.md`.
+- [ ] CA3.21: navegador con la vista previa (API de Claude simulada) en claro, oscuro y
   celular: sentimiento, alertas, preguntas con "Marcar respondida", categorías, chat con
-  etiquetas, Programas con columnas de Claude y la tarjeta editable de Canales. Manual,
-  anotado en el PR.
+  etiquetas, Programas con columnas de Claude y la tarjeta editable de Canales con los dos
+  modelos. Manual, anotado en el PR.
 - [ ] Gates de `CLAUDE.md` en verde.
 
 ## Diseño propuesto
@@ -553,6 +575,8 @@ comportamiento ni sus tests.
   `@handle`); el worker lo completa en `channelStatuses` (`worker.go:165-171`).
 - `main.go`: pasa al `Server` el aviso de `claudeConfig` (sin la clave) y la configuración
   de chat (`-chat-seg-pico`, `-chat-seg`, `-pico`) para mostrarla y estimar.
+- `tools/preview/copy.go`: dos entradas más en el mapa de archivos que se copian
+  (`copy.go:165-169`); `tools/preview/main.go:47`, el texto del flag.
 
 **Programas sin copiar todo.** Un pedido de "7 días": `Store.Lives(hoy − 7 d − 12 h)`
 (~2 canales × 480 muestras por día), `ProgramSegments` por canal y día (CA1.9), y
@@ -561,6 +585,17 @@ los tramos de cada vivo por inicio y asigna cada mensaje con `sort.Search` y el 
 criterio de `segmentMessages` (inicio − 5 min; fin + 5 min si terminó; `programOf`). Con la
 hipótesis de volumen de la 009 (~9.900 mensajes de chat por día) son ~70.000 mensajes: una
 pasada. "Hoy" se refresca cada 60 s; "Ayer" y "7 días" no se refrescan solos.
+
+**Vista previa (decisión 11).** Copiar `datos.vivos.jsonl` y `datos.analisis.jsonl` es lo
+que hace que Programas y la tira tengan algo que mostrar con datos reales. Son datos de la
+API y del modelo con la misma regla que el resto de la copia: carpeta privada `0700`, se
+borran al cortar, el barrido de huérfanas los alcanza (están adentro de la misma carpeta) y
+el dashboard les aplica la retención al abrir. Con el `-canal` por defecto, las muestras
+copiadas de Rivadavia le corresponden al canal de la vista previa sin tocar la API
+simulada (`youtube.go:105-107`); las de otros canales se copian pero no se muestran (la
+vista previa sigue con un canal). Hipótesis a confirmar al implementar: que los vivos de
+las muestras copiadas que ya no están en la API simulada aparezcan como "terminó" (es lo
+que hace `ProgramSegments` con `live` vacío para ellos).
 
 **Estética: tokens.** Se mapea la paleta del diseño a los tokens de `page.html`
 (`templates/page.html:9-52`) y lo nuevo se define en los dos temas:
@@ -608,6 +643,8 @@ Falla en ejecución sin usar nada nuevo.
 - Mover la detección de cambio de vivo a la tarjeta Canal: cambia `TestLiveChatByChannel`
   y el contrato de AGENTS.md sin ganancia.
 - Seguir con las tarjetas numeradas: el diseño no las numera y las etapas cambian el orden.
+- Revisar Programas en la vista previa solo con lo que arma la API simulada: la persona
+  eligió copiar los dos archivos (decisión 11).
 
 ### Etapa 2
 
@@ -628,6 +665,7 @@ estos cambios:
 - **Cuota:** `EstimateQuota` ya existe (etapa 1); acá recibe un grupo por canal.
 - **Archivo:** `channels.go` con `Settings` (como decía canales-continuos).
 - **Navegación:** tres pestañas en vez de "En vivo / Canales".
+- **Vista previa:** sigue sin copiar `datos.canales.json` (usa su propio `-canal`).
 
 **Test de regresión a escribir primero:** `TestNextChatByChannel` (CA2.1), como en
 canales-continuos.
@@ -641,10 +679,12 @@ en el botón.
 **Quién llama a Claude.** La misma goroutine `RunAnalyst` de la 009, con un paso más por
 vuelta (CA3.4). El tick del analista baja de 30 s a `min(30 s, BatchEvery / 2)`. Un pedido
 de cierre de programa (decenas de segundos) atrasa una tanda: la siguiente trae más
-mensajes, nada se pierde.
+mensajes, nada se pierde. El cliente `Claude` sigue siendo uno; el modelo pasa a ser un
+parámetro de cada pedido (tiempo real o resúmenes), así la 009 no cambia de forma.
 
 **Qué se le pide en cada tanda.** Salida estructurada (`output_config.format`,
-`effort: "low"`, como la 009; mismas prohibiciones de campos):
+`effort: "low"`, como la 009; mismas prohibiciones de campos; H6 de la 009, que
+`effort: "low"` lo acepte Haiku 5.5, pasa a ser condición de esta etapa):
 
 ```json
 {"mensajes":[{"n":1,"sentimiento":"positivo","categoria":"pregunta","tecnica":false,
@@ -661,12 +701,16 @@ dice desde dónde escribe. Las listas cerradas se validan en Go (H5 de la 009).
 línea (CA3.6); en memoria, un índice `map[Message.ID]MessageLabel` y los grupos por canal.
 `Answers` (nuevo, `answers.go`): `map[grupo]time.Time` con mutex, en el `Server`, como la
 cola del `Analyst`; no persiste (decisión 6). Configuración de Claude en
-`datos.canales.json` (`Settings`, etapa 2): solo lo que eligió la persona.
+`datos.canales.json` (`Settings`, etapa 2): solo lo que eligió la persona (los dos
+modelos, las tandas, el tope y el check por canal).
 
 **Archivos.** `batch.go` (nuevo: `batchPrompt`, `validBatchResult`, `ClaudeBatch`,
-`MessageLabel`, `sentimentSlots`, `Alerts`, `Motives`, `Places`), `answers.go` (nuevo),
-`analyst.go` (paso de tandas y de momentos), `store.go` (etiquetas), `main.go` (`csvRow`
-recibe la etiqueta), `server.go` / `programs.go` / plantillas (tarjetas).
+`MessageLabel`, `sentimentSlots`, `Alerts`, `Motives`, `Places`, `claudeProjection`),
+`answers.go` (nuevo), `analyst.go` (paso de tandas y de momentos, modelo por pedido),
+`store.go` (etiquetas), `main.go` (`csvRow` recibe la etiqueta; flags
+`-claude-modelo-vivo` y `-claude-tanda-seg`), `server.go` / `programs.go` / plantillas
+(tarjetas), `tools/preview` (esquema de tandas en la API simulada, copia de
+`datos.etiquetas.jsonl`).
 
 **Costo de Claude (hipótesis de volumen de la 009, explícita).** Rivadavia ~300 mensajes de
 chat por hora las 24 h (~5 por minuto), Rock & Pop ~150 por hora unas 18 h; total ~9.900
@@ -680,29 +724,42 @@ entrada = 2.520 × 1.200 + 9.900 × 30 ≈ 3,32 M tokens por día
 salida  = 2.520 ×   280 + 9.900 × 30 ≈ 1,00 M tokens por día
 ```
 
-| Tiempo real | Haiku 5.5 (0,10 / 0,50) | **Sonnet 5.5 (2 / 10)** | Opus 5.5 (4 / 20) |
+Ningún pedido de tanda pasa los 100.000 tokens de entrada (peor caso ~35.000), así que
+Haiku se cobra siempre en el escalón bajo.
+
+| Tiempo real | **Haiku 5.5 (0,10 / 0,50), por defecto** | Sonnet 5.5 (2 / 10) | Opus 5.5 (4 / 20) |
 |---|---|---|---|
-| Tandas cada 1 min | ~US$ 0,83 por día (~25 por mes) | **~US$ 16,7 por día (~500 por mes)** | ~US$ 33 por día |
+| Tandas cada 1 min | **~US$ 0,83 por día (~25 por mes)** | ~US$ 16,7 por día (~500 por mes) | ~US$ 33 por día |
 | Cada 2 min (1.260 tandas) | ~US$ 0,51 | ~US$ 10,1 | ~US$ 20 |
 | Cada 5 min (504 tandas) | ~US$ 0,31 | ~US$ 6,2 | ~US$ 12 |
 
-Más lo de la 009 (cierres de programa y botón: ~US$ 1,33 por día con Sonnet, ~0,07 con
-Haiku) y los resúmenes de momentos (≤ 20 por día de ~2.000 tokens de entrada y ~300 de
-salida: ~US$ 0,14 con Sonnet). **Con lo decidido (Sonnet, 1 min) el total es ~US$ 18 por
-día (~US$ 545 por mes): el tope sugerido de la 009 (US$ 2) se acaba antes del mediodía y
-desde ahí todo vuelve a reglas** (pregunta 4, bloqueante). Con Haiku en tiempo real y
-Sonnet para los resúmenes: ~US$ 2,3 por día (~US$ 69 por mes). Sensibilidad: cada 1.000
-mensajes por día más suman ~US$ 0,36 con Sonnet y ~US$ 0,02 con Haiku; si el chat tuviera
-el volumen de los datos de ejemplo del diseño (~200 mensajes por minuto), Sonnet costaría
-más de US$ 100 por día. Cada tanda guarda tokens y costo para medirlo la primera semana.
-Peor caso de una tanda (300 mensajes de 300 runas, ~35.000 tokens de entrada con bytes/3, y
-12.000 de salida): ~US$ 0,19 con Sonnet.
+**Total por día con lo decidido** (decisión 10):
 
-**Reparto del tope.** Un solo tope diario (lo que se gasta en el día es lo que importa). El
-tiempo real (tandas y momentos) usa como mucho el 75 %; el 25 % (`claudeProgramShare`)
-queda para los cierres de programa y el botón de la 009, que pueden usar el tope entero.
-Mismo criterio que `reserveForComments` con la cuota de YouTube: lo continuo no se come lo
-que se hace una vez por programa.
+```
+tiempo real, Haiku cada 1 min        ~US$ 0,83
+resúmenes de momentos, Haiku         ~US$ 0,01   (≤ 20 por día de ~2.000 + 300 tokens)
+resúmenes de programa (009), Sonnet  ~US$ 1,33   (cierres + botón, estimación de la 009)
+total                                ~US$ 2,2 por día (~US$ 66 por mes); la persona lo
+                                      redondea en ~US$ 2,3
+```
+
+**Tope sugerido: `-claude-usd 3`** (README). Reparto: tiempo real hasta US$ 2,25 (75 %),
+contra ~US$ 0,84 estimados (2,7 veces de margen); los resúmenes de programa pueden usar los
+US$ 3 y tienen asegurados al menos US$ 0,75, contra ~US$ 1,33 estimados (los toman del
+75 % que el tiempo real no usa: 3 − 0,84 = 2,16 disponibles). Si desde Canales se pasa el
+tiempo real a Sonnet cada 1 min (~US$ 16,7 por día), la parte de US$ 2,25 alcanza para unas
+3 horas y desde ahí las categorías vuelven a reglas: la tarjeta lo avisa antes de guardar
+(CA3.15, `claudeProjection`), y para usar Sonnet todo el día hay que subir el tope a ~US$ 25.
+Sensibilidad: cada 1.000 mensajes por día más suman ~US$ 0,02 con Haiku y ~US$ 0,36 con
+Sonnet; si el chat tuviera el volumen de los datos de ejemplo del diseño (~200 mensajes por
+minuto), Haiku costaría unos US$ 7 por día y no entraría en US$ 2,25 (se corta y vuelve a
+reglas, con aviso). Cada tanda guarda tokens, modelo y costo para medirlo la primera semana.
+Peor caso de una tanda (300 mensajes de 300 runas, ~35.000 tokens de entrada con bytes/3, y
+12.000 de salida): ~US$ 0,01 con Haiku, ~US$ 0,19 con Sonnet.
+
+**Por qué el reparto es fijo y no por estimación.** Mismo criterio que `reserveForComments`
+con la cuota de YouTube: lo continuo no se come lo que se hace una vez por programa, y un
+porcentaje fijo es fácil de explicar en la pantalla.
 
 **Privacidad.** Igual que la 009: solo texto y hora, sin `Author` ni IDs, sin spam, 300
 runas. Lo nuevo que se guarda: etiquetas por mensaje (sentimiento, categoría, grupo y
@@ -719,16 +776,19 @@ existe compara `csvHeader` con el header nuevo y falla en ejecución.
 
 **Alternativas descartadas (etapa 3):**
 
+- Un solo modelo para todo (Sonnet cada 1 min, la decisión 8 original): ~US$ 18 por día;
+  la persona eligió dos modelos (decisión 10).
 - Una goroutine aparte para las tandas: dos goroutines chequeando el mismo tope pueden
   pasarlo entre las dos (chequean y gastan a la vez); haría falta una reserva atómica en el
   `Store`. Con una sola el tope se chequea en un lugar.
+- Dos clientes `Claude` (uno por modelo): el modelo es un campo del pedido; un cliente
+  alcanza y no cambia la regla de "un solo usuario del cliente".
 - Reenviar la ventana de 5 min en cada tanda para que Claude resuma el sentimiento: manda
   los mismos mensajes 5 veces; con etiquetas por mensaje el resumen se cuenta en Go.
 - Guardar la categoría de Claude en `Message`: cambia `datos.jsonl` (AGENTS.md).
 - Persistir "Marcar respondida": la persona eligió memoria (decisión 6).
-- Prompt caching del prefijo fijo: con tandas de 1 min el prefijo es ~70 % de la entrada y
-  podría bajar el costo, pero cambia el modelo de costos del tope y no se verificó el
-  mínimo cacheable de los modelos 5.5. Queda para después de medir (pregunta 12).
+- Prompt caching del prefijo fijo: con Haiku el ahorro es de centavos por día; se revisa con
+  los costos medidos (decisión 12).
 - Umbrales configurables: la persona los fijó en el código (decisión 9).
 
 ## Cuota de YouTube
@@ -768,45 +828,63 @@ existe compara `csvHeader` con el header nuevo y falla en ejecución.
 6. **CLAUDE.md, Propósito:** "continuo con dashboard htmx (`-dashboard :8080`)" → "continuo
    con dashboard htmx de tres pantallas: En vivo, Programas de hoy y Canales
    (`-dashboard :8080`)".
-7. **AGENTS.md:7 y CLAUDE.md:10, "solo lectura" (etapas 2 y 3):** "El dashboard escribe en
+7. **AGENTS.md, vista previa** (párrafo de "Comandos" y "Datos y privacidad", etapa 1):
+   "La vista previa copia `datos.jsonl`, `datos.cuota.json`, `datos.espectadores.jsonl`,
+   `datos.vivos.jsonl` y `datos.analisis.jsonl` (y desde la etapa 3,
+   `datos.etiquetas.jsonl`) a la carpeta privada temporal; no copia `datos.claude.json` ni
+   `datos.canales.json`." Igual en CLAUDE.md, línea de la vista previa ("con una copia
+   temporal de los datos").
+8. **AGENTS.md:7 y CLAUDE.md:10, "solo lectura" (etapas 2 y 3):** "El dashboard escribe en
    tres puntos, solo desde la PC del monitor (`sameOrigin` + `localRequest`): la
    configuración (canales, intervalos y Claude, en `datos.canales.json`), pedir un análisis
    a Claude (cola) y marcar una pregunta como respondida (en memoria). Nunca escribe en
    YouTube." Reemplaza los textos de canales-continuos ("un único punto") y de la 009 ("dos
    puntos").
-8. **AGENTS.md, regla "Análisis con Claude" de la 009 (etapa 3):** "Un pedido por programa
+9. **AGENTS.md, regla "Análisis con Claude" de la 009 (etapa 3):** "Un pedido por programa
    al terminar, otro por botón como mucho cada 10 min por canal, **y tandas de tiempo real**
    cada `BatchEvery` (1 min por defecto) por canal con el check, solo con mensajes nuevos.
-   El tiempo real usa como mucho el 75 % del tope diario; el 25 % queda para los cierres de
-   programa. Etiquetas por mensaje en `datos.etiquetas.jsonl`. Modelo, tandas y tope se
-   editan en Canales; los flags son valores iniciales."
-9. **AGENTS.md, Clasificador** (texto de la 009 "la categoría de reglas sigue siendo la
-   única del CSV y de 'Categorías de hoy'"): "La columna `categoria` del CSV es siempre la de
-   reglas; `categoria_claude` y `sentimiento` van al final. La tarjeta Categorías y el chat
-   en vivo muestran la de Claude si el mensaje tiene etiqueta y si no la de reglas, y lo
-   dicen."
-10. **AGENTS.md, Formato de `Message` y CSV:** la lista de columnas suma `sentimiento,
+   Dos modelos: tiempo real (tandas y momentos) con `claude-haiku-5-5` por defecto
+   (`-claude-modelo-vivo`) y resúmenes de programa con `claude-sonnet-5-5`
+   (`-claude-modelo`). El tiempo real usa como mucho el 75 % del tope diario; el 25 % queda
+   para los resúmenes de programa. Etiquetas por mensaje en `datos.etiquetas.jsonl`.
+   Modelos, tandas y tope se editan en Canales; los flags son valores iniciales. Si se
+   agrega un modelo, poner su precio real en `claudePrices`; si cambia el costo,
+   actualizar las cifras del README."
+10. **AGENTS.md, Clasificador** (texto de la 009 "la categoría de reglas sigue siendo la
+    única del CSV y de 'Categorías de hoy'"): "La columna `categoria` del CSV es siempre la
+    de reglas; `categoria_claude` y `sentimiento` van al final. La tarjeta Categorías y el
+    chat en vivo muestran la de Claude si el mensaje tiene etiqueta y si no la de reglas, y
+    lo dicen."
+11. **AGENTS.md, Formato de `Message` y CSV:** la lista de columnas suma `sentimiento,
     categoria_claude` al final.
-11. **AGENTS.md, Datos y privacidad:** "`datos.etiquetas.jsonl` guarda las tandas de Claude
+12. **AGENTS.md, Datos y privacidad:** "`datos.etiquetas.jsonl` guarda las tandas de Claude
     con una etiqueta por mensaje (sentimiento, categoría, grupo de pregunta y lugar): 30 días
     de retención al abrir contados desde el fin de la tanda, tmp + `os.Rename`, nunca en
     `datos.jsonl`. 'Desde dónde escriben' se muestra solo agregado. 'Marcar respondida' va
     solo en memoria."
-12. **AGENTS.md, Concurrencia:** "`Answers` (preguntas respondidas) es lo único además de
+13. **AGENTS.md, Concurrencia:** "`Answers` (preguntas respondidas) es lo único además de
     `Settings` que escriben los handlers: en memoria, con su mutex, fuera del `Store`."
-13. **README:** sección 3 reescrita por pantalla (etapa 1); pantalla Canales editable y
-    cifras por canal (etapa 2); Claude en tiempo real con la tabla de costos, el reparto del
-    tope y las columnas nuevas del CSV (etapa 3).
-14. **ADR 0007 (etapa 1):** "El dashboard pasa a tres pantallas con rutas propias": rutas,
+14. **README:** sección 3 reescrita por pantalla y archivos que copia la vista previa
+    (etapa 1); pantalla Canales editable y cifras por canal (etapa 2); Claude en tiempo real
+    con los dos modelos, la tabla de costos, el total de ~US$ 2,2 por día, el tope sugerido
+    **`-claude-usd 3`** (reemplaza el `-claude-usd 2` de la 009) con su reparto y las
+    columnas nuevas del CSV (etapa 3).
+15. **ADR 0007 (etapa 1):** "El dashboard pasa a tres pantallas con rutas propias": rutas,
     qué se mudó y qué se quitó, Programas desde `datos.vivos.jsonl` sin archivo nuevo,
-    tokens nuevos. **ADR 0005 (etapa 2):** el de canales-continuos, con la pantalla de esta
-    spec. **ADR 0008 (etapa 3):** "Claude etiqueta el chat en tandas": una goroutine, reparto
-    del tope, etiquetas en archivo aparte, respondidas en memoria, configuración editable;
+    tokens nuevos, y la vista previa que copia `datos.vivos.jsonl` y `datos.analisis.jsonl`.
+    "Modifica: ADR 0003" (y lo dicho en el 0006 sobre no copiar `datos.analisis.jsonl`).
+    **ADR 0003:** línea de estado "modificada por ADR 0007: la vista previa también copia
+    `datos.vivos.jsonl` y `datos.analisis.jsonl`" (y por 0008, `datos.etiquetas.jsonl`).
+    **ADR 0005 (etapa 2):** el de canales-continuos, con la pantalla de esta spec.
+    **ADR 0008 (etapa 3):** "Claude etiqueta el chat en tandas": dos modelos (Haiku en
+    tiempo real, Sonnet para resúmenes), una goroutine, reparto del tope (75/25, sugerido
+    US$ 3), etiquetas en archivo aparte, respondidas en memoria, configuración editable;
     "Modifica: ADR 0006". Numeración: 0005 y 0006 ya están reservados (canales editables y
     009).
-15. Al aprobar esta spec, la línea de estado de canales-continuos pasa a "etapa 2 absorbida
-    por `2026-11-05-rediseno-tres-pantallas.md`" (lo hace el orquestador; esta tarea no edita
-    esa spec).
+16. **Specs relacionadas (las marca el orquestador al aprobar; esta tarea no las edita):**
+    canales-continuos, "etapa 2 absorbida por `2026-11-05-rediseno-tres-pantallas.md`" y su
+    decisión 7 ("no se toca `tools/preview` ni el ADR 0003") reemplazada por la decisión 11
+    de esta spec; la 009, etapa C absorbida por la etapa 3 de esta spec.
 
 ## Fuera de alcance
 
@@ -821,6 +899,7 @@ existe compara `csvHeader` con el header nuevo y falla en ejecución.
 - Prompt caching, Batches API y fallback del servidor ante refusal.
 - Analizar con Claude días anteriores o reetiquetar lo ya etiquetado.
 - Cambios en el modo informe más allá de las dos columnas vacías del CSV.
+- Vista previa con varios canales o copiando `datos.claude.json` / `datos.canales.json`.
 - `search.list`, base de datos, frontend con build, JS propio.
 
 ## Riesgos
@@ -828,10 +907,11 @@ existe compara `csvHeader` con el header nuevo y falla en ejecución.
 - **Conflicto con la 009.** Esta spec usa nombres de su worktree (`claudeView`,
   `ClaudeCard`, `segmentMessages`, `MessagesOf`, `segmentKey`, `guard.go`,
   `ClaudeStatus`). Si cambian en su revisión, se ajustan las citas al empezar la etapa 1
-  (rebase sobre `main` con la 009). Sus tests de la tarjeta cambian de título (CA1.8).
+  (rebase sobre `main` con la 009). Sus tests de la tarjeta cambian de título (CA1.8) y su
+  modelo pasa a ser un parámetro por pedido en la etapa 3.
 - **Conflicto con canales-editables.** Nadie tiene que implementar la etapa 2 de
-  canales-continuos por su cuenta: esta spec la reemplaza (regla 15). La rama
-  `feat/canales-editables` todavía no existe.
+  canales-continuos por su cuenta: esta spec la absorbe. La rama `feat/canales-editables`
+  todavía no existe.
 - **Tamaño del cambio.** Las plantillas se reescriben casi enteras y hay muchos tests que
   buscan textos (`TestSummaryWithoutActivityChart`, `TestDashboardWithoutRemovedSections`,
   `TestLiveChatSelection`, `TestLiveChatByChannel`, `TestChannelDayStrip`,
@@ -841,61 +921,106 @@ existe compara `csvHeader` con el header nuevo y falla en ejecución.
   maquetación, y tres PRs.
 - **Carga del servidor.** En vivo pide 4 parciales (2, 5, 5 y 30 s) por pestaña abierta; el
   de 30 s sigue usando `Snapshot()` como hoy. Programas usa copias filtradas (CA1.13).
-- **Costo de Claude (etapa 3).** Con lo decidido, ~US$ 18 por día (hipótesis); la pregunta
-  4 lo define. El tope nunca se pasa (peor caso antes de cada pedido) y el tiempo real tiene
-  su parte; al llegar, todo vuelve a reglas con aviso.
-- **Calidad.** Etiquetas de tandas de 1 min tienen poco contexto (ironía, chistes): la
-  tarjeta lo dice ("ante la duda, mirá los mensajes"). Los grupos y motivos se mantienen
-  parecidos entre tandas porque se le pasan los abiertos (CA3.2), pero pueden fragmentarse.
+- **Costo de Claude (etapa 3).** ~US$ 2,2 por día con lo decidido (hipótesis de volumen y de
+  salida con thinking). El tope nunca se pasa (peor caso antes de cada pedido) y el tiempo
+  real tiene su parte; al llegar, todo vuelve a reglas con aviso. Pasar el tiempo real a
+  Sonnet multiplica su costo por 20: la tarjeta lo proyecta antes de guardar.
+- **Calidad con Haiku.** Etiquetas de tandas de 1 min con el modelo chico tienen menos
+  contexto y entienden peor la ironía o el lunfardo: la tarjeta lo dice ("ante la duda,
+  mirá los mensajes") y se puede pasar a Sonnet desde Canales. Los grupos y motivos se
+  mantienen parecidos entre tandas porque se le pasan los abiertos (CA3.2), pero pueden
+  fragmentarse. Los resúmenes de programa siguen con Sonnet.
 - **Prompt injection.** Las listas cerradas se validan en Go; los textos libres del modelo se
   cortan y se escapan; el modelo no tiene herramientas.
 - **Datos guardados.** `datos.etiquetas.jsonl` crece ~9.900 etiquetas por día (~1 MB por día
   con IDs de chat largos, ~30 MB a los 30 días); se carga al abrir como las demás series.
+- **Vista previa con más datos copiados** (decisión 11). Son más datos de la API y del modelo
+  fuera del archivo original, pero en la misma carpeta privada `0700` que se borra al
+  cortar y que el barrido de huérfanas limpia; los tests de `tools/preview` usan solo datos
+  sintéticos. `datos.claude.json` no se copia, así el tope de la vista previa (`-claude-usd`
+  chico de la 009, contra la API simulada) no arranca gastado.
 - **"Marcar respondida" se pierde al reiniciar** (decisión 6): el texto lo dice.
-- **Contraste en oscuro** de los colores nuevos: hipótesis, se revisa en CA1.21.
-- **Vista previa sin `datos.vivos.jsonl`:** Programas se vería casi vacío (pregunta 13).
+- **Contraste en oscuro** de los colores nuevos: hipótesis, se revisa en CA1.22.
 - **Windows / compatibilidad.** Solo stdlib y archivos con tmp + `os.Rename`; `Message` y
   `datos.jsonl` no cambian; el CSV solo suma columnas al final.
 
 ## Preguntas abiertas para la persona que aprueba
 
-1. **Modo claro y oscuro** con los tokens (AGENTS.md lo exige), cambiando `--text-muted` a
-   #6b6a65 y los links a #1f63b8 por contraste. Recomiendo que sí. No bloqueante.
-2. **Una ruta por pestaña** (`/`, `/programas`, `/canales`), htmx para los parciales, sin
-   JS propio ni build; `?canal=` y `?vivo=` siguen andando. Recomiendo que sí. No
-   bloqueante.
-3. **Edición solo desde la PC del monitor** (loopback + `sameOrigin`, `guard.go`), también
-   para Claude y "Marcar respondida". Recomiendo que sí (es lo decidido en
-   canales-continuos y en la 009). No bloqueante.
-4. **Costo del tiempo real (bloqueante para la etapa 3).** Con Sonnet cada 1 min son ~US$ 18
-   por día (~US$ 545 por mes) con la hipótesis de volumen; el diseño mismo recomienda Haiku.
-   Opciones: (a) Sonnet 1 min y un tope de ~US$ 20; (b) **dos modelos: Haiku 5.5 para el
-   tiempo real y Sonnet 5.5 para los resúmenes de programa** (~US$ 2,3 por día), con dos
-   selects en la tarjeta de Claude; (c) Sonnet cada 5 min (~US$ 7,7 por día). Recomiendo
-   (b). Y qué tope por defecto sugerir en el README.
-5. **Reparto del tope:** 75 % tiempo real / 25 % reservado a cierres de programa.
-   Recomiendo que sí. No bloqueante.
-6. **Palabras más repetidas, Quiénes más escriben y Categorías globales** quedan juntas en
-   "Todo el monitor · últimas 24 h" (con comentarios y todos los canales, como hoy), en vez
-   de pasar a ser por canal. Recomiendo así para no perder los comentarios. No bloqueante.
-7. **Se quitan** la lista de vivos en curso y los 5 tiles globales del resumen (los
-   reemplazan la tarjeta Canal y los tiles por alcance); "Cuota usada hoy" pasa a Canales.
-   ¿De acuerdo? No bloqueante.
-8. **Alerta de insultos con un mínimo de 20 mensajes** en los 10 min (si no, 1 insulto en 3
-   mensajes dispara). Es un agregado a la decisión 9. No bloqueante.
-9. **Al arrancar, el tiempo real etiqueta solo desde 10 min antes** (no se pone al día con
-   todo lo no etiquetado, para no gastar de golpe). No bloqueante.
-10. **"Analizar el chat con Claude"** viene activado en los canales existentes y en los que
-    se agregan (si hay clave). No bloqueante.
-11. **Tope máximo editable desde la pantalla:** US$ 50 por día, para que un error de tipeo no
-    habilite un gasto grande; más que eso, con el flag. No bloqueante.
-12. **Prompt caching** para bajar el costo de las tandas: afuera ahora; se revisa con los
-    costos medidos la primera semana. No bloqueante.
-13. **Vista previa (bloqueante para cerrar CA1.21 como está escrito).** Hoy copia
-    `datos.jsonl`, `datos.cuota.json` y `datos.espectadores.jsonl`, no `datos.vivos.jsonl`
-    (`tools/preview/main.go:47`), así que Programas y la tira se verían casi vacíos.
-    Opciones: (a) sumar la copia de `datos.vivos.jsonl` (y en la etapa 1 también
-    `datos.analisis.jsonl`, para ver resúmenes) a la vista previa, en la misma carpeta 0700
-    que se borra al cortar, con su test; cambia el ADR 0003 y la decisión 7 de
-    canales-continuos; (b) revisar Programas en el navegador solo con lo que arma la API
-    simulada (el programa de hoy) y cubrir el resto con tests. Recomiendo (a).
+Ninguna bloqueante: las 13 del primer borrador quedaron resueltas en "Decisiones de la
+persona". Quedan para verificar al implementar, sin frenar la aprobación:
+
+- Los valores oscuros de los tokens nuevos, con contraste AA en la revisión del navegador.
+- Las hipótesis de volumen (~9.900 mensajes por día) y de salida por tanda (~280 tokens
+  fijos con thinking a esfuerzo bajo): se comparan con los tokens guardados la primera
+  semana y, si cambian mucho, se actualizan las cifras del README.
+- Que Haiku 5.5 acepte `effort: "low"` con `output_config.format` (H6 de la 009).
+
+## Decisiones de la persona (Julian Barbieri, 2026-11-05)
+
+Dadas al pedir la spec:
+
+1. **Orden:** se implementa después de que la 009 entre a `main`. La spec se escribe ahora.
+2. **Una spec, tres etapas, tres PRs** (`feat/rediseno-tres-pantallas`,
+   `feat/canales-editables`, `feat/claude-tiempo-real`). Etapa 1: rediseño y navegación
+   con lo que ya existe (reglas + 009); "Canales" en solo lectura (canales, estado, "Al
+   aire", cuota estimada con la barra, "Qué pasa cuando termina un programa", estado de
+   Claude de la 009), sin formularios ni `POST` nuevos; la estimación de cuota se puede
+   adelantar a esta etapa. Etapa 2: la etapa 2 de canales-continuos con el formulario y
+   los botones del diseño. Etapa 3: Claude en tiempo real.
+3. **Extras de Claude en la etapa 3:** sentimiento por tandas (bloque con cambio cada
+   5 min, "Por qué hay mensajes negativos", "Qué está gustando"), alertas (quejas técnicas,
+   insultos), categorías de Claude por mensaje (con caída a `Classify` sin clave o con el
+   tope, y aviso), preguntas agrupadas con "Marcar respondida", "Desde dónde escriben"
+   (solo agregado), etiqueta "Claude" en el chat en vivo, check "Analizar el chat con
+   Claude" por canal, y en Canales la tarjeta "Análisis con Claude" con modelo, tandas y
+   tope editables (persistidos; los flags de la 009 son valores iniciales) más mensajes
+   analizados hoy, gasto de hoy y última tanda. También el resumen por momento, las
+   columnas de Claude en Programas y el detalle del programa (lo que ya dé la 009, en la
+   etapa 1; lo demás en la 3).
+4. **Se conservan en En vivo** con la estética nueva: gráfico de participación + panel de
+   oyentes, Filtros para YouTube Studio, Palabras más repetidas, Quiénes más escriben y el
+   detalle de Super Chats. Lo demás que existe se mapea a su equivalente; decir
+   explícitamente si algo se quita.
+5. **"Programas de hoy" es una pantalla aparte** (cambia la decisión 6 de
+   canales-continuos), con filtro de día Hoy / Ayer / Últimos 7 días y de canal, tabla y
+   detalle con "CSV de este programa" y "Abrir en YouTube". Los programas salen de
+   `ProgramSegments` / `datos.vivos.jsonl`; cuidar el costo de leer 7 días.
+6. **"Marcar respondida":** solo en memoria (se pierde al reiniciar), solo desde la PC del
+   monitor (loopback + `sameOrigin`). No se publica nada en YouTube.
+7. **CSV** (informe y `GET /export.csv`): `sentimiento` y `categoria_claude` al final
+   (vacías sin dato); `categoria` sigue siendo la de reglas. Etiquetas de Claude en un
+   archivo aparte con retención de 30 días (tmp + `os.Rename` al abrir), nunca en
+   `datos.jsonl`.
+8. ~~**Tiempo real por defecto:** `claude-sonnet-5-5`, tandas cada 1 min~~ —
+   **reemplazada por la decisión 10.** Sigue valiendo: editable desde Canales, sin tanda si
+   no hubo mensajes nuevos, misma minimización que la 009, costo con los precios
+   verificados de la 009.
+9. **Umbrales de alertas fijos en el código:** quejas técnicas 15 en 5 min; insultos 5 % de
+   los mensajes en 10 min.
+
+Respuestas a las preguntas del primer borrador:
+
+10. **Costo del tiempo real (pregunta 4): dos modelos.** Tiempo real por defecto con
+    `claude-haiku-5-5` cada 1 min; resúmenes de cada programa (009) con
+    `claude-sonnet-5-5`. Desde Canales se puede pasar el tiempo real a Sonnet. Costo
+    ~US$ 2,3 por día; tope sugerido en el README: **US$ 3**.
+11. **Vista previa (pregunta 13):** copia también `datos.vivos.jsonl` y
+    `datos.analisis.jsonl`, en la misma carpeta privada temporal, que se borra al cortar.
+    Cambia el ADR 0003 y la decisión 7 de canales-continuos.
+12. **Las demás (preguntas 1-3 y 5-12) quedan con la recomendación de la spec:**
+    1. modo claro y oscuro con los tokens, con `--text-muted` #6b6a65 y links #1f63b8;
+    2. una ruta por pestaña (`/`, `/programas`, `/canales`), htmx para los parciales, sin
+       JS propio ni build, `?canal=` y `?vivo=` siguen andando;
+    3. edición solo desde la PC del monitor (loopback + `sameOrigin`), también para Claude
+       y "Marcar respondida";
+    4. reparto del tope 75 % tiempo real / 25 % reservado a resúmenes de programa;
+    5. Palabras más repetidas, Quiénes más escriben y Categorías globales juntas en "Todo
+       el monitor · últimas 24 h" (con comentarios y todos los canales);
+    6. se quitan la lista de vivos en curso y los 5 tiles globales del resumen; "Cuota
+       usada hoy" pasa a Canales;
+    7. la alerta de insultos necesita al menos 20 mensajes en los 10 min;
+    8. al arrancar, el tiempo real etiqueta solo desde 10 min antes;
+    9. "Analizar el chat con Claude" activado por defecto en los canales existentes y en
+       los que se agregan (si hay clave);
+    10. tope máximo editable desde la pantalla: US$ 50 por día;
+    11. prompt caching afuera por ahora; se revisa con los costos medidos.
