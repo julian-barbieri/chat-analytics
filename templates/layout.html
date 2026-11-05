@@ -235,8 +235,6 @@ tr.sel td { background: var(--ia-bg); }
 .qlist, .q { list-style: none; margin: 0 0 8px; padding: 0; font-size: 14px; }
 .qlist li, .q li { padding: 8px 0; border-bottom: 1px solid var(--border); }
 .qlist .meta { font-size: 12px; color: var(--text-muted); }
-.copy { width: 100%; font: 13px/1.4 ui-monospace, monospace; padding: 6px 8px; border-radius: 6px; resize: vertical;
-  border: 1px solid var(--field-border); background: var(--surface-1); color: var(--text-primary); margin-bottom: 8px; }
 /* Programas */
 .filtros { display: flex; flex-wrap: wrap; gap: 8px; }
 .detail-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(340px, 100%), 1fr)); gap: 12px; }
@@ -257,6 +255,12 @@ tr.sel td { background: var(--ia-bg); }
 .qmark.stop span { color: var(--crit-text); }
 .steps { margin: 0; padding-left: 20px; display: grid; gap: 6px; font-size: 14px; }
 details summary { cursor: pointer; min-height: 32px; font-weight: 600; }
+/* Plegables del resumen de Claude: la flecha es el marcador nativo (display
+   list-item lo conserva) y la fila mide 44 px para tocarla en el celular. */
+.plegable { border-top: 1px solid var(--border); }
+.plegable summary { min-height: 44px; padding: 11px 0; line-height: 22px; color: var(--text-primary); }
+.plegable summary::marker { color: var(--text-muted); }
+.plegable[open] summary { padding-bottom: 4px; }
 </style>
 </head>
 <body>

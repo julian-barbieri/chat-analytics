@@ -7,9 +7,11 @@ import (
 	"fmt"
 	"html/template"
 	"log"
+	"maps"
 	"math"
 	"net/http"
 	"net/url"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -325,16 +327,88 @@ func (s *Server) liveSection(w http.ResponseWriter, r *http.Request) {
 // quotaPaused dice si se llegó al tope de cuota: el worker no revisa videos ni busca vivos.
 func (s *Server) quotaPaused(snap Snapshot) bool { return s.budget > 0 && snap.Units >= s.budget }
 
-// keepView son el "ver" y las "horas" del análisis que manda el chat (con
-// hx-include), para no perderlos cuando se recarga la sección.
-func keepView(q url.Values) (ver, hours string) {
+// keepView son el "ver", las "horas" y lo plegado que está abierto del
+// análisis, que manda el chat (con hx-include), para no perderlos cuando se
+// recarga la sección.
+func keepView(q url.Values) (ver, hours, open string) {
 	if v := q.Get("ver"); v == "dia" || v == "programa" {
 		ver = v
 	}
 	if h := q.Get("horas"); h == "24" || h == strconv.Itoa(chartHours) {
 		hours = h
 	}
-	return ver, hours
+	return ver, hours, foldValue(foldParam(q))
+}
+
+// foldSections son las secciones plegables de En vivo, en el orden en que se
+// escriben en "abrir". Lista cerrada: nada de lo que llega se refleja tal cual.
+var foldSections = []string{"preguntas", "quejas", "alertas"}
+
+// foldParam lee qué secciones plegadas están abiertas ("abrir", separadas por
+// coma). Un <details> abierto se cerraría en cada refresco de 30 s (htmx no
+// conserva el atributo open), por eso el estado viaja en la URL como "ver".
+func foldParam(q url.Values) map[string]bool {
+	open := map[string]bool{}
+	for _, v := range q["abrir"] {
+		for _, sec := range strings.Split(v, ",") {
+			if slices.Contains(foldSections, sec) {
+				open[sec] = true
+			}
+		}
+	}
+	return open
+}
+
+// foldValue es el "abrir" de unas secciones abiertas, siempre en el mismo orden.
+func foldValue(open map[string]bool) string {
+	var out []string
+	for _, sec := range foldSections {
+		if open[sec] {
+			out = append(out, sec)
+		}
+	}
+	return strings.Join(out, ",")
+}
+
+// foldToggle es el "abrir" con una sección cambiada: abierta si estaba
+// cerrada y al revés. Es lo que pide la flecha de esa sección.
+func foldToggle(open map[string]bool, sec string) string {
+	next := map[string]bool{sec: !open[sec]}
+	for k, v := range open {
+		if k != sec {
+			next[k] = v
+		}
+	}
+	return foldValue(next)
+}
+
+// Fold es una sección plegada: si va abierta y qué pide su flecha.
+type Fold struct {
+	Open bool
+	Href string
+}
+
+// foldState es lo plegado abierto y la consulta del análisis (canal, video,
+// ver y horas) para armar el link de cada flecha.
+type foldState struct {
+	Open  map[string]bool
+	Query url.Values
+}
+
+func (f foldState) link(sec string) Fold {
+	q := maps.Clone(f.Query)
+	if q == nil {
+		q = url.Values{}
+	}
+	if v := foldToggle(f.Open, sec); v != "" {
+		q.Set("abrir", v)
+	}
+	return Fold{Open: f.Open[sec], Href: "/parcial/vivo/analisis?" + q.Encode()}
+}
+
+// analysisQuery es la consulta de "Programa en curso" o "Todo el día" de un canal.
+func analysisQuery(canal, video, ver string, hours int) url.Values {
+	return url.Values{"canal": {canal}, "video": {video}, "ver": {ver}, "horas": {strconv.Itoa(hours)}}
 }
 
 // ChatRow es una fila del chat en vivo, con su categoría ya calculada.
@@ -363,8 +437,8 @@ func (s *Server) liveChat(w http.ResponseWriter, r *http.Request) {
 		// canal: pickChannel se queda con el pedido mientras exista.
 		w.Header().Set("HX-Retarget", "#vivo")
 		w.Header().Set("HX-Reswap", "outerHTML")
-		ver, hours := keepView(q)
-		s.render(w, "vivo", map[string]any{"Canal": sel.Canal, "Video": sel.Video, "Ver": ver, "Horas": hours})
+		ver, hours, open := keepView(q)
+		s.render(w, "vivo", map[string]any{"Canal": sel.Canal, "Video": sel.Video, "Ver": ver, "Horas": hours, "Abrir": open})
 		return
 	}
 	// El feed es del canal: los vivos de hoy, así al cambiar de vivo no se
@@ -602,9 +676,10 @@ func (s *Server) liveAnalysis(w http.ResponseWriter, r *http.Request) {
 	if q.Get("horas") == "24" {
 		hours = 24
 	}
+	open := foldParam(q)
 	for _, c := range snap.Channels {
 		if c.ID == q.Get("canal") && c.ID != "" {
-			s.channelAnalysis(w, snap, c, q.Get("video"), q.Get("ver"), hours, localRequest(r))
+			s.channelAnalysis(w, snap, c, q.Get("video"), q.Get("ver"), hours, open, localRequest(r))
 			return
 		}
 	}
@@ -619,14 +694,14 @@ func (s *Server) liveAnalysis(w http.ResponseWriter, r *http.Request) {
 	// El wrapper se reemplaza entero en cada refresco para que conserve la
 	// ventana del gráfico elegida (va en su hx-get).
 	if label == "" {
-		s.render(w, "vivo-analisis", map[string]any{"Video": id, "Hours": hours})
+		s.render(w, "vivo-analisis", map[string]any{"Video": id, "Hours": hours, "Abrir": foldValue(open)})
 		return
 	}
 	now := s.clock()
 	msgs := sinceFor(snap.Msgs, id, now.Add(-24*time.Hour))
 	viewers := s.st.Viewers(id, now.Add(-24*time.Hour))
 	data := analysisData(msgs, viewers, []string{id}, snap.Videos, video.Concurrent, now, hours, scopeLast24)
-	data["Video"], data["Label"], data["Span"] = id, label, label+" · últimas 24 h"
+	data["Video"], data["Label"], data["Span"], data["Abrir"] = id, label, label+" · últimas 24 h", foldValue(open)
 	data["Monitor"] = monitorView(snap.Msgs, now)
 	// El análisis con Claude es por canal: un vivo suelto no lo tiene.
 	data["Claude"] = claudeView(claudeInput{Configured: s.analyst != nil, Status: snap.Claude, Now: now})
@@ -643,11 +718,12 @@ var (
 	scopeProgram = scope{"del programa en curso", "en el programa en curso", "el programa en curso", "este programa", "de este programa"}
 )
 
-// monitorView es el bloque "Todo el monitor · últimas 24 h": categorías,
-// palabras y autores de todos los mensajes (también comentarios y otros canales).
+// monitorView es el bloque "Todo el monitor · últimas 24 h": palabras y
+// autores de todos los mensajes (también comentarios y otros canales). Sin
+// categorías: ya están en la tarjeta Categorías del alcance elegido.
 func monitorView(all []Message, now time.Time) map[string]any {
 	day := since(all, now.Add(-24*time.Hour))
-	return map[string]any{"Total": len(day), "Cats": catRows(day), "Words": TopWords(day, 20), "Authors": TopAuthors(day, 10)}
+	return map[string]any{"Total": len(day), "Words": TopWords(day, 20), "Authors": TopAuthors(day, 10)}
 }
 
 // liveTiles son los números de arriba del análisis, sobre los mensajes ya
@@ -721,18 +797,13 @@ func liveTiles(msgs []Message, concurrent int64, sc scope, now time.Time) []Tile
 // (de un vivo, del día del canal o del programa en curso).
 func analysisData(msgs []Message, viewers []ViewerSample, ids []string, videos []Video, concurrent int64, now time.Time, hours int, sc scope) map[string]any {
 	a := Analyze(msgs)
-	var filterLine []string
-	for _, f := range a.Filters {
-		filterLine = append(filterLine, f.Key)
-	}
 	titles := videoTitles(videos)
 	part := participationView(msgs, viewers, ids, videos, concurrent, titles, now, hours)
 	part["Window"] = sc.window
 	sup := superView(Supers(msgs, titles))
 	sup["Of"], sup["In"] = sc.of, sc.in
 	return map[string]any{
-		"Hours": hours, "A": a, "Topics": bars(a.Topics), "Tech": bars(a.Tech),
-		"FilterLine": strings.Join(filterLine, ", "), "Part": part, "Super": sup,
+		"Hours": hours, "A": a, "Tech": bars(a.Tech), "Part": part, "Super": sup,
 		"Tiles": liveTiles(msgs, concurrent, sc, now), "Cats": catRows(msgs),
 	}
 }
@@ -741,7 +812,7 @@ func analysisData(msgs []Message, viewers []ViewerSample, ids []string, videos [
 // actual con el programa actual, desde el inicio del tramo menos 5 min) o
 // "Todo el día del canal" (sus vivos desde las 00:00 locales). Nunca entran
 // mensajes de otro canal.
-func (s *Server) channelAnalysis(w http.ResponseWriter, snap Snapshot, ch ChannelStatus, want, ver string, hours int, local bool) {
+func (s *Server) channelAnalysis(w http.ResponseWriter, snap Snapshot, ch ChannelStatus, want, ver string, hours int, open map[string]bool, local bool) {
 	now := s.clock()
 	from := dayStart(now)
 	samples := s.st.Lives(from)
@@ -818,12 +889,14 @@ func (s *Server) channelAnalysis(w http.ResponseWriter, snap Snapshot, ch Channe
 	}
 	data := analysisData(msgs, viewers, pids, snap.Videos, concurrent, now, hours, sc)
 	data["Canal"], data["Video"], data["Ver"], data["Label"], data["Span"], data["Note"] = ch.ID, video, ver, channelName(ch), span, note
+	data["Abrir"] = foldValue(open)
 	data["Monitor"] = monitorView(snap.Msgs, now)
 	cardVer := "dia"
 	if ver == "programa" && len(lives) > 0 {
 		cardVer = "programa"
 	}
-	data["Claude"] = s.claudeCard(snap, ch, video, cardVer, local, "")
+	fold := foldState{Open: open, Query: analysisQuery(ch.ID, video, ver, hours)}
+	data["Claude"] = s.claudeCard(snap, ch, video, cardVer, local, "", fold)
 	data["ClaudeLine"] = s.claudeLine(snap, ch.ID, now)
 	s.render(w, "vivo-analisis", data)
 }
@@ -873,15 +946,25 @@ func (s *Server) claudeAnalyze(w http.ResponseWriter, r *http.Request) {
 		}
 		// "En cola" sale del ok de Request y no de Queued: RunAnalyst ya pudo
 		// haberlo sacado de la cola y la tarjeta volvería a mostrar el botón.
-		s.render(w, "claude-card", claudeView(s.claudeInput(snap, ch, video, "programa", true, notice, queued)))
+		in := s.claudeInput(snap, ch, video, "programa", true, notice, queued)
+		// El botón manda con hx-include las horas y lo plegado abierto: las
+		// flechas de la tarjeta nueva tienen que pedir el mismo análisis.
+		hours := chartHours
+		if r.PostForm.Get("horas") == "24" {
+			hours = 24
+		}
+		in.Fold = foldState{Open: foldParam(r.PostForm), Query: analysisQuery(ch.ID, video, "programa", hours)}
+		s.render(w, "claude-card", claudeView(in))
 		return
 	}
 	http.Error(w, "Ese canal no está en -canal.", http.StatusBadRequest)
 }
 
 // claudeCard arma la tarjeta 7 de un canal con lo que ya está guardado.
-func (s *Server) claudeCard(snap Snapshot, ch ChannelStatus, want, ver string, local bool, notice string) ClaudeCard {
-	return claudeView(s.claudeInput(snap, ch, want, ver, local, notice, false))
+func (s *Server) claudeCard(snap Snapshot, ch ChannelStatus, want, ver string, local bool, notice string, fold foldState) ClaudeCard {
+	in := s.claudeInput(snap, ch, want, ver, local, notice, false)
+	in.Fold = fold
+	return claudeView(in)
 }
 
 // claudeInput junta lo que necesita claudeView. queued: el pedido del botón
@@ -1414,6 +1497,7 @@ type ClaudeBlock struct {
 	Partial, Compact                  bool // Compact: en "Todo el día", solo resumen y sentimiento
 	Sent                              *SentimentBar
 	Topics, Questions, Complaints     []ClaudeItem
+	QFold, CFold                      Fold // preguntas y quejas, plegadas en En vivo
 }
 
 type SentimentBar struct {
@@ -1442,6 +1526,7 @@ type claudeInput struct {
 	Queued, Local bool
 	Notice        string
 	Now           time.Time
+	Fold          foldState // lo plegado abierto y la consulta del análisis
 }
 
 const claudeOffText = "El análisis con Claude está apagado. Para activarlo, mirá la sección del README."
@@ -1489,7 +1574,9 @@ func claudeView(in claudeInput) ClaudeCard {
 		c.Note = "En cola: el análisis se hace en unos instantes."
 	}
 	if a, ok := best[key]; ok && in.HasCur {
-		c.Blocks = append(c.Blocks, claudeBlock(a, in.Msgs, false))
+		b := claudeBlock(a, in.Msgs, false)
+		b.QFold, b.CFold = in.Fold.link("preguntas"), in.Fold.link("quejas")
+		c.Blocks = append(c.Blocks, b)
 	} else if c.Note == "" {
 		c.Note = "Todavía no hay análisis de este programa: se hace solo cuando termina"
 	}

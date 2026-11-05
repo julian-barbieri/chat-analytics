@@ -53,22 +53,17 @@ var greetings = []string{"como estas", "como andan", "como anda", "como va", "co
 
 // Analysis es lo que muestra el dashboard de cada vivo.
 type Analysis struct {
-	Total      int
-	Topics     []Count   // temas: palabras o pares de palabras, en cuántos mensajes aparecen
-	Questions  []Message // preguntas que vale la pena mirar
-	Tech       []Count   // quejas técnicas por tipo
-	TechMsgs   []Message
-	Filters    []Count // palabras de las listas de spam e insultos que aparecieron
-	Candidates []Count // palabras que casi solo aparecen en spam e insultos: revisarlas antes de cargarlas
-	Links      int     // mensajes con links
+	Total     int
+	Topics    []Count   // temas: palabras o pares de palabras, en cuántos mensajes aparecen
+	Questions []Message // preguntas que vale la pena mirar
+	Tech      []Count   // quejas técnicas por tipo
+	TechMsgs  []Message
 }
 
 func Analyze(msgs []Message) Analysis {
 	a := Analysis{Total: len(msgs), Topics: TopTopics(msgs, 5)}
 	tech := map[string]int{}
-	filters := map[string]int{}
 	seenQ := map[string]bool{}
-	var bad []Message
 	for _, m := range msgs {
 		cat := Classify(m.Text)
 		t := strings.ToLower(m.Text)
@@ -79,23 +74,6 @@ func Analyze(msgs []Message) Analysis {
 		if k := TechIssue(m.Text); k != "" {
 			tech[k]++
 			a.TechMsgs = append(a.TechMsgs, m)
-		}
-		// Escribir todo en mayúsculas cuenta como insulto en Classify, pero acá
-		// solo interesan los insultos de verdad: si no, gritar marca a cualquiera.
-		if cat == CatInsulto && !containsAny(t, insultos) {
-			cat = CatOtro
-		}
-		if cat != CatSpam && cat != CatInsulto {
-			continue
-		}
-		bad = append(bad, m)
-		if reLink.MatchString(t) {
-			a.Links++
-		}
-		for _, w := range append(append([]string(nil), insultos...), spamWords...) {
-			if strings.Contains(t, w) {
-				filters[w]++
-			}
 		}
 	}
 
@@ -116,9 +94,6 @@ func Analyze(msgs []Message) Analysis {
 	}
 	sort.SliceStable(a.TechMsgs, func(i, j int) bool { return a.TechMsgs[i].At.After(a.TechMsgs[j].At) })
 	a.TechMsgs = a.TechMsgs[:min(len(a.TechMsgs), 5)]
-
-	a.Filters = topN(filters, 12)
-	a.Candidates = candidates(bad, msgs, 8)
 	return a
 }
 
@@ -135,46 +110,6 @@ func worthAnswering(q string) bool {
 		}
 	}
 	return true
-}
-
-// candidates busca palabras que se repiten en spam e insultos y casi nunca en
-// el resto: posibles filtros nuevos (por ejemplo apodos ofensivos).
-func candidates(bad, all []Message, n int) []Count {
-	inBad := map[string]int{}
-	for _, m := range bad {
-		for _, w := range uniqueWords(m.Text) {
-			inBad[w]++
-		}
-	}
-	inAll := map[string]int{}
-	for _, m := range all {
-		for _, w := range uniqueWords(m.Text) {
-			if inBad[w] > 0 {
-				inAll[w]++
-			}
-		}
-	}
-	out := map[string]int{}
-	for w, b := range inBad {
-		// Las variantes de palabras que ya están en las listas ("pelotudos") no suman.
-		if b >= 2 && b*10 >= inAll[w]*7 && !containsAny(w, insultos) && !containsAny(w, spamWords) {
-			out[w] = b
-		}
-	}
-	return topN(out, n)
-}
-
-// uniqueWords son las palabras de 4 letras o más, sin stopwords ni repetidas.
-func uniqueWords(text string) []string {
-	var out []string
-	seen := map[string]bool{}
-	for _, w := range textWords(text) {
-		if len([]rune(w)) >= 4 && !stopwords[w] && !seen[w] {
-			seen[w] = true
-			out = append(out, w)
-		}
-	}
-	return out
 }
 
 // TopTopics devuelve los temas más hablados: cada palabra frecuente, o el par
