@@ -151,14 +151,15 @@ func main() {
 
 	since := time.Now().Add(-time.Duration(*hours) * time.Hour)
 
-	var titles, uploads []string
+	var titles []string
+	var infos []ChannelInfo
 	for _, ch := range channels {
-		title, pl, err := yt.UploadsPlaylist(ch)
+		info, err := yt.LookupChannel(ch)
 		check(err)
-		titles, uploads = append(titles, title), append(uploads, pl)
+		titles, infos = append(titles, info.Title), append(infos, info)
 	}
 	title := strings.Join(titles, ", ")
-	vids, err := yt.ChannelVideos(uploads, *videos, extra)
+	vids, err := yt.ChannelVideos(infos, *videos, extra)
 	check(err)
 
 	var msgs []Message

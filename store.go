@@ -32,8 +32,11 @@ type Store struct {
 	path      string
 	quota     string // archivo con la cuota gastada en el día, para que sobreviva a reinicios
 	vpath     string // serie de espectadores por vivo, aparte para no tocar el formato de datos.jsonl
+	lpath     string // muestras de los vivos en curso por canal (datos.vivos.jsonl), también aparte
 	msgs      []Message
 	viewers   []ViewerSample
+	lives     []LiveSample
+	channels  []ChannelStatus
 	seen      map[string]bool
 	channel   string
 	videos    []Video
@@ -54,6 +57,24 @@ type ViewerSample struct {
 	Viewers int64
 }
 
+// LiveSample es un vivo en curso según una revisión de videos. Se guarda el
+// título y no el programa, así una mejora de ProgramName vale también para lo
+// guardado (como con programOf).
+type LiveSample struct {
+	At                                 time.Time
+	VideoID, ChannelID, Channel, Title string
+}
+
+// ChannelStatus es cómo está cada canal de -canal, para la vista. Va solo en
+// memoria: el nombre viene de la API y no hace falta guardarlo.
+type ChannelStatus struct {
+	ID, Name  string
+	Live      bool          // tiene al menos un vivo en curso
+	WaitSince time.Time     // desde cuándo espera el próximo vivo (cero si nunca tuvo uno desde que arrancó)
+	FastUntil time.Time     // hasta cuándo se busca el próximo vivo cada fastEvery
+	Every     time.Duration // cada cuánto se revisa con el resto (la revisión de videos)
+}
+
 // quotaDay es lo que se guarda en <datos>.cuota.json: el día del Pacífico y lo gastado.
 type quotaDay struct {
 	Day   string
@@ -62,7 +83,7 @@ type quotaDay struct {
 
 func OpenStore(path string) (*Store, error) {
 	base := strings.TrimSuffix(path, ".jsonl")
-	s := &Store{path: path, quota: base + ".cuota.json", vpath: base + ".espectadores.jsonl", seen: map[string]bool{}}
+	s := &Store{path: path, quota: base + ".cuota.json", vpath: base + ".espectadores.jsonl", lpath: base + ".vivos.jsonl", seen: map[string]bool{}}
 	if b, err := os.ReadFile(s.quota); err == nil {
 		var q quotaDay
 		if json.Unmarshal(b, &q) == nil {
@@ -94,40 +115,58 @@ func OpenStore(path string) (*Store, error) {
 	if err := s.loadViewers(cutoff); err != nil {
 		return nil, err
 	}
+	lives, err := loadJSONL(s.lpath, func(l LiveSample) bool { return !l.At.Before(cutoff) })
+	if err != nil {
+		return nil, err
+	}
+	s.lives = lives
 	return s, nil
+}
+
+// loadJSONL carga un archivo de muestras con la retención de los mensajes (son
+// datos de la API) y lo reescribe sin lo vencido ni lo ilegible. Si no existe,
+// arranca vacío y no lo crea.
+func loadJSONL[T any](path string, keep func(T) bool) ([]T, error) {
+	f, err := os.Open(path)
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	items, err := readJSONL(f, keep)
+	f.Close()
+	if err != nil {
+		// Reescribir con lo leído a medias perdería para siempre el resto.
+		return nil, fmt.Errorf("no pude leer %s (si está dañado, movelo a otra carpeta y volvé a arrancar): %w", path, err)
+	}
+	return items, rewriteJSONL(path, items)
 }
 
 // loadViewers carga la serie de espectadores con la misma retención que los
 // mensajes (son datos de la API) y reescribe el archivo sin lo vencido ni lo
 // ilegible. Si no existe (instalaciones anteriores), se crea con el primer dato.
 func (s *Store) loadViewers(cutoff time.Time) error {
-	f, err := os.Open(s.vpath)
-	if os.IsNotExist(err) {
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	vs, err := readViewers(f, cutoff)
-	f.Close()
-	if err != nil {
-		// Reescribir con lo leído a medias perdería para siempre el resto.
-		return fmt.Errorf("no pude leer %s (si está dañado, movelo a otra carpeta y volvé a arrancar): %w", s.vpath, err)
-	}
+	vs, err := loadJSONL(s.vpath, func(v ViewerSample) bool { return !v.At.Before(cutoff) })
 	s.viewers = vs
-	return rewriteJSONL(s.vpath, s.viewers)
+	return err
 }
 
-// maxViewerLine: una muestra ocupa menos de 100 bytes; una línea más larga es
+// maxViewerLine: una muestra ocupa menos de 300 bytes; una línea más larga es
 // basura (por ejemplo, ceros de un corte de luz) y se descarta sin cargarla.
 const maxViewerLine = 64 * 1024
 
-// readViewers lee las muestras vigentes salteando las líneas ilegibles o
+// readViewers lee las muestras de espectadores vigentes (ver readJSONL).
+func readViewers(r io.Reader, cutoff time.Time) ([]ViewerSample, error) {
+	return readJSONL(r, func(v ViewerSample) bool { return !v.At.Before(cutoff) })
+}
+
+// readJSONL lee las líneas que keep acepta salteando las ilegibles o
 // demasiado largas. A diferencia de bufio.Scanner, una línea larga no corta
 // la lectura: se pierden solo los datos de esa línea.
-func readViewers(r io.Reader, cutoff time.Time) ([]ViewerSample, error) {
+func readJSONL[T any](r io.Reader, keep func(T) bool) ([]T, error) {
 	br := bufio.NewReaderSize(r, maxViewerLine)
-	var out []ViewerSample
+	var out []T
 	long := false
 	for {
 		line, err := br.ReadSlice('\n')
@@ -135,8 +174,8 @@ func readViewers(r io.Reader, cutoff time.Time) ([]ViewerSample, error) {
 			long = true // se descarta hasta el próximo salto de línea
 			continue
 		}
-		var v ViewerSample
-		if !long && json.Unmarshal(line, &v) == nil && !v.At.Before(cutoff) {
+		var v T
+		if !long && json.Unmarshal(line, &v) == nil && keep(v) {
 			out = append(out, v)
 		}
 		long = false
@@ -235,6 +274,53 @@ func (s *Store) Viewers(videoID string, since time.Time) []ViewerSample {
 	return out
 }
 
+// AddLives guarda una muestra por vivo en curso. Sale de la misma revisión de
+// videos (o de la búsqueda rápida): no cuesta cuota.
+func (s *Store) AddLives(at time.Time, vids []Video) {
+	var add []LiveSample
+	for _, v := range vids {
+		if v.LiveStatus == "live" {
+			add = append(add, LiveSample{At: at, VideoID: v.ID, ChannelID: v.ChannelID, Channel: v.Channel, Title: v.Title})
+		}
+	}
+	if len(add) == 0 {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.lives = append(s.lives, add...)
+	// Si no se puede abrir el archivo, las muestras quedan igual en memoria.
+	f, err := os.OpenFile(s.lpath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	enc := json.NewEncoder(f)
+	for _, l := range add {
+		enc.Encode(l)
+	}
+}
+
+// Lives devuelve una copia de las muestras de vivos desde since.
+func (s *Store) Lives(since time.Time) []LiveSample {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var out []LiveSample
+	for _, l := range s.lives {
+		if !l.At.Before(since) {
+			out = append(out, l)
+		}
+	}
+	return out
+}
+
+// SetChannels guarda el estado de los canales de -canal, en el orden de -canal.
+func (s *Store) SetChannels(ch []ChannelStatus) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.channels = append([]ChannelStatus(nil), ch...)
+}
+
 func (s *Store) SetVideos(channel string, v []Video) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -293,6 +379,7 @@ func (s *Store) SetChatNotes(note string, byLive map[string]string, info map[str
 // Snapshot es una copia para leer sin bloquear al worker.
 type Snapshot struct {
 	Channel   string
+	Channels  []ChannelStatus
 	Videos    []Video
 	Msgs      []Message
 	Units     int
@@ -323,7 +410,7 @@ func (s *Store) Status() Snapshot {
 func (s *Store) status() Snapshot {
 	s.rollDay()
 	return Snapshot{
-		Channel: s.channel, Videos: append([]Video(nil), s.videos...),
+		Channel: s.channel, Channels: append([]ChannelStatus(nil), s.channels...), Videos: append([]Video(nil), s.videos...),
 		Units: s.units, LastErr: s.lastErr, LastErrT: s.lastErrT, ChatNote: s.chatNote,
 		ChatNotes: maps.Clone(s.chatNotes), ChatInfo: maps.Clone(s.chatInfo), Updated: s.updated,
 	}
@@ -331,11 +418,19 @@ func (s *Store) status() Snapshot {
 
 // LastChat devuelve una copia de los últimos n mensajes de chat de un vivo, del más nuevo al más viejo.
 func (s *Store) LastChat(videoID string, n int) []Message {
+	return s.LastChatOf(map[string]bool{videoID: true}, n)
+}
+
+// LastChatOf es LastChat de varios vivos a la vez: los de un canal en el día.
+func (s *Store) LastChatOf(ids map[string]bool, n int) []Message {
+	if len(ids) == 0 {
+		return nil // sin vivos no hace falta recorrer el histórico
+	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	var out []Message
 	for i := len(s.msgs) - 1; i >= 0 && len(out) < n; i-- {
-		if m := s.msgs[i]; m.VideoID == videoID && m.Source == "chat" {
+		if m := s.msgs[i]; ids[m.VideoID] && m.Source == "chat" {
 			out = append(out, m)
 		}
 	}

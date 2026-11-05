@@ -1,6 +1,6 @@
 # Spec: canales en continuo (vista por canal, intervalo de chat por canal y canales editables desde el dashboard)
 
-- **Estado:** aprobada (etapa 1 en esta rama; la etapa 2 va en `feat/canales-editables`)
+- **Estado:** implementada la etapa 1 en esta rama (falta la revisión en el navegador, CA1.14); la etapa 2 sigue aprobada y va en `feat/canales-editables`
 - **Tipo:** mejora
 - **Rama:** `feat/canales-continuos` (si se aprueba en dos etapas: `feat/canales-continuos`
   para la etapa 1 y `feat/canales-editables` para la 2, cada una con su PR)
@@ -132,66 +132,66 @@ salida para el PR.
 
 ### Etapa 1 — continuidad por canal
 
-- [ ] CA1.1: `videos` decodifica `snippet.channelId` en `Video.ChannelID` y
+- [x] CA1.1: `videos` decodifica `snippet.channelId` en `Video.ChannelID` y
   `UploadsPlaylist` (o una función nueva que la reemplace) devuelve también el ID del
   canal (`items[0].id`), también para `@handle`. El costo no cambia — se verifica con
   `TestFlowAgainstFakeAPI` extendido (el falso manda `channelId` e `id`; `yt.Units` sigue
   siendo `2+1+2+1+1+2*5`).
-- [ ] CA1.2 (falla hoy): con dos canales, mirando el canal B cuyo vivo terminó y empezó otro
+- [x] CA1.2 (falla hoy): con dos canales, mirando el canal B cuyo vivo terminó y empezó otro
   vivo del mismo canal, `/parcial/vivo/chat?canal=<B>` muestra el vivo nuevo **sin**
   `HX-Retarget` a un vivo del canal A, y el feed incluye mensajes de los dos vivos de B y
   ninguno de A. Si B no tiene vivo, responde el estado "Esperando el próximo vivo" del
   canal B (sin saltar a A). `?vivo=ID` sigue andando: elige el canal de ese vivo — se
   verifica con `TestLiveChatByChannel` (y se actualiza `TestLiveChatSelection`, que hoy
   afirma el salto).
-- [ ] CA1.3: el worker agrega una `LiveSample{At, VideoID, ChannelID, Channel, Title}` por
+- [x] CA1.3: el worker agrega una `LiveSample{At, VideoID, ChannelID, Channel, Title}` por
   vivo en curso en cada revisión de videos (y en cada búsqueda rápida) a
   `datos.vivos.jsonl`, nunca a `datos.jsonl`, sin pedidos extra a YouTube — se verifica con
   `TestWorkerRecordsLives` (cuenta pedidos del falso y lee el archivo).
-- [ ] CA1.4: al abrir el `Store`, `datos.vivos.jsonl` descarta lo de más de 30 días, las
+- [x] CA1.4: al abrir el `Store`, `datos.vivos.jsonl` descarta lo de más de 30 días, las
   líneas ilegibles y las demasiado largas, y se reescribe con temporal + `os.Rename`; si no
   existe, se arranca vacío — se verifica con `TestStoreLivesOpen` (tabla, como
   `TestStoreViewersOpen`).
-- [ ] CA1.5: `ProgramSegments` (función pura) arma los programas del día de un canal a
+- [x] CA1.5: `ProgramSegments` (función pura) arma los programas del día de un canal a
   partir de las muestras: en un mismo vivo, un tramo nuevo cuando cambia
   `ProgramName(Title, Channel)`; un tramo nuevo por cada vivo; muestras repetidas (por
   ejemplo, tras reiniciar) se juntan; un hueco mayor que `segmentGap` (2 revisiones + 1 min)
   corta el tramo y deja un "sin vivo" — se verifica con `TestProgramSegments` (casos
   Rivadavia, Rock & Pop, reinicio, hueco, dos vivos del mismo canal a la vez, día local que
   empieza a las 00:00 con `-zona`).
-- [ ] CA1.6: cuando un canal que tenía vivo se queda sin ninguno, el worker revisa **solo
+- [x] CA1.6: cuando un canal que tenía vivo se queda sin ninguno, el worker revisa **solo
   ese canal** (`UULV` + `videos`, 2 unidades sumadas con `spend`) cada `fastEvery` (1 min)
   durante `fastFor` (20 min) o hasta encontrar un vivo nuevo; al encontrarlo abre su chat
   sin esperar la revisión de 3 min. Pasados los 20 min no hay más revisiones rápidas. Con
   el tope de cuota (`Budget`) alcanzado no hay revisiones rápidas — se verifica con
   `TestWorkerFindsNextLive` (variables achicadas, falso que cuenta pedidos por
   `playlistId`, `st.Units()` con el delta esperado).
-- [ ] CA1.7: cartel de continuidad (función pura sobre los tramos): mismo vivo con otro
+- [x] CA1.7: cartel de continuidad (función pura sobre los tramos): mismo vivo con otro
   programa → "A las HH:MM cambió el programa y el chat siguió sin cortes"; vivo nuevo →
   "A las HH:MM empezó un vivo nuevo y el monitor lo enganchó solo. El vivo de <programa>
   terminó a las HH:MM." Solo aparece si el cambio fue hoy — se verifica con
   `TestContinuityBanner`.
-- [ ] CA1.8: la tira "Hoy en el canal" muestra un bloque por tramo con estado "terminó",
+- [x] CA1.8: la tira "Hoy en el canal" muestra un bloque por tramo con estado "terminó",
   "al aire" o "sin vivo", con `aria-label` y `<title>` por bloque; el bloque actual sin
   vivo dice "buscando cada 1 min hasta HH:MM" o "buscando cada 3 min" — se verifica con
   `TestChannelDayStrip` (HTML del parcial).
-- [ ] CA1.9: el selector "Programa en curso / Todo el día del canal" filtra todo el
+- [x] CA1.9: el selector "Programa en curso / Todo el día del canal" filtra todo el
   análisis de reglas (temas, preguntas, quejas técnicas, filtros, momentos para reels,
   Super Chats) y los números de la cabecera. "Todo el día" = mensajes de los vivos del
   canal desde las 00:00 locales; "Programa en curso" = mensajes del vivo actual con el
   programa actual desde el inicio del tramo menos 5 min. No entran mensajes de otro canal.
   La elección se conserva en los refrescos (va en el `hx-get`, como `horas`) — se verifica
   con `TestLiveAnalysisByChannel`.
-- [ ] CA1.10: `Participation` acepta un conjunto de vivos; en una franja con dos vivos del
+- [x] CA1.10: `Participation` acepta un conjunto de vivos; en una franja con dos vivos del
   canal, los espectadores son la suma de los promedios de cada vivo. Cada momento del top
   sabe de qué vivo es (el de más mensajes en la franja) y `reelLink` usa ese vivo; si ya no
   está en `Store.videos`, linkea el video sin `t=` y la pista dice la hora local — se
   verifica con `TestParticipationChannel` y casos nuevos en `TestReelLink`.
-- [ ] CA1.11: vivos que no son de un canal de `-canal` (los de `-vivos`) siguen con un
+- [x] CA1.11: vivos que no son de un canal de `-canal` (los de `-vivos`) siguen con un
   botón por vivo, como hoy — se verifica con un caso de `TestLiveChatByChannel`.
-- [ ] CA1.12: el formato de `datos.jsonl` no cambia: `git diff main -- youtube.go` no toca
+- [x] CA1.12: el formato de `datos.jsonl` no cambia: `git diff main -- youtube.go` no toca
   el struct `Message`, y `TestStoreSuper` / `TestStoreDedupAndRetention` siguen en verde.
-- [ ] CA1.13: README (sección 3: botones por canal, continuidad, tira, selector, búsqueda
+- [x] CA1.13: README (sección 3: botones por canal, continuidad, tira, selector, búsqueda
   rápida y su cuota) y AGENTS.md (mapa, rutas, reglas nuevas de abajo) actualizados — se
   verifica con `git diff --stat main` y `grep -n "datos.vivos.jsonl" README.md AGENTS.md`.
 - [ ] CA1.14: revisado en el navegador con la vista previa (`go run ./tools/preview`, paso
