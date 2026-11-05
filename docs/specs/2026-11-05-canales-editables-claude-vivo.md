@@ -1,6 +1,6 @@
 # Spec: canales editables, Claude en tandas y En vivo con sentimiento, alertas y preguntas agrupadas
 
-- **Estado:** aprobada (F1 en curso; F2 a F4 pendientes)
+- **Estado:** aprobada (F1 implementada, falta la revisión en el navegador CA1.9; F2 a F4 pendientes)
 - **Tipo:** mejora (feat)
 - **Rama:** la spec, en `feat/canales-editables-claude-vivo`. Implementación en cuatro
   fases con un PR cada una, cada rama desde `main` actualizado después de que entre la
@@ -254,40 +254,40 @@ ejecución** (no por compilación): guardar esa salida para el PR.
 
 ### F1 — quitar y plegar
 
-- [ ] CA1.1 (falla hoy): `GET /parcial/vivo/analisis` (`?video=v1`, `?canal=…&ver=programa` y
+- [x] CA1.1 (falla hoy): `GET /parcial/vivo/analisis` (`?video=v1`, `?canal=…&ver=programa` y
   `?canal=…&ver=dia`) **no** contiene "Filtros para YouTube Studio", `id="filtros"`,
   "Palabras bloqueadas" ni "Temas (por reglas)"; el bloque `id="monitor"` no contiene
   `<h3>Categorías</h3>` ni "Por reglas simples; el detalle fino" y sí "Palabras más repetidas"
   y "Quiénes más escriben"; la tarjeta `id="categorias"` del alcance sigue — se verifica con
   `TestLiveRemovedSections` (tabla de las tres rutas; hoy falla porque aparece "Filtros para
   YouTube Studio").
-- [ ] CA1.2: en el resumen de Claude de En vivo (`claude-block` no compacto), "Preguntas
+- [x] CA1.2: en el resumen de Claude de En vivo (`claude-block` no compacto), "Preguntas
   agrupadas" y "Quejas" van cada una en `<details class="plegable">` con
   `<summary>Preguntas agrupadas (N)</summary>` / `<summary>Quejas (N)</summary>` (N = cantidad
   de grupos), **cerradas** por defecto; el resumen, el sentimiento y los temas siguen a la
   vista; sin grupos no hay `<details>`. El detalle de Programas no cambia — se verifica con
   `TestClaudeCard` extendido y `TestProgramDetail` sin cambios.
-- [ ] CA1.3: el plegado sobrevive al refresco: con `abrir=preguntas` (o `quejas`, o los dos
+- [x] CA1.3: el plegado sobrevive al refresco: con `abrir=preguntas` (o `quejas`, o los dos
   separados por coma) el `<details>` sale con `open`; el valor se conserva en
   `<input type="hidden" class="vq" name="abrir">` y en el `hx-get` del refresco de
   `#vivo-analisis` y de los botones de `ver` / `horas`; cada `<summary>` tiene un `hx-get` al
   mismo parcial con su sección agregada o sacada de `abrir`; valores fuera de la lista se
   ignoran (no se reflejan en el HTML) — se verifica con `TestLiveFoldState` (tabla: vacío,
   uno, dos, valor inválido con `<script>`, conservado al cambiar `ver`).
-- [ ] CA1.4: `TestLiveScreenOrder`, `TestDashboardWithoutRemovedSections` y `TestClaudeCardOff`
+- [x] CA1.4: `TestLiveScreenOrder`, `TestDashboardWithoutRemovedSections` y `TestClaudeCardOff`
   actualizados al orden sin `#filtros`: `#quejas`, `#claude-card`, `#preguntas`, `#categorias`,
   `#momentos`, `#vivo-abajo`, `#supers`, `#monitor`.
-- [ ] CA1.5: `summary` de 44 px de alto como mínimo, con flecha (el marcador nativo o `::marker`
+- [x] CA1.5: `summary` de 44 px de alto como mínimo, con flecha (el marcador nativo o `::marker`
   con tokens) y foco visible; ningún color fuera de los tokens; `TestTemplateTokens` en verde.
-- [ ] CA1.6: lo que deja de usarse se borra: `Analysis.Filters`, `Analysis.Candidates`,
+- [x] CA1.6: lo que deja de usarse se borra: `Analysis.Filters`, `Analysis.Candidates`,
   `Analysis.Links`, `candidates()` y `FilterLine`, con sus casos de `TestAnalyze`; las listas de
   palabras que usa `Classify` no se tocan; `Analysis.Topics` queda (lo usan Programas y los
   momentos) — se verifica con `staticcheck` limpio y
   `grep -n "Candidates\|FilterLine" *.go` sin resultados.
-- [ ] CA1.7: README (líneas de "Filtros para YouTube Studio" y "Todo el monitor") y AGENTS.md
+- [x] CA1.7: README (líneas de "Filtros para YouTube Studio" y "Todo el monitor") y AGENTS.md
   (`monitorView` sin categorías; regla de estilo del plegado con `abrir`) — se verifica con
   `grep -n "Filtros para YouTube Studio" README.md AGENTS.md` vacío.
-- [ ] CA1.8: la cuota de YouTube no cambia: `git diff main -- youtube.go worker.go` vacío.
+- [x] CA1.8: la cuota de YouTube no cambia: `git diff main -- youtube.go worker.go` vacío.
 - [ ] CA1.9: revisado en el navegador con la vista previa (claro, oscuro, celular): las
   secciones no están, el plegado abre y cierra con la flecha y sigue abierto después de 30 s.
   Manual, anotado en el PR.

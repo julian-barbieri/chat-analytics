@@ -4,8 +4,8 @@
 {{define "vivo"}}
 <section id="vivo" class="vivo" aria-label="En vivo">
   <div id="canal" hx-get="/parcial/vivo/canal?{{if .Canal}}canal={{.Canal}}&{{end}}video={{.Video}}" hx-trigger="load, every 5s"><p class="muted">Cargando…</p></div>
-  {{if or .Canal .Video}}<div id="vivo-analisis" hx-get="/parcial/vivo/analisis?{{if .Canal}}canal={{.Canal}}&{{end}}video={{.Video}}{{if .Ver}}&ver={{.Ver}}{{end}}{{if .Horas}}&horas={{.Horas}}{{end}}" hx-trigger="load, every 30s" hx-swap="outerHTML"></div>{{end}}
-  {{/* El chat manda con hx-include el "ver" y las "horas" del análisis: si cambia el vivo y se recarga la sección, se conservan. */}}
+  {{if or .Canal .Video}}<div id="vivo-analisis" hx-get="/parcial/vivo/analisis?{{if .Canal}}canal={{.Canal}}&{{end}}video={{.Video}}{{if .Ver}}&ver={{.Ver}}{{end}}{{if .Horas}}&horas={{.Horas}}{{end}}{{if .Abrir}}&abrir={{.Abrir}}{{end}}" hx-trigger="load, every 30s" hx-swap="outerHTML"></div>{{end}}
+  {{/* El chat manda con hx-include el "ver", las "horas" y lo plegado abierto ("abrir") del análisis: si cambia el vivo y se recarga la sección, se conservan. */}}
   <div id="chat" hx-get="/parcial/vivo/chat?{{if .Canal}}canal={{.Canal}}&{{end}}video={{.Video}}" hx-include=".vq" hx-trigger="load, every 2s"><p class="muted">Cargando…</p></div>
   <div id="vivo-abajo"></div>
 </section>
@@ -65,18 +65,18 @@
 </section>
 {{end}}
 
-{{define "vivo-q"}}{{if .Canal}}canal={{.Canal}}&video={{.Video}}&ver={{.Ver}}{{else}}video={{.Video}}{{end}}{{end}}
+{{define "vivo-q"}}{{if .Canal}}canal={{.Canal}}&video={{.Video}}&ver={{.Ver}}{{else}}video={{.Video}}{{end}}{{if .Abrir}}&abrir={{.Abrir}}{{end}}{{end}}
 
 {{define "vivo-analisis"}}
 <div id="vivo-analisis" hx-get="/parcial/vivo/analisis?{{template "vivo-q" .}}&horas={{.Hours}}" hx-trigger="every 30s" hx-swap="outerHTML">
-{{if .Canal}}<input type="hidden" class="vq" name="ver" value="{{.Ver}}">{{end}}<input type="hidden" class="vq" name="horas" value="{{.Hours}}">
+{{if .Canal}}<input type="hidden" class="vq" name="ver" value="{{.Ver}}">{{end}}<input type="hidden" class="vq" name="horas" value="{{.Hours}}"><input type="hidden" class="vq" name="abrir" value="{{.Abrir}}">
 {{if .Label}}
 {{if .Canal}}<div class="selector">
   <div class="vbtns" role="group" aria-label="Qué parte del canal analizar">
     <button type="button" id="ver-programa" class="seg" aria-pressed="{{eq .Ver "programa"}}"
-      hx-get="/parcial/vivo/analisis?canal={{.Canal}}&video={{.Video}}&ver=programa&horas={{.Hours}}" hx-target="#vivo-analisis" hx-swap="outerHTML">Programa en curso</button>
+      hx-get="/parcial/vivo/analisis?canal={{.Canal}}&video={{.Video}}&ver=programa&horas={{.Hours}}{{if .Abrir}}&abrir={{.Abrir}}{{end}}" hx-target="#vivo-analisis" hx-swap="outerHTML">Programa en curso</button>
     <button type="button" id="ver-dia" class="seg" aria-pressed="{{eq .Ver "dia"}}"
-      hx-get="/parcial/vivo/analisis?canal={{.Canal}}&video={{.Video}}&ver=dia&horas={{.Hours}}" hx-target="#vivo-analisis" hx-swap="outerHTML">Todo el día del canal</button>
+      hx-get="/parcial/vivo/analisis?canal={{.Canal}}&video={{.Video}}&ver=dia&horas={{.Hours}}{{if .Abrir}}&abrir={{.Abrir}}{{end}}" hx-target="#vivo-analisis" hx-swap="outerHTML">Todo el día del canal</button>
   </div>
   {{if .ClaudeLine}}<p class="muted"><span class="ia">Claude</span> {{.ClaudeLine}}</p>{{end}}
 </div>
@@ -193,39 +193,9 @@
   <p class="muted">{{.Note}} Se cuentan desde que se actualizó el monitor para guardarlos.</p>
 </section>{{end}}
 
-<section id="filtros" class="card" aria-labelledby="filtros-h">
-  <h2 id="filtros-h">Filtros para YouTube Studio</h2>
-  {{if .A.Filters}}
-  <div class="words">{{range .A.Filters}}<span>{{.Key}} · {{.N}}</span>{{end}}</div>
-  <label class="muted sub" for="filtros-copia">Para copiar en Configuración › Comunidad › Palabras bloqueadas:</label>
-  <textarea id="filtros-copia" class="copy" readonly rows="2">{{.FilterLine}}</textarea>
-  {{else}}<p class="muted">Ninguna palabra de las listas apareció.</p>{{end}}
-  {{if .A.Candidates}}
-  <p class="muted sub">Para revisar (casi solo aparecen en spam e insultos):</p>
-  <div class="words">{{range .A.Candidates}}<span>{{.Key}} · {{.N}}</span>{{end}}</div>
-  {{end}}
-  {{if .A.Links}}<p class="muted sub">{{.A.Links}} mensajes con links: conviene activar «Bloquear vínculos» en la misma pantalla.</p>{{end}}
-  <h3>Temas (por reglas)</h3>
-  {{range .Topics}}<div class="catrow" title="{{.Label}}: {{.N}} mensajes">
-    <span>{{.Label}}</span>
-    <div class="track"><div class="fill" style="width: {{printf "%.1f" .Pct}}%"></div></div>
-    <span class="num">{{miles .N}}</span>
-  </div>{{else}}<p class="muted">Sin datos todavía.</p>{{end}}
-  <p class="muted">Palabras o pares de palabras, contadas en cuántos mensajes aparecen.</p>
-</section>
-
 {{with .Monitor}}<section id="monitor" class="card" aria-labelledby="monitor-h">
   <div class="chead"><h2 id="monitor-h">Todo el monitor · últimas 24 h</h2><span class="muted">{{plural .Total "mensaje" "mensajes"}} de todos los canales, con comentarios</span></div>
   <div class="vgrid">
-    <div class="inner">
-      <h3>Categorías</h3>
-      {{range .Cats}}<div class="catrow" title="{{.Label}}: {{.N}}">
-        <span>{{.Label}}</span>
-        <div class="track"><div class="fill" style="width: {{printf "%.1f" .Pct}}%"></div></div>
-        <span class="num">{{miles .N}}</span>
-      </div>{{end}}
-      <p class="muted">Por reglas simples; el detalle fino hacelo con Claude sobre el CSV.</p>
-    </div>
     <div class="inner">
       <h3>Palabras más repetidas</h3>
       <div class="words">{{range .Words}}<span>{{.Key}} · {{.N}}</span>{{else}}<span class="muted">Sin datos todavía</span>{{end}}</div>
@@ -248,7 +218,7 @@
   {{if .Notice}}<div class="cartel warn"><strong>{{.Notice}}</strong></div>{{end}}
   {{if .Note}}<p class="cnote">{{.Note}}</p>{{end}}
   {{range .Blocks}}{{template "claude-block" .}}{{end}}
-  {{if .Button}}<button type="button" class="btn btn-s" hx-post="/claude/analizar" hx-vals="{{.Vals}}" hx-target="#claude-card" hx-swap="outerHTML" aria-describedby="claude-gasto">{{.Button}}</button>
+  {{if .Button}}<button type="button" class="btn btn-s" hx-post="/claude/analizar" hx-vals="{{.Vals}}" hx-include=".vq" hx-target="#claude-card" hx-swap="outerHTML" aria-describedby="claude-gasto">{{.Button}}</button>
   {{else if .Remote}}<p class="muted">Para pedir un análisis, abrí el dashboard en la PC del monitor.</p>{{end}}
   <p id="claude-gasto" class="muted">{{.Spent}}</p>
   {{if .LastErr}}<p class="muted">Último aviso de Claude: {{.LastErr}}</p>{{end}}
@@ -265,10 +235,15 @@
   {{if not .Compact}}
   {{if .Topics}}<p class="muted sub">Temas:</p>
   <div class="words">{{range .Topics}}<span>{{.Text}} · {{.Count}}</span>{{end}}</div>{{end}}
-  {{if .Questions}}<p class="muted sub">Preguntas agrupadas:</p>
-  {{template "claude-items" .Questions}}{{end}}
-  {{if .Complaints}}<p class="muted sub">Quejas:</p>
-  {{template "claude-items" .Complaints}}{{end}}
+  {{/* Plegadas: la flecha pide el análisis con la sección cambiada en "abrir", así sigue abierta después del refresco de 30 s. El id deja el foco en la flecha al reemplazar el bloque y hx-sync corta un refresco en vuelo que la volvería a cerrar. */}}
+  {{if .Questions}}<details class="plegable"{{if .QFold.Open}} open{{end}}>
+    <summary id="plegar-preguntas" hx-get="{{.QFold.Href}}" hx-sync="closest #vivo-analisis:replace" hx-target="#vivo-analisis" hx-swap="outerHTML">Preguntas agrupadas ({{len .Questions}})</summary>
+    {{template "claude-items" .Questions}}
+  </details>{{end}}
+  {{if .Complaints}}<details class="plegable"{{if .CFold.Open}} open{{end}}>
+    <summary id="plegar-quejas" hx-get="{{.CFold.Href}}" hx-sync="closest #vivo-analisis:replace" hx-target="#vivo-analisis" hx-swap="outerHTML">Quejas ({{len .Complaints}})</summary>
+    {{template "claude-items" .Complaints}}
+  </details>{{end}}
   {{end}}
   <p class="muted">{{.Footer}}</p>
   {{end}}
