@@ -1,6 +1,6 @@
 # Spec: canales en continuo (vista por canal, intervalo de chat por canal y canales editables desde el dashboard)
 
-- **Estado:** borrador
+- **Estado:** aprobada (etapa 1 en esta rama; la etapa 2 va en `feat/canales-editables`)
 - **Tipo:** mejora
 - **Rama:** `feat/canales-continuos` (si se aprueba en dos etapas: `feat/canales-continuos`
   para la etapa 1 y `feat/canales-editables` para la 2, cada una con su PR)
@@ -12,7 +12,8 @@
   varios programas en vivo." Diseño de referencia: canvas con las pantallas 1 ("Canales")
   y 2 ("En vivo por canal"). Es la **parte 1 de 2**: la parte 2 (análisis con Claude) es
   otra tarea.
-- **Aprobada por / fecha:** pendiente.
+- **Aprobada por / fecha:** Julian Barbieri, 2026-11-05 ("Sí, aprobada"), con las
+  decisiones de la sección "Decisiones de la aprobación" al final.
 
 ## Contexto
 
@@ -571,3 +572,18 @@ anotarlo.
    uno por programa), o lo elige la persona al agregar el canal?
 9. **Reglas de AGENTS.md / CLAUDE.md** de la sección "Reglas que cambian": ¿aprobás los textos
    propuestos y el ADR 0005?
+
+## Decisiones de la aprobación (Julian Barbieri, 2026-11-05)
+
+1. **Orden:** primero la etapa 1 (continuidad por canal) en `feat/canales-continuos`; la
+   etapa 2 (canales editables) después, en su propia rama y PR.
+2. **"Todo el día del canal":** desde las 00:00 de hoy en hora local.
+3. **Pausar (etapa 2):** pausa solo el chat; la revisión de vivos del canal sigue.
+4. **Editar (etapa 2):** solo desde la PC donde corre el monitor.
+5. **Valores iniciales (etapa 2):** sin `datos.canales.json`, `-chat-seg* × N` (mismo gasto
+   que hoy). Si existe el archivo y se pasa `-canal`, gana el archivo con un aviso.
+6. **"Programas de hoy":** por ahora alcanza con la tira "Hoy en el canal"; sin pantalla aparte.
+7. **Vista previa:** sigue con un solo canal; no se toca `tools/preview` ni el ADR 0003.
+8. **"Cómo sale":** se deduce de lo observado.
+9. **Reglas:** se aprueban los textos nuevos de AGENTS.md / CLAUDE.md y el ADR 0005 de la
+   sección "Reglas que cambian" (cada etapa aplica los que le corresponden).
