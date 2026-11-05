@@ -264,8 +264,9 @@ No se anota en `job.json`: no es una etapa.
 ## 8. Cierre
 
 Respondé con el link al PR, la causa raíz o el motivo en una línea, los gates y los
-hallazgos que quedaron abiertos. No mergees: el merge lo decide una persona después de
-que el CI pase. Si levantaste la vista previa (paso 7b), cortala antes con
+hallazgos que quedaron abiertos. No mergees: el merge lo decide una persona. El CI de
+GitHub está desactivado, así que no esperes checks: los gates del paso 6 son la
+evidencia. Si levantaste la vista previa (paso 7b), cortala antes con
 `go run ./tools/preview -cortar`.
 
 Avisale además que, cuando mergee, la tarjeta pasa sola a "Mergeado" en el tablero en
