@@ -138,6 +138,17 @@ td.n, th.n { text-align: right; font-variant-numeric: tabular-nums; }
 .pwin { margin: 4px 0 8px; }
 .pwin .vbtn { font-size: 13px; padding: 4px 12px; }
 .tipica { stroke: var(--text-muted); stroke-dasharray: 4 3; vector-effect: non-scaling-stroke; }
+/* Tarjeta 7 (Claude): la barra de sentimiento usa los tokens de los carteles,
+   que ya están en los dos temas; los % van también en texto. */
+.claude h3 { font-size: 14px; margin: 0 0 6px; }
+.claude .cnote { margin: 0 0 12px; }
+.cblock { padding: 10px 0; border-bottom: 1px solid var(--border); margin-bottom: 12px; overflow-wrap: anywhere; }
+.cblock p { margin: 4px 0; }
+.csent { display: block; width: 100%; height: 12px; border-radius: 4px; margin: 8px 0 4px; }
+.csent .pos { fill: var(--ok-text); }
+.csent .neu { fill: var(--text-secondary); }
+.csent .neg { fill: var(--crit-text); }
+.claude .vbtn { margin: 4px 0; }
 .tops tr.main td { border-bottom: 0; }
 .tops tr.det td { overflow-wrap: anywhere; color: var(--text-secondary); }
 .tops tr.main td:first-child { overflow-wrap: anywhere; }

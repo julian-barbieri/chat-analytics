@@ -10,7 +10,9 @@ privacidad, clasificador, concurrencia) están en `AGENTS.md` y se importan acá
 `yt-monitor`: bot de **solo lectura** que monitorea comentarios y chat en vivo de
 canales de YouTube (piloto de Alphamedia con Radio Rivadavia). Dos modos con el mismo
 binario: informe puntual (`go run .`) y continuo con dashboard htmx (`-dashboard :8080`).
-No publica, no modera, no usa OAuth.
+No publica, no modera, no usa OAuth. Si se activa (`-claude-usd` > 0 y `CLAUDE_API_KEY`),
+el dashboard manda el **texto** de los mensajes de chat de cada programa (sin autores) a
+la API de Anthropic para resumirlos y agruparlos (ADR 0006). Sigue sin escribir en YouTube.
 
 ## Comandos exactos
 
@@ -34,10 +36,14 @@ YouTube ni necesita API key.
 solo por eso, el arreglo es actualizar Go, no el código. Decilo en el PR.
 
 Prohibido sin pedido explícito del usuario: `go run .` contra la API real (gasta cuota
-compartida, escribe `informes/` y `datos.jsonl`) y cualquier `-dashboard` que quede
-corriendo, salvo la vista previa del paso 7b de `/factory` (`go run ./tools/preview`),
-que la persona pide, usa una copia temporal y una API simulada y se corta con `-cortar`
-antes de terminar. Para probar a mano: `YT_BASE_URL=http://localhost:9999 YT_API_KEY=x go run . ...`.
+compartida, escribe `informes/` y `datos.jsonl`), cualquier corrida con `-claude-usd` > 0
+contra la API real de Anthropic (gasta plata y manda mensajes de usuarios) y cualquier
+`-dashboard` que quede corriendo, salvo la vista previa del paso 7b de `/factory`
+(`go run ./tools/preview`), que la persona pide, usa una copia temporal y una API de
+YouTube y de Claude simulada (saca las dos claves del entorno) y se corta con `-cortar`
+antes de terminar. Para probar a mano: `YT_BASE_URL=http://localhost:9999 YT_API_KEY=x go run . ...`
+(con Claude, también `CLAUDE_BASE_URL=http://localhost:9998 CLAUDE_API_KEY=x`; las dos
+`*_BASE_URL` existen solo para pruebas).
 
 ## Estructura
 
@@ -51,7 +57,7 @@ docs/decisions/      ADRs numerados (plantilla: ADR_TEMPLATE.md)
 .claude/skills/      procedimientos repetibles (/factory, /fix-bug)
 .github/workflows/   CI (desactivado en GitHub; los gates se corren en local)
 tools/factory-board/ tablero de la factory (package main aparte, no va en el binario)
-tools/preview/       vista previa del dashboard de una rama con datos copiados y API simulada (ADR 0003)
+tools/preview/       vista previa del dashboard de una rama con datos copiados y APIs simuladas (ADR 0003, 0006)
 factory/             estado (jobs/) y actividad (events/) de la factory; en .gitignore; el tablero puede borrar con el tacho las tareas en `pr-abierto`
 ```
 
@@ -77,7 +83,7 @@ factory/             estado (jobs/) y actividad (events/) de la factory; en .git
 
 ## Qué NO tocar
 
-- `.env` (tiene `YT_API_KEY`): no leer, no imprimir, no editar, no commitear.
+- `.env` (tiene `YT_API_KEY` y `CLAUDE_API_KEY`): no leer, no imprimir, no editar, no commitear.
 - `datos.jsonl`, `datos.*.json`, `datos.*.jsonl` (por ejemplo `datos.espectadores.jsonl`), `informes/`: datos reales de usuarios y de la API. No editar, no
   usar en tests, no subir. Están en `.gitignore`.
 - `static/htmx.min.js` (vendorizado), la retención de 30 días de `store.go`, el default

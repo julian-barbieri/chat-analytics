@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -356,8 +357,13 @@ func checkNoRealTmpLeftovers(t *testing.T) {
 func TestPreviewCutPaths(t *testing.T) {
 	checkNoRealTmpLeftovers(t)
 	const witness = "clave-testigo-no-va"
+	const claudeWitness = "sk-ant-testigo-no-va"
 	t.Setenv("YT_API_KEY", witness)
 	t.Setenv("YT_BASE_URL", "http://127.0.0.1:1")
+	// CA13: tampoco las de Claude, sin importar mayúsculas.
+	t.Setenv("CLAUDE_API_KEY", claudeWitness)
+	t.Setenv("claude_base_url", "http://127.0.0.1:2")
+	t.Setenv("ANTHROPIC_API_KEY", claudeWitness)
 
 	check := func(t *testing.T, cfg config, r *running) {
 		t.Helper()
@@ -374,12 +380,30 @@ func TestPreviewCutPaths(t *testing.T) {
 					keys = append(keys, kv)
 				}
 			}
-			if strings.Contains(string(env), witness) {
-				t.Errorf("el dashboard recibió la clave del entorno")
+			if strings.Contains(string(env), witness) || strings.Contains(string(env), claudeWitness) {
+				t.Errorf("el dashboard recibió una clave del entorno")
 			}
 			want := []string{"YT_API_KEY=" + fakeKey, "YT_BASE_URL=http://127.0.0.1:"}
 			if len(keys) != 2 || keys[0] != want[0] || !strings.HasPrefix(keys[1], want[1]) {
 				t.Errorf("variables YT_ del dashboard = %q, quiero %q y %q<puerto>", keys, want[0], want[1])
+			}
+			var claude []string
+			for _, kv := range vars {
+				if k := strings.ToUpper(strings.SplitN(kv, "=", 2)[0]); k == "CLAUDE_API_KEY" || k == "CLAUDE_BASE_URL" || k == "ANTHROPIC_API_KEY" {
+					claude = append(claude, kv)
+				}
+			}
+			ytBase := strings.TrimPrefix(keys[len(keys)-1], "YT_BASE_URL=")
+			if len(claude) != 2 || claude[0] != "CLAUDE_API_KEY="+fakeClaudeKey || claude[1] != "CLAUDE_BASE_URL="+ytBase {
+				t.Errorf("variables de Claude del dashboard = %q, quiero la clave falsa y la API simulada %s", claude, ytBase)
+			}
+			cmdline, err := os.ReadFile(filepath.Join("/proc", pid, "cmdline"))
+			if err != nil {
+				t.Fatalf("no pude leer los argumentos del dashboard: %v", err)
+			}
+			if args := strings.Split(strings.TrimRight(string(cmdline), "\x00"), "\x00"); !slices.Contains(args, "-claude-usd") ||
+				args[slices.Index(args, "-claude-usd")+1] != "1" {
+				t.Errorf("el dashboard arrancó con %q, quiero -claude-usd 1", args)
 			}
 			if cwd, err := os.Readlink(filepath.Join("/proc", pid, "cwd")); err != nil || cwd != r.dir {
 				t.Errorf("directorio de trabajo del dashboard %q (%v), quiero %q", cwd, err, r.dir)

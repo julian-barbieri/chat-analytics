@@ -1,7 +1,7 @@
 # Secretos: la API key de YouTube
 .env
 
-# Datos generados con nombres y mensajes reales (políticas de YouTube: no salen de esta PC)
+# Datos generados con nombres y mensajes reales (políticas de YouTube: no salen de esta PC, salvo el texto del chat que manda el análisis con Claude si se activa; ADR 0006)
 datos.jsonl
 datos.*.json
 datos.*.jsonl

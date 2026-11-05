@@ -54,6 +54,8 @@ func main() {
 	peakHours := flag.String("pico", "7-20", "modo continuo: horario pico en hora local, desde-hasta (\"\" = sin horario pico)")
 	comMin := flag.Int("comentarios-min", 10, "modo continuo: minutos entre lecturas de comentarios")
 	realTime := flag.String("tiempo-real", "", "modo continuo: links o IDs de vivos con tiempo real continuo, separados por coma: se reconectan apenas YouTube corta la conexión (~1.800 unidades por hora cada uno)")
+	claudeUSD := flag.Float64("claude-usd", 0, "modo continuo: tope de gasto diario en dólares del análisis con Claude de cada programa (0 = apagado; necesita CLAUDE_API_KEY, ver README)")
+	claudeModel := flag.String("claude-modelo", defaultClaudeModel, "modo continuo: modelo de Claude para el análisis de cada programa")
 	zone := zoneFlag(flag.CommandLine)
 	vivos := flag.String("vivos", "", "links o IDs de videos a revisar siempre, separados por coma (los vivos del canal se detectan solos)")
 	flag.Parse()
@@ -140,12 +142,25 @@ func main() {
 			ChatEvery:     time.Duration(*chatSeg) * time.Second, ChatPeak: time.Duration(*chatPeak) * time.Second,
 			PeakFrom: peakFrom, PeakTo: peakTo, Budget: *budget, RealTime: rt,
 		})
+		// El análisis con Claude va en su propia goroutine (ADR 0006): sin
+		// clave, con -claude-usd 0 o con un modelo sin precio, todo sigue como siempre.
+		var analyst *Analyst
+		ccfg, warn := claudeConfig(os.Getenv, *claudeUSD, *claudeModel)
+		if warn != "" {
+			log.Printf("aviso: %s", warn)
+		}
+		if ccfg.On {
+			analyst = NewAnalyst()
+			st.SetClaudeStatus(ClaudeStatus{On: true, Model: ccfg.Model, Tope: ccfg.Budget})
+			go RunAnalyst(context.Background(), NewClaude(ccfg), st, analyst, AnalystConfig{Budget: ccfg.Budget})
+			log.Printf("Análisis con Claude activado: %s, tope de US$ %s por día", ccfg.Model, usd(ccfg.Budget))
+		}
 		addr := *dash
 		if strings.HasPrefix(addr, ":") {
 			addr = "localhost" + addr
 		}
 		log.Printf("Dashboard en http://%s (Ctrl+C para cortar)", addr)
-		check(http.ListenAndServe(addr, (&Server{st: st, budget: *budget}).Routes()))
+		check(http.ListenAndServe(addr, (&Server{st: st, budget: *budget, analyst: analyst}).Routes()))
 		return
 	}
 

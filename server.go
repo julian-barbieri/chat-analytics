@@ -3,6 +3,7 @@ package main
 import (
 	"embed"
 	"encoding/csv"
+	"encoding/json"
 	"fmt"
 	"html/template"
 	"log"
@@ -34,8 +35,17 @@ var catLabels = map[string]string{
 }
 
 type Server struct {
-	st     *Store
-	budget int
+	st      *Store
+	budget  int
+	analyst *Analyst         // nil si el análisis con Claude está apagado
+	now     func() time.Time // nil: time.Now; los tests fijan la hora sin tocar time.Local
+}
+
+func (s *Server) clock() time.Time {
+	if s.now != nil {
+		return s.now()
+	}
+	return time.Now()
 }
 
 func (s *Server) Routes() http.Handler {
@@ -46,6 +56,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /parcial/vivo", s.liveSection)
 	mux.HandleFunc("GET /parcial/vivo/chat", s.liveChat)
 	mux.HandleFunc("GET /parcial/vivo/analisis", s.liveAnalysis)
+	mux.HandleFunc("POST /claude/analizar", s.claudeAnalyze)
 	mux.HandleFunc("GET /export.csv", s.export)
 	mux.Handle("GET /static/", http.FileServerFS(staticFS))
 	return mux
@@ -465,7 +476,7 @@ func (s *Server) liveAnalysis(w http.ResponseWriter, r *http.Request) {
 	}
 	for _, c := range snap.Channels {
 		if c.ID == q.Get("canal") && c.ID != "" {
-			s.channelAnalysis(w, snap, c, q.Get("video"), q.Get("ver"), hours)
+			s.channelAnalysis(w, snap, c, q.Get("video"), q.Get("ver"), hours, localRequest(r))
 			return
 		}
 	}
@@ -483,11 +494,13 @@ func (s *Server) liveAnalysis(w http.ResponseWriter, r *http.Request) {
 		s.render(w, "vivo-analisis", map[string]any{"Video": id, "Hours": hours})
 		return
 	}
-	now := time.Now()
+	now := s.clock()
 	msgs := sinceFor(snap.Msgs, id, now.Add(-24*time.Hour))
 	viewers := s.st.Viewers(id, now.Add(-24*time.Hour))
 	data := analysisData(msgs, viewers, []string{id}, snap.Videos, video.Concurrent, now, hours, scopeLast24)
 	data["Video"], data["Label"] = id, label
+	// El análisis con Claude es por canal: un vivo suelto no lo tiene.
+	data["Claude"] = claudeView(claudeInput{Configured: s.analyst != nil, Status: snap.Claude, Now: now})
 	s.render(w, "vivo-analisis", data)
 }
 
@@ -523,8 +536,8 @@ func analysisData(msgs []Message, viewers []ViewerSample, ids []string, videos [
 // actual con el programa actual, desde el inicio del tramo menos 5 min) o
 // "Todo el día del canal" (sus vivos desde las 00:00 locales). Nunca entran
 // mensajes de otro canal.
-func (s *Server) channelAnalysis(w http.ResponseWriter, snap Snapshot, ch ChannelStatus, want, ver string, hours int) {
-	now := time.Now()
+func (s *Server) channelAnalysis(w http.ResponseWriter, snap Snapshot, ch ChannelStatus, want, ver string, hours int, local bool) {
+	now := s.clock()
 	from := dayStart(now)
 	samples := s.st.Lives(from)
 	var lives []Video
@@ -567,13 +580,10 @@ func (s *Server) channelAnalysis(w http.ResponseWriter, snap Snapshot, ch Channe
 				start = sg.Start // el último tramo de ese programa
 			}
 		}
-		// 5 min antes: el cambio de título se ve hasta 3 min tarde.
-		start = start.Add(-5 * time.Minute)
-		for _, m := range snap.Msgs {
-			if m.VideoID == v.ID && !m.At.Before(start) && programOf(m, titles) == prog {
-				msgs = append(msgs, m)
-			}
-		}
+		// Desde 5 min antes (segmentLead): el cambio de título se ve hasta 3 min
+		// tarde. Mismo filtro que el análisis con Claude.
+		msgs = segmentMessages(snap.Msgs, Segment{VideoID: v.ID, Program: prog, Start: start, State: SegLive}, titles)
+		start = start.Add(-segmentLead)
 		viewers, pids, concurrent = s.st.Viewers(v.ID, start), []string{v.ID}, v.Concurrent
 		span, sc = prog+" (programa en curso)", scopeProgram
 	} else {
@@ -604,7 +614,88 @@ func (s *Server) channelAnalysis(w http.ResponseWriter, snap Snapshot, ch Channe
 	data := analysisData(msgs, viewers, pids, snap.Videos, concurrent, now, hours, sc)
 	data["Canal"], data["Video"], data["Ver"], data["Label"], data["Span"], data["Note"] = ch.ID, video, ver, channelName(ch), span, note
 	data["Day"] = dayStrip(segs, ch, from, now, s.quotaPaused(snap))
+	cardVer := "dia"
+	if ver == "programa" && len(lives) > 0 {
+		cardVer = "programa"
+	}
+	data["Claude"] = s.claudeCard(snap, ch, video, cardVer, local, "")
 	s.render(w, "vivo-analisis", data)
+}
+
+// claudeAnalyze es el botón "Analizar ahora": solo valida y encola. Nunca
+// llama a Claude ni escribe el Store; lo hace RunAnalyst, con el tope.
+func (s *Server) claudeAnalyze(w http.ResponseWriter, r *http.Request) {
+	if !sameOrigin(r) || !localRequest(r) {
+		http.Error(w, "Para pedir un análisis, abrí el dashboard en la PC del monitor.", http.StatusForbidden)
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<10)
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "Pedido inválido.", http.StatusBadRequest)
+		return
+	}
+	snap := s.st.Snapshot()
+	canal, video := r.PostForm.Get("canal"), r.PostForm.Get("video")
+	for _, ch := range snap.Channels {
+		if ch.ID != canal || canal == "" {
+			continue
+		}
+		var notice string
+		queued := false
+		if s.analyst != nil && snap.Claude.Off == "" {
+			var ok bool
+			if ok, notice = s.analyst.Request(ch.ID, video, s.clock()); ok {
+				queued = true
+			}
+		}
+		// "En cola" sale del ok de Request y no de Queued: RunAnalyst ya pudo
+		// haberlo sacado de la cola y la tarjeta volvería a mostrar el botón.
+		s.render(w, "claude-card", claudeView(s.claudeInput(snap, ch, video, "programa", true, notice, queued)))
+		return
+	}
+	http.Error(w, "Ese canal no está en -canal.", http.StatusBadRequest)
+}
+
+// claudeCard arma la tarjeta 7 de un canal con lo que ya está guardado.
+func (s *Server) claudeCard(snap Snapshot, ch ChannelStatus, want, ver string, local bool, notice string) ClaudeCard {
+	return claudeView(s.claudeInput(snap, ch, want, ver, local, notice, false))
+}
+
+// claudeInput junta lo que necesita claudeView. queued: el pedido del botón
+// recién entró a la cola.
+func (s *Server) claudeInput(snap Snapshot, ch ChannelStatus, want, ver string, local bool, notice string, queued bool) claudeInput {
+	now := s.clock()
+	in := claudeInput{Configured: s.analyst != nil, Status: snap.Claude, Canal: ch.ID, Ver: ver, Local: local, Notice: notice, Now: now}
+	if !in.Configured {
+		return in
+	}
+	from := claudeFrom(now)
+	segs := ProgramSegments(s.st.Lives(from), ch.ID, liveOf(snap.Videos, ch.ID), from, now)
+	in.Cur, in.HasCur = currentSegment(snap.Videos, segs, ch.ID, want)
+	if in.HasCur {
+		in.CurMsgs = segmentMessages(snap.Msgs, in.Cur, videoTitles(snap.Videos))
+		in.ChannelName = channelName(ch)
+	}
+	in.Queued = queued || s.analyst.Queued(ch.ID)
+	in.Analyses = s.st.Analyses(ch.ID, from)
+	// Los ejemplos se buscan entre los mensajes guardados: vencen con la misma retención.
+	need := map[string]bool{}
+	for _, a := range in.Analyses {
+		for _, gs := range [][]ClaudeGroup{a.Result.Questions, a.Result.Complaints} {
+			for _, g := range gs {
+				for _, id := range g.Examples {
+					need[id] = true
+				}
+			}
+		}
+	}
+	in.Msgs = map[string]Message{}
+	for _, m := range snap.Msgs {
+		if need[m.ID] {
+			in.Msgs[m.ID] = m
+		}
+	}
+	return in
 }
 
 // StripBlock es un tramo de la tira "Hoy en el canal". Text va en el
@@ -695,6 +786,12 @@ func money(micros int64) string {
 		sign, micros = "-", -micros
 	}
 	return fmt.Sprintf("%s%s,%02d", sign, miles(micros/1_000_000), micros%1_000_000/10_000)
+}
+
+// usd escribe micro-dólares con dos decimales y coma, con los centavos
+// redondeados para arriba (para no mostrar un costo menor al real).
+func usd(micros int64) string {
+	return money((micros + 9_999) / 10_000 * 10_000)
 }
 
 func currencyLabel(c string) string {
@@ -1077,4 +1174,169 @@ func miles(n any) string {
 		return "-" + b.String()
 	}
 	return b.String()
+}
+
+// ClaudeCard es la tarjeta 7, "Análisis con Claude". Todo va como string:
+// html/template escapa los textos del modelo y de los usuarios.
+type ClaudeCard struct {
+	Off            string // apagado o no disponible: lo único que se muestra
+	Active         bool   // el análisis está activo (cambia la nota de la tarjeta 2)
+	Note, Notice   string // el estado y la respuesta a un pedido del botón que no entró
+	Blocks         []ClaudeBlock
+	Button, Vals   string // el botón y lo que manda (vacío = sin botón)
+	Remote         bool   // sin botón porque el pedido no vino de la PC del monitor
+	Spent, LastErr string
+}
+
+// ClaudeBlock es un análisis guardado, listo para mostrar.
+type ClaudeBlock struct {
+	Title, Err, Summary, Tone, Footer string
+	Partial, Compact                  bool // Compact: en "Todo el día", solo resumen y sentimiento
+	Sent                              *SentimentBar
+	Topics, Questions, Complaints     []ClaudeItem
+}
+
+type SentimentBar struct {
+	Pos, Neu, Neg, NegX int
+	Label               string
+}
+
+type ClaudeItem struct {
+	Text, Count string
+	Examples    []ClaudeExample
+}
+
+type ClaudeExample struct{ Author, Hour, Text string }
+
+// claudeInput es lo que necesita claudeView, ya leído del Store.
+type claudeInput struct {
+	Configured    bool
+	Status        ClaudeStatus
+	Canal, Ver    string // Canal vacío: un vivo suelto
+	Cur           Segment
+	HasCur        bool
+	CurMsgs       []Message // del programa al aire, para estimar el costo del botón
+	ChannelName   string
+	Analyses      []ClaudeAnalysis
+	Msgs          map[string]Message // los de los ejemplos, por ID
+	Queued, Local bool
+	Notice        string
+	Now           time.Time
+}
+
+const claudeOffText = "El análisis con Claude está apagado. Para activarlo, mirá la sección del README."
+
+// claudeView arma la tarjeta 7: con "Programa en curso", el último análisis
+// del tramo al aire y el botón; con "Todo el día", un bloque por programa.
+func claudeView(in claudeInput) ClaudeCard {
+	st := in.Status
+	switch {
+	case !in.Configured:
+		return ClaudeCard{Off: claudeOffText}
+	case st.Off != "":
+		return ClaudeCard{Off: "El análisis con Claude se apagó hasta reiniciar el monitor. " + st.Off}
+	case in.Canal == "":
+		return ClaudeCard{Off: "El análisis con Claude es por canal: elegí el botón del canal para verlo."}
+	}
+	c := ClaudeCard{Active: true, Notice: in.Notice, LastErr: st.LastErr,
+		Spent: "Gastado hoy en Claude: US$ " + usd(st.Spent) + " de " + usd(st.Tope)}
+	if st.Capped {
+		c.Note = "Se llegó al tope de gasto de Claude de hoy (US$ " + usd(st.Tope) + "): se retoma mañana"
+	}
+	// Por tramo, el final reemplaza al parcial; entre iguales, el último.
+	best := map[string]ClaudeAnalysis{}
+	for _, a := range in.Analyses {
+		if b, ok := best[a.Key]; !ok || b.Partial || !a.Partial {
+			best[a.Key] = a
+		}
+	}
+	if in.Ver == "dia" {
+		var list []ClaudeAnalysis
+		for _, a := range best {
+			if !a.To.Before(dayStart(in.Now)) {
+				list = append(list, a)
+			}
+		}
+		sort.Slice(list, func(i, j int) bool { return list[i].From.Before(list[j].From) })
+		for _, a := range list {
+			c.Blocks = append(c.Blocks, claudeBlock(a, in.Msgs, true))
+		}
+		if len(c.Blocks) == 0 && c.Note == "" {
+			c.Note = "Todavía no hay programas de hoy analizados: cada programa se analiza solo cuando termina."
+		}
+		return c
+	}
+	key := segmentKey(in.Canal, in.Cur)
+	busy := in.HasCur && st.Busy == key
+	switch {
+	case busy:
+		c.Note = "Analizando… (puede tardar un minuto)"
+	case in.Queued:
+		c.Note = "En cola: el análisis se hace en unos instantes."
+	}
+	if a, ok := best[key]; ok && in.HasCur {
+		c.Blocks = append(c.Blocks, claudeBlock(a, in.Msgs, false))
+	} else if c.Note == "" {
+		c.Note = "Todavía no hay análisis de este programa: se hace solo cuando termina"
+	}
+	if !in.HasCur || busy || in.Queued || st.Capped {
+		return c
+	}
+	if !in.Local {
+		c.Remote = true
+		return c
+	}
+	c.Button = "Analizar ahora"
+	if st.Model != "" {
+		user, _ := claudePrompt(in.ChannelName, in.Cur.Program, in.Cur.Start, in.Now, in.CurMsgs)
+		c.Button += " (≈ US$ " + usd(claudeEstimate(st.Model, claudeRequestBytes(user))) + ")"
+	}
+	vals, _ := json.Marshal(map[string]string{"canal": in.Canal, "video": in.Cur.VideoID})
+	c.Vals = string(vals)
+	return c
+}
+
+// claudeBlock arma un análisis guardado. Los ejemplos que ya vencieron (o
+// que no están) no se muestran.
+func claudeBlock(a ClaudeAnalysis, msgs map[string]Message, compact bool) ClaudeBlock {
+	b := ClaudeBlock{Title: a.Program, Partial: a.Partial, Compact: compact, Err: a.Error}
+	if compact {
+		end := a.To.Local().Format("15:04")
+		if a.Partial {
+			end += ", parcial"
+		}
+		b.Title = a.From.Local().Format("15:04") + " a " + end + " · " + a.Program
+	}
+	if b.Err != "" {
+		return b
+	}
+	r := a.Result
+	b.Summary, b.Tone = r.Summary, r.Sentiment.Tone
+	if s := r.Sentiment; s.Positive+s.Neutral+s.Negative > 0 {
+		b.Sent = &SentimentBar{Pos: s.Positive, Neu: s.Neutral, Neg: s.Negative, NegX: s.Positive + s.Neutral,
+			Label: fmt.Sprintf("Sentimiento: %d %% positivo, %d %% neutro, %d %% negativo", s.Positive, s.Neutral, s.Negative)}
+	}
+	items := func(gs []ClaudeGroup) []ClaudeItem {
+		var out []ClaudeItem
+		for _, g := range gs {
+			it := ClaudeItem{Text: g.Text, Count: plural(g.Msgs, "mensaje", "mensajes") + " · " + plural(g.People, "persona", "personas")}
+			for _, id := range g.Examples {
+				if m, ok := msgs[id]; ok {
+					it.Examples = append(it.Examples, ClaudeExample{m.Author, m.At.Local().Format("15:04"), m.Text})
+				}
+			}
+			out = append(out, it)
+		}
+		return out
+	}
+	b.Topics, b.Questions, b.Complaints = items(r.Topics), items(r.Questions), items(r.Complaints)
+	b.Footer = fmt.Sprintf("Analizado a las %s con %s · %s de %s mensajes", a.At.Local().Format("15:04"), a.Model, miles(a.Sent), miles(a.Total))
+	return b
+}
+
+func plural(n int, one, many string) string {
+	if n == 1 {
+		return "1 " + one
+	}
+	return miles(n) + " " + many
 }

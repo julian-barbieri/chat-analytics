@@ -126,7 +126,8 @@
       <div class="meta"><strong>{{.Author}}</strong> · {{fecha .At}}{{if .Likes}} · {{.Likes}} likes{{end}}</div>
       <div>{{.Text}}</div>
     </li>{{else}}<li class="muted">Sin preguntas todavía.</li>{{end}}</ul>
-    <p class="muted">Sin borradores: para que Claude los escriba, descargá el CSV y usá el pedido del README.</p>
+    {{if .Claude.Active}}<p class="muted">Los grupos de preguntas de Claude están en la tarjeta 7. Para borradores de respuesta, descargá el CSV y usá el pedido del README.</p>
+    {{else}}<p class="muted">Sin borradores: para que Claude los escriba, descargá el CSV y usá el pedido del README.</p>{{end}}
   </section>
 
   <section class="card">
@@ -218,7 +219,50 @@
     {{else}}<p class="muted">Sin Super Chats ni Super Stickers {{.In}}.</p>{{end}}
     <p class="muted">{{.Note}} Se cuentan desde que se actualizó el monitor para guardarlos.</p>
   </section>{{end}}
+
+  {{template "claude-card" .Claude}}
 </div>
 {{else}}<p class="muted">Este vivo ya no está en la lista de videos.</p>{{end}}
 </div>
 {{end}}
+
+{{/* Tarjeta 7. El botón responde esta misma tarjeta (hx-target="#claude-card"); el resto se refresca con el análisis cada 30 s. */}}
+{{define "claude-card"}}<section id="claude-card" class="card full claude" aria-label="Análisis con Claude">
+  <h2>7. Análisis con Claude</h2>
+  {{if .Off}}<p class="muted">{{.Off}}</p>
+  {{else}}
+  {{if .Notice}}<div class="cartel warn"><strong>{{.Notice}}</strong></div>{{end}}
+  {{if .Note}}<p class="cnote">{{.Note}}</p>{{end}}
+  {{range .Blocks}}<article class="cblock">
+    <h3>{{.Title}}{{if and .Partial (not .Compact)}} <span class="badge">Parcial, hasta ahora</span>{{end}}</h3>
+    {{if .Err}}<div class="note">{{.Err}}</div>
+    {{else}}
+    <p>{{.Summary}}</p>
+    {{with .Sent}}<svg class="csent" viewBox="0 0 100 6" preserveAspectRatio="none" role="img" aria-label="{{.Label}}"><title>{{.Label}}</title>
+      <rect class="pos" x="0" y="0" width="{{.Pos}}" height="6"></rect><rect class="neu" x="{{.Pos}}" y="0" width="{{.Neu}}" height="6"></rect><rect class="neg" x="{{.NegX}}" y="0" width="{{.Neg}}" height="6"></rect>
+    </svg>{{end}}
+    {{if or .Sent .Tone}}<p class="muted">{{with .Sent}}{{.Pos}} % positivo · {{.Neu}} % neutro · {{.Neg}} % negativo{{end}}{{if and .Sent .Tone}} · {{end}}{{if .Tone}}Tono: {{.Tone}}{{end}}</p>{{end}}
+    {{if not .Compact}}
+    {{if .Topics}}<p class="muted sub">Temas:</p>
+    <div class="words">{{range .Topics}}<span>{{.Text}} · {{.Count}}</span>{{end}}</div>{{end}}
+    {{if .Questions}}<p class="muted sub">Preguntas agrupadas:</p>
+    <ul class="qlist">{{range .Questions}}<li>
+      <div><strong>{{.Text}}</strong> <span class="muted">· {{.Count}}</span></div>
+      {{range .Examples}}<div class="muted"><strong>{{.Author}}</strong> · {{.Hour}}: {{.Text}}</div>{{end}}
+    </li>{{end}}</ul>{{end}}
+    {{if .Complaints}}<p class="muted sub">Quejas:</p>
+    <ul class="qlist">{{range .Complaints}}<li>
+      <div><strong>{{.Text}}</strong> <span class="muted">· {{.Count}}</span></div>
+      {{range .Examples}}<div class="muted"><strong>{{.Author}}</strong> · {{.Hour}}: {{.Text}}</div>{{end}}
+    </li>{{end}}</ul>{{end}}
+    {{end}}
+    <p class="muted">{{.Footer}}</p>
+    {{end}}
+  </article>{{end}}
+  {{if .Button}}<button type="button" class="vbtn" hx-post="/claude/analizar" hx-vals="{{.Vals}}" hx-target="#claude-card" hx-swap="outerHTML" aria-describedby="claude-gasto">{{.Button}}</button>
+  {{else if .Remote}}<p class="muted">Para pedir un análisis, abrí el dashboard en la PC del monitor.</p>{{end}}
+  <p id="claude-gasto" class="muted">{{.Spent}}</p>
+  {{if .LastErr}}<p class="muted">Último aviso de Claude: {{.LastErr}}</p>{{end}}
+  <p class="muted">Lo arma Claude: puede equivocarse; revisalo antes de usarlo al aire. Se manda solo el texto de los mensajes de chat, sin nombres ni spam.</p>
+  {{end}}
+</section>{{end}}
