@@ -1,7 +1,8 @@
 # Spec: rediseño del dashboard en tres pantallas (En vivo, Programas de hoy, Canales), canales editables y Claude en tiempo real
 
 - **Estado:** etapa 1 implementada (CA1.1 a CA1.21; CA1.22 se revisa en el navegador con
-  la vista previa); etapas 2 y 3 aprobadas, pendientes. Aprobada con las respuestas de la
+  la vista previa); etapas 2 y 3 **reemplazadas** por
+  `docs/specs/2026-11-05-canales-editables-claude-vivo.md` (aprobada el 2026-11-05). Aprobada con las respuestas de la
   persona a las preguntas del primer borrador (ver "Decisiones de la persona" al final)
 - **Tipo:** mejora (feat)
 - **Rama:** tres etapas, tres PRs: `feat/rediseno-tres-pantallas` (etapa 1),

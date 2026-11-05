@@ -1,11 +1,14 @@
 # Spec: canales editables, Claude en tandas y En vivo con sentimiento, alertas y preguntas agrupadas
 
-- **Estado:** borrador
+- **Estado:** aprobada (F1 en curso; F2 a F4 pendientes)
 - **Tipo:** mejora (feat)
 - **Rama:** la spec, en `feat/canales-editables-claude-vivo`. Implementación en cuatro
   fases con un PR cada una, cada rama desde `main` actualizado después de que entre la
   anterior: `feat/en-vivo-plegar-quitar` (F1), `feat/canales-editables` (F2, el nombre que ya
   reservaba la 010), `feat/claude-tandas` (F3) y `feat/claude-en-vivo` (F4). Ver "Fases y PRs".
+  Al aprobar, el orquestador decidió que F1 vaya en la rama de la spec
+  (`feat/canales-editables-claude-vivo`), así la spec aprobada entra a `main` con el primer PR;
+  F2 a F4 siguen en sus ramas propias, como tareas nuevas de la factory.
 - **Origen:** pedido de Julian Barbieri (2026-11-05, tarea 012), con tres imágenes de
   referencia (tarjeta "Análisis con Claude" de Canales, "Sentimiento del chat" y "Preguntas
   agrupadas para producción"; descriptas en "Diseño de referencia"):
@@ -31,7 +34,15 @@
   `2026-11-05-canales-continuos.md`). Nadie las implementa por su cuenta: esta spec las toma,
   con los cambios que pide el pedido nuevo (tabla "Qué cambia respecto de lo aprobado"). Esta
   tarea no edita esas specs; el orquestador marca su estado al aprobar.
-- **Aprobada por / fecha:** —
+- **Aprobada por / fecha:** Julian Barbieri, 2026-11-05 ("Aprobar con recomendaciones"):
+  se aceptan las recomendaciones de las 12 preguntas abiertas: (1) reemplaza las etapas 2 y 3
+  de la 010, cuatro PRs en orden; (2) un select para tiempo real (Haiku) y resúmenes con
+  `-claude-modelo` mostrado como texto; (3) tandas cada 30 s por defecto; (4) tope sugerido
+  US$ 3; (5) "Marcar respondida" persistida 30 días con "Deshacer"; (6) el sentimiento
+  reemplaza la barra del resumen de Claude y el gráfico de participación queda; (7) "lo
+  típico" según (f); (8) las alertas muestran el autor; (9) F5 opcional, después de medir
+  costos; (10) se puede prender desde la pantalla con clave y tope > 0; (11) se quita Filtros;
+  (12) se aprueban los textos de "Reglas que cambian" y los ADR 0005 y 0008.
 
 ## Contexto
 
