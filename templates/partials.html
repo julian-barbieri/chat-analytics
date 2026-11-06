@@ -4,7 +4,7 @@
 {{define "vivo"}}
 <section id="vivo" class="vivo" aria-label="En vivo">
   <div id="canal" hx-get="/parcial/vivo/canal?{{if .Canal}}canal={{.Canal}}&{{end}}video={{.Video}}" hx-trigger="load, every 5s"><p class="muted">Cargando…</p></div>
-  {{if or .Canal .Video}}<div id="vivo-analisis" hx-get="/parcial/vivo/analisis?{{if .Canal}}canal={{.Canal}}&{{end}}video={{.Video}}{{if .Ver}}&ver={{.Ver}}{{end}}{{if .Horas}}&horas={{.Horas}}{{end}}{{if .Abrir}}&abrir={{.Abrir}}{{end}}" hx-trigger="load, every 30s" hx-swap="outerHTML"></div>{{end}}
+  {{if or .Canal .Video}}<div id="vivo-analisis" hx-get="/parcial/vivo/analisis?{{if .Canal}}canal={{.Canal}}&{{end}}video={{.Video}}{{if .Ver}}&ver={{.Ver}}{{end}}{{if .Horas}}&horas={{.Horas}}{{end}}{{if .Abrir}}&abrir={{.Abrir}}{{end}}{{if .Motivos}}&motivos={{.Motivos}}{{end}}" hx-trigger="load, every 30s" hx-swap="outerHTML"></div>{{end}}
   {{/* El chat manda con hx-include el "ver", las "horas" y lo plegado abierto ("abrir") del análisis: si cambia el vivo y se recarga la sección, se conservan. */}}
   <div id="chat" hx-get="/parcial/vivo/chat?{{if .Canal}}canal={{.Canal}}&{{end}}video={{.Video}}" hx-include=".vq" hx-trigger="load, every 2s"><p class="muted">Cargando…</p></div>
   <div id="vivo-abajo"></div>
@@ -65,18 +65,18 @@
 </section>
 {{end}}
 
-{{define "vivo-q"}}{{if .Canal}}canal={{.Canal}}&video={{.Video}}&ver={{.Ver}}{{else}}video={{.Video}}{{end}}{{if .Abrir}}&abrir={{.Abrir}}{{end}}{{end}}
+{{define "vivo-q"}}{{if .Canal}}canal={{.Canal}}&video={{.Video}}&ver={{.Ver}}{{else}}video={{.Video}}{{end}}{{if .Abrir}}&abrir={{.Abrir}}{{end}}{{if .Motivos}}&motivos={{.Motivos}}{{end}}{{end}}
 
 {{define "vivo-analisis"}}
 <div id="vivo-analisis" hx-get="/parcial/vivo/analisis?{{template "vivo-q" .}}&horas={{.Hours}}" hx-trigger="every 30s" hx-swap="outerHTML">
-{{if .Canal}}<input type="hidden" class="vq" name="ver" value="{{.Ver}}">{{end}}<input type="hidden" class="vq" name="horas" value="{{.Hours}}"><input type="hidden" class="vq" name="abrir" value="{{.Abrir}}">
+{{if .Canal}}<input type="hidden" class="vq" name="ver" value="{{.Ver}}"><input type="hidden" class="vq" name="motivos" value="{{.Motivos}}">{{end}}<input type="hidden" class="vq" name="horas" value="{{.Hours}}"><input type="hidden" class="vq" name="abrir" value="{{.Abrir}}">
 {{if .Label}}
 {{if .Canal}}<div class="selector">
   <div class="vbtns" role="group" aria-label="Qué parte del canal analizar">
     <button type="button" id="ver-programa" class="seg" aria-pressed="{{eq .Ver "programa"}}"
-      hx-get="/parcial/vivo/analisis?canal={{.Canal}}&video={{.Video}}&ver=programa&horas={{.Hours}}{{if .Abrir}}&abrir={{.Abrir}}{{end}}" hx-target="#vivo-analisis" hx-swap="outerHTML">Programa en curso</button>
+      hx-get="/parcial/vivo/analisis?canal={{.Canal}}&video={{.Video}}&ver=programa&horas={{.Hours}}{{if .Abrir}}&abrir={{.Abrir}}{{end}}{{if .Motivos}}&motivos={{.Motivos}}{{end}}" hx-target="#vivo-analisis" hx-swap="outerHTML">Programa en curso</button>
     <button type="button" id="ver-dia" class="seg" aria-pressed="{{eq .Ver "dia"}}"
-      hx-get="/parcial/vivo/analisis?canal={{.Canal}}&video={{.Video}}&ver=dia&horas={{.Hours}}{{if .Abrir}}&abrir={{.Abrir}}{{end}}" hx-target="#vivo-analisis" hx-swap="outerHTML">Todo el día del canal</button>
+      hx-get="/parcial/vivo/analisis?canal={{.Canal}}&video={{.Video}}&ver=dia&horas={{.Hours}}{{if .Abrir}}&abrir={{.Abrir}}{{end}}{{if .Motivos}}&motivos={{.Motivos}}{{end}}" hx-target="#vivo-analisis" hx-swap="outerHTML">Todo el día del canal</button>
   </div>
   {{if .ClaudeLine}}<p class="muted"><span class="ia">Claude</span> {{.ClaudeLine}}</p>{{end}}
 </div>
@@ -123,25 +123,28 @@
   <p class="muted">{{.Typical}}</p>
   {{end}}
   {{with .Chart}}<h3>Cómo fue cambiando · cada 5 min</h3>
-  <div class="slines" aria-hidden="true">{{range .Lines}}<span style="left: {{printf "%.2f" .Left}}%">{{.Label}}</span>{{end}}</div>
   <div class="schart">
     <svg viewBox="0 0 {{.W}} 100" preserveAspectRatio="none" role="img" aria-label="{{.Aria}}">
       {{range .Bars}}<g><title>{{.Label}}</title>{{if .Low}}<rect class="low" x="{{.X}}" y="0" width="{{.W}}" height="100"></rect>{{else}}<rect class="neg" x="{{.X}}" y="0" width="{{.W}}" height="{{.NegH}}"></rect><rect class="neu" x="{{.X}}" y="{{.NeuY}}" width="{{.W}}" height="{{.NeuH}}"></rect><rect class="pos" x="{{.X}}" y="{{.PosY}}" width="{{.W}}" height="{{.PosH}}"></rect>{{end}}</g>
       {{end}}{{range .Lines}}<line class="corte" x1="{{.X}}" x2="{{.X}}" y1="0" y2="100" vector-effect="non-scaling-stroke"></line>{{end}}
     </svg>
   </div>
+  {{if .Strip}}<div class="sprogs" aria-hidden="true">{{range .Strip}}<span class="sprog" style="left: {{printf "%.2f" .Left}}%; width: {{printf "%.2f" .Width}}%" title="{{.Range}} · {{.Name}}">{{.Name}}</span>{{end}}</div>{{end}}
   <div class="pticks" aria-hidden="true">{{range .Ticks}}<span{{if .End}} class="end"{{end}} style="left: {{printf "%.2f" .Left}}%">{{.Label}}</span>{{end}}</div>
-  <p class="muted leyenda"><span class="sw pos" aria-hidden="true"></span> Positivo <span class="sw neu" aria-hidden="true"></span> Neutro <span class="sw neg" aria-hidden="true"></span> Negativo <span class="sw low" aria-hidden="true"></span> Menos de 20 mensajes: sin color</p>
+  {{if .Strip}}<ul class="sprogl" aria-label="Programas del gráfico">{{range .Strip}}<li title="{{.Range}} · {{.Name}}">{{.Hour}} · {{.Name}}</li>{{end}}</ul>{{end}}
+  <p class="muted leyenda"><span class="sw pos" aria-hidden="true"></span> Positivo <span class="sw neu" aria-hidden="true"></span> Neutro <span class="sw neg" aria-hidden="true"></span> Negativo <span class="sw low" aria-hidden="true"></span> Menos de 5 mensajes: sin color</p>
   {{end}}
+  <div class="vbtns mwin" role="group" aria-label="Período de los motivos">{{range .Wins}}<button type="button" id="mot-{{.Key}}" class="vbtn" aria-pressed="{{.On}}"
+    hx-get="{{.Href}}" hx-target="#vivo-analisis" hx-swap="outerHTML">{{.Label}}</button>{{end}}</div>
   <div class="grid2">
     <div class="inner">
       <h3>Por qué hay mensajes negativos</h3>
-      <p class="muted">{{plural .NegN "negativo" "negativos"}} en los últimos 5 min</p>
+      <p class="muted">{{plural .NegN "negativo" "negativos"}} {{.When}}</p>
       {{template "motivos" .Neg}}
     </div>
     <div class="inner">
       <h3>Qué está gustando</h3>
-      <p class="muted">{{plural .PosN "positivo" "positivos"}} en los últimos 5 min</p>
+      <p class="muted">{{plural .PosN "positivo" "positivos"}} {{.When}}</p>
       {{template "motivos" .Pos}}
     </div>
   </div>
@@ -299,7 +302,7 @@
 {{define "motivos"}}{{if .}}<ul class="qlist">{{range .}}<li>
   <div><strong>{{.Text}}</strong> <span class="muted">· {{.Pct}}</span></div>
   {{range .Quotes}}<div class="muted">«{{.}}»</div>{{end}}
-</li>{{end}}</ul>{{else}}<p class="muted">Claude todavía no dio motivos en estos 5 min.</p>{{end}}{{end}}
+</li>{{end}}</ul>{{else}}<p class="muted">Claude todavía no dio motivos en este período.</p>{{end}}{{end}}
 
 {{/* Preguntas agrupadas para producción (F4). "Marcar respondida" responde esta misma tarjeta. */}}
 {{define "vivo-preguntas"}}<section id="preguntas" class="card" aria-labelledby="preguntas-h">

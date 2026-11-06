@@ -418,6 +418,20 @@ type ProgramDetail struct {
 	Questions             []Message
 	Supers                []SuperRow
 	SupersNote, SupersMsg string
+	// Sentimiento de las tandas de Claude: una fila por franja de 5 min y los
+	// motivos de todo el programa. Sin Claude, Sent va en false.
+	Sent, Motives bool
+	SentRows      []SentRow
+	Neg, Pos      []MotiveRow
+	NegN, PosN    int
+}
+
+// SentRow es una fila de "Sentimiento del programa": una franja de 5 min con
+// sus % (Low: menos de minChartMsgs, sin color).
+type SentRow struct {
+	Hour, Label   string
+	Pos, Neu, Neg float64
+	Low           bool
 }
 
 // programDetail arma el detalle de un tramo con sus mensajes ya filtrados.
@@ -468,7 +482,66 @@ func (s *Server) programDetail(ps ProgramSeg, msgs []Message, a *ClaudeAnalysis,
 		d.Supers = append(d.Supers, SuperRow{Currency: currencyLabel(c.Currency), Total: money(c.Micros), N: c.N})
 	}
 	d.SupersNote = superNote
+	if s.analyst != nil {
+		s.programSentiment(&d, ps, msgs, now)
+	}
 	return d
+}
+
+// programSentiment suma al detalle las franjas de sentimiento del tramo
+// (Store.SentSlots, ya sumadas al guardar) y los motivos de las tandas que
+// tocan el tramo, contando solo los mensajes del tramo. No pide nada a Claude.
+func (s *Server) programSentiment(d *ProgramDetail, ps ProgramSeg, msgs []Message, now time.Time) {
+	sg := ps.Seg
+	end := sg.End
+	if sg.State == SegLive || end.After(now) {
+		end = now
+	}
+	d.Sent = true
+	for _, sl := range s.st.SentSlots(ps.Channel.ID, sg.Start) {
+		if sl.Program != sg.Program || sl.Start.After(end) || sl.Total() == 0 {
+			continue
+		}
+		b := sentStack(sl)
+		p := sentPct(sl)
+		d.SentRows = append(d.SentRows, SentRow{Hour: sl.Start.Local().Format("15:04"), Label: b.Label, Low: b.Low, Pos: p.Pos, Neu: p.Neu, Neg: p.Neg})
+	}
+	byID := messagesByID(msgs)
+	labels := s.st.Labels(messageIDs(msgs))
+	for _, l := range labels {
+		switch l.Sentiment {
+		case "negativo":
+			d.NegN++
+		case "positivo":
+			d.PosN++
+		}
+	}
+	var batches []ClaudeBatch
+	for _, b := range s.st.Batches(ps.Channel.ID, sg.Start) {
+		if b.From.After(end) {
+			continue
+		}
+		// Una tanda puede tener mensajes de otro programa: de sus motivos
+		// cuentan solo los IDs de este tramo.
+		c := b
+		c.Motives = nil
+		for _, mo := range b.Motives {
+			var ids []string
+			for _, id := range mo.IDs {
+				if _, ok := byID[id]; ok {
+					ids = append(ids, id)
+				}
+			}
+			if len(ids) > 0 {
+				mo.IDs = ids
+				c.Motives = append(c.Motives, mo)
+			}
+		}
+		batches = append(batches, c)
+	}
+	d.Neg = Motives(batches, "negativo", d.NegN, byID, sg.Start)
+	d.Pos = Motives(batches, "positivo", d.PosN, byID, sg.Start)
+	d.Motives = len(labels) > 0
 }
 
 func messagesByID(msgs []Message) map[string]Message {

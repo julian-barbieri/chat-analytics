@@ -288,11 +288,13 @@ func claudeProjection(spent int64, spentModel string, first, now time.Time, mode
 // motivos. Los mensajes que se muestran salen siempre del Store.
 
 const (
-	minSentMsgs     = 20 // una franja con menos no tiene color ni cuenta para lo típico
-	minTypicalSlots = 6  // franjas que hacen falta para decir qué es lo típico
-	sentRisePts     = 5  // puntos de negativo sobre lo típico para el cartel
-	techAlertMin    = 15 // quejas técnicas en 5 min
-	insultAlertPct  = 5  // % de insultos en 10 min
+	minSentMsgs     = 20              // una franja con menos no cuenta para lo típico ni para la alerta de insultos
+	minChartMsgs    = 5               // una barra del gráfico con menos no tiene color
+	minChartSeg     = 5 * time.Minute // un tramo más corto se junta con el de al lado en el gráfico
+	minTypicalSlots = 6               // franjas que hacen falta para decir qué es lo típico
+	sentRisePts     = 5               // puntos de negativo sobre lo típico para el cartel
+	techAlertMin    = 15              // quejas técnicas en 5 min
+	insultAlertPct  = 5               // % de insultos en 10 min
 	insultWindow    = 10 * time.Minute
 	alertMsgsMax    = 10
 	motivesShown    = 3
@@ -352,9 +354,14 @@ func mergeSlots(slots []SentSlot) []SentSlot {
 
 // recentSent cuenta los mensajes de chat etiquetados de los últimos 5 min.
 func recentSent(msgs []Message, labels map[string]MessageLabel, now time.Time) SentSlot {
+	return sentCount(msgs, labels, now.Add(-slotStep), now)
+}
+
+// sentCount cuenta los mensajes de chat etiquetados después de since y hasta now.
+func sentCount(msgs []Message, labels map[string]MessageLabel, since, now time.Time) SentSlot {
 	var s SentSlot
 	for _, m := range msgs {
-		if m.Source != "chat" || !m.At.After(now.Add(-slotStep)) || m.At.After(now) {
+		if m.Source != "chat" || !m.At.After(since) || m.At.After(now) {
 			continue
 		}
 		if l, ok := labels[m.ID]; ok {
@@ -437,7 +444,7 @@ func sentimentCards(recent SentSlot, typ SentPct, where string, ok bool, cause s
 }
 
 // SentStack es una barra del gráfico: alturas en % del alto, apiladas
-// (negativo arriba, neutro, positivo abajo). Low: menos de minSentMsgs.
+// (negativo arriba, neutro, positivo abajo). Low: menos de minChartMsgs.
 type SentStack struct {
 	X, W             float64
 	NegH, NeuY, NeuH float64
@@ -446,10 +453,15 @@ type SentStack struct {
 	Label            string
 }
 
-// SentLine es la línea punteada de un cambio de programa.
-type SentLine struct {
-	X, Left float64
-	Label   string
+// SentLine es la línea punteada de un cambio de programa. El nombre va en la
+// franja de abajo (Strip): arriba de las barras se pisaban.
+type SentLine struct{ X float64 }
+
+// SentProg es un programa de la franja de abajo del gráfico: Left y Width
+// en % del ancho, Hour su inicio y Range el rango para el <title>.
+type SentProg struct {
+	Left, Width       float64
+	Name, Hour, Range string
 }
 
 // SentChart es "Cómo fue cambiando · cada 5 min".
@@ -457,12 +469,14 @@ type SentChart struct {
 	W     float64
 	Bars  []SentStack
 	Lines []SentLine
+	Strip []SentProg
 	Ticks []Tick
 	Aria  string
 }
 
 // sentimentChart arma el gráfico desde from (alineado a 5 min) hasta now con
-// las franjas del canal y una línea en cada programa que empieza.
+// las franjas del canal, una línea en cada programa que empieza y la franja
+// de programas de abajo.
 func sentimentChart(slots []SentSlot, segs []Segment, from, now time.Time) SentChart {
 	from = slotOf(from)
 	n := max(int(now.Sub(from)/slotStep)+1, 1)
@@ -474,30 +488,95 @@ func sentimentChart(slots []SentSlot, segs []Segment, from, now time.Time) SentC
 			continue
 		}
 		withData++
-		b := SentStack{X: float64(i) + 0.1, W: 0.8}
-		hm := s.Start.Local().Format("15:04")
-		if s.Total() < minSentMsgs {
-			b.Low = true
-			b.Label = fmt.Sprintf("%s: %s, menos de %d: sin color", hm, plural(s.Total(), "mensaje", "mensajes"), minSentMsgs)
-		} else {
-			p := sentPct(s)
-			b.NegH, b.NeuY, b.NeuH = p.Neg, p.Neg, p.Neu
-			b.PosY, b.PosH = p.Neg+p.Neu, p.Pos
-			b.Label = fmt.Sprintf("%s: %.0f %% positivo, %.0f %% neutro, %.0f %% negativo (%s)", hm, p.Pos, p.Neu, p.Neg, plural(s.Total(), "mensaje", "mensajes"))
-		}
+		b := sentStack(s)
+		b.X, b.W = float64(i)+0.1, 0.8
 		c.Bars = append(c.Bars, b)
 	}
-	for _, sg := range segs {
-		if sg.Program == "" || !sg.Start.After(from) || sg.Start.After(now) {
-			continue
+	end := from.Add(time.Duration(n) * slotStep)
+	x := func(t time.Time) float64 { return float64(t.Sub(from)) / float64(slotStep) }
+	for _, p := range chartPrograms(segs, from, end, now) {
+		if p.start.After(from) {
+			c.Lines = append(c.Lines, SentLine{X: x(p.start)})
 		}
-		x := float64(sg.Start.Sub(from)) / float64(slotStep)
-		c.Lines = append(c.Lines, SentLine{X: x, Left: x * 100 / c.W,
-			Label: sg.Start.Local().Format("15:04") + " · empieza " + sg.Program})
+		r := p.real.Local().Format("15:04") + " a " + p.end.Local().Format("15:04")
+		if p.live {
+			r = p.real.Local().Format("15:04") + " a ahora"
+		}
+		c.Strip = append(c.Strip, SentProg{Left: x(p.start) * 100 / c.W, Width: x(p.end)*100/c.W - x(p.start)*100/c.W,
+			Name: p.name, Hour: p.real.Local().Format("15:04"), Range: r})
 	}
 	c.Ticks = []Tick{{Left: 0, Label: from.Local().Format("15:04")}, {Left: 100, Label: now.Local().Format("15:04") + " en curso", End: true}}
 	c.Aria = fmt.Sprintf("Sentimiento del chat cada 5 min desde las %s: %s", from.Local().Format("15:04"), plural(withData, "franja con datos", "franjas con datos"))
 	return c
+}
+
+// sentStack es la barra de una franja, con su texto para el <title>; con
+// menos de minChartMsgs va sin color.
+func sentStack(s SentSlot) SentStack {
+	var b SentStack
+	hm := s.Start.Local().Format("15:04")
+	if s.Total() < minChartMsgs {
+		b.Low = true
+		b.Label = fmt.Sprintf("%s: %s, menos de %d: sin color", hm, plural(s.Total(), "mensaje", "mensajes"), minChartMsgs)
+		return b
+	}
+	p := sentPct(s)
+	b.NegH, b.NeuY, b.NeuH = p.Neg, p.Neg, p.Neu
+	b.PosY, b.PosH = p.Neg+p.Neu, p.Pos
+	b.Label = fmt.Sprintf("%s: %.0f %% positivo, %.0f %% neutro, %.0f %% negativo (%s)", hm, p.Pos, p.Neu, p.Neg, plural(s.Total(), "mensaje", "mensajes"))
+	return b
+}
+
+// chartProg es un programa del gráfico recortado a la ventana: real es su
+// inicio de verdad (para el texto), start y end lo que se ve.
+type chartProg struct {
+	name             string
+	real, start, end time.Time
+	live             bool
+}
+
+// chartPrograms son los programas entre from y end, recortados, con los
+// tramos de menos de minChartSeg juntados con el anterior (o con el
+// siguiente si es el primero) y los vecinos del mismo programa en uno: así un
+// título que cambia un momento no llena el gráfico de nombres. El que sigue
+// al aire (o el último) llega hasta end.
+func chartPrograms(segs []Segment, from, end, now time.Time) []chartProg {
+	var ps []chartProg
+	for i, sg := range segs {
+		if sg.Program == "" {
+			continue
+		}
+		e, live := sg.End, sg.State == SegLive || i == len(segs)-1 && !sg.End.Before(now.Add(-slotStep))
+		if live || e.After(end) {
+			e = end
+		}
+		if !e.After(from) || !sg.Start.Before(end) {
+			continue
+		}
+		ps = append(ps, chartProg{name: sg.Program, real: sg.Start, start: maxTime(sg.Start, from), end: e, live: live})
+	}
+	var out []chartProg
+	for i := 0; i < len(ps); i++ {
+		p := ps[i]
+		switch {
+		case p.end.Sub(p.start) < minChartSeg && len(out) > 0:
+			out[len(out)-1].end, out[len(out)-1].live = p.end, p.live
+		case p.end.Sub(p.start) < minChartSeg && i+1 < len(ps):
+			ps[i+1].start = p.start
+		case len(out) > 0 && out[len(out)-1].name == p.name:
+			out[len(out)-1].end, out[len(out)-1].live = p.end, p.live
+		default:
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+func maxTime(a, b time.Time) time.Time {
+	if a.After(b) {
+		return a
+	}
+	return b
 }
 
 // MotiveRow es un motivo de "Por qué hay mensajes negativos" o "Qué está

@@ -1,6 +1,6 @@
 # Spec: sentimiento legible, con ventanas de tiempo y en Programas de hoy
 
-- **Estado:** aprobada
+- **Estado:** implementada
 - **Tipo:** mejora
 - **Rama:** `feat/sentimiento-ventanas`
 - **Origen:** pedido de la persona (capturas de "Cómo fue cambiando" y "Sentimiento del programa"), opciones recomendadas aceptadas
@@ -20,16 +20,17 @@ Que el gráfico de En vivo diga sin pisarse qué programa es cada tramo, que los
 
 ## Criterios de aceptación
 
-- [ ] CA1: `sentimentChart` no devuelve textos sobre las líneas; devuelve una franja de programas (`Strip`: bloque por programa con `Left`/`Width` en %, nombre y rango "HH:MM a HH:MM" para el `<title>`) y una lista "HH:MM · Programa". Un tramo de menos de 5 min se junta con el anterior (o con el siguiente si es el primero). — `TestSentimentChart` (casos: dos programas, tramo de 2 min absorbido, tramo antes de `from` recortado).
-- [ ] CA2: la plantilla ya no tiene `.slines` con texto; la franja lleva `aria-label`/`<title>` y el nombre cortado con `text-overflow: ellipsis`. — `TestDashboardSentiment` (o el test de En vivo existente) busca el bloque y que no esté el span viejo.
-- [ ] CA3: botones "Últimos 5 min · 30 min · 1 h · Todo el programa" arriba de los motivos, con parámetro `motivos` = `5|30|60|programa` (lista cerrada; cualquier otro valor cae a `5` y nunca se refleja en el HTML). Viaja como `ver`/`horas`/`abrir` (input oculto `.vq`, refresco y cada botón), con `aria-pressed`. Con "Todo el día" el último botón dice "Todo el día". — `TestMotivesWindow` (parámetro válido, inválido y escapado) y test del parcial.
-- [ ] CA4: con la ventana elegida, `Motives` recibe las tandas desde `now - ventana` (o el inicio del tramo / del día) y el total de negativos/positivos de esa ventana, contados con las etiquetas de los mensajes del alcance; el texto dice "N negativos en los últimos 30 min" / "en todo el programa". — `TestMotives` extendido + test del parcial.
-- [ ] CA5: una franja queda sin color solo con menos de 5 mensajes (`minChartMsgs = 5`); `minSentMsgs` sigue en 20 para lo típico y la alerta. Leyenda: "Menos de 5 mensajes: sin color". — `TestSentimentChart` (franja de 4 sin color, de 5 con color) y `TestAlerts`/`TestSentimentTypical` sin cambios.
-- [ ] CA6: Programas de hoy, "Sentimiento del programa" muestra una fila por franja de 5 min del tramo con datos (hora + barra horizontal apilada pos/neu/neg, `<title>` con %, y conteo; menos de 5 sin color), con `Store.SentSlots` del canal filtrado por el rango y el programa del tramo. La barra del resumen de Claude y el tono siguen arriba si existen. Sin franjas: "Todavía no hay mensajes analizados por Claude en este programa." — `TestProgramSentiment`.
-- [ ] CA7: debajo del resumen del chat, "Por qué hubo mensajes negativos" y "Qué fue lo que gustó" con `Motives` de las tandas del canal entre el inicio y el fin del tramo, citas solo de los mensajes del tramo (sin autor). Con Claude apagado o sin tandas, no aparece. — `TestProgramMotives`.
-- [ ] CA8: la tarjeta de Claude de Canales dice que "Gastado hoy" se calcula con los tokens de cada respuesta a precio de lista y tiene el link "Ver gasto y crédito en la consola de Anthropic" (`https://platform.claude.com/settings/billing`, `rel="noopener"`). — test de `/canales`.
-- [ ] CA9: `TestTemplateTokens` en verde (colores nuevos con tokens en los dos temas), botones de 44 px.
-- [ ] Gates de `CLAUDE.md` → "Definición de terminado" en verde, y vista previa en claro, oscuro y ancho de celular.
+- [x] CA1: `sentimentChart` no devuelve textos sobre las líneas; devuelve una franja de programas (`Strip`: bloque por programa con `Left`/`Width` en %, nombre y rango "HH:MM a HH:MM" para el `<title>`) y una lista "HH:MM · Programa". Un tramo de menos de 5 min se junta con el anterior (o con el siguiente si es el primero). — `TestSentimentChart` (casos: dos programas, tramo de 2 min absorbido, tramo antes de `from` recortado).
+- [x] CA2: la plantilla ya no tiene `.slines` con texto; la franja lleva `aria-label`/`<title>` y el nombre cortado con `text-overflow: ellipsis`. — `TestSentimentChart` (parte de la tarjeta: `sprogs` y sin `slines`).
+- [x] CA3: botones "Últimos 5 min · 30 min · 1 h · Todo el programa" arriba de los motivos, con parámetro `motivos` = `5|30|60|programa` (lista cerrada; cualquier otro valor cae a `5` y nunca se refleja en el HTML). Viaja como `ver`/`horas`/`abrir` (input oculto `.vq`, refresco y cada botón), con `aria-pressed`. Con "Todo el día" el último botón dice "Todo el día". — `TestMotivesWindow` (parámetro válido, inválido y escapado) y test del parcial.
+- [x] CA4: con la ventana elegida, `Motives` recibe las tandas desde `now - ventana` (o el inicio del tramo / del día) y el total de negativos/positivos de esa ventana, contados con las etiquetas de los mensajes del alcance; el texto dice "N negativos en los últimos 30 min" / "en todo el programa". — `TestMotivesWindow`.
+- [x] CA5: una franja queda sin color solo con menos de 5 mensajes (`minChartMsgs = 5`); `minSentMsgs` sigue en 20 para lo típico y la alerta. Leyenda: "Menos de 5 mensajes: sin color". — `TestSentimentChart` (franja de 4 sin color, de 5 con color) y `TestAlerts`/`TestSentimentTypical` sin cambios.
+- [x] CA6: Programas de hoy, "Sentimiento del programa" muestra una fila por franja de 5 min del tramo con datos (hora + barra horizontal apilada pos/neu/neg, `<title>` con %, y conteo; menos de 5 sin color), con `Store.SentSlots` del canal filtrado por el rango y el programa del tramo. La barra del resumen de Claude y el tono siguen arriba si existen. Sin franjas: "Todavía no hay mensajes analizados por Claude en este programa." — `TestProgramSentiment`.
+- [x] CA7: debajo del resumen del chat, "Por qué hubo mensajes negativos" y "Qué fue lo que gustó" con `Motives` de las tandas del canal entre el inicio y el fin del tramo, citas solo de los mensajes del tramo (sin autor). Con Claude apagado o sin tandas, no aparece. — `TestProgramSentiment` (con tandas, sin tandas y Claude apagado).
+- [x] CA8: la tarjeta de Claude de Canales dice que "Gastado hoy" se calcula con los tokens de cada respuesta a precio de lista y tiene el link "Ver gasto y crédito en la consola de Anthropic" (`https://platform.claude.com/settings/billing`, `rel="noopener"`). — `TestChannelsClaudeReadOnly`.
+- [x] CA9: `TestTemplateTokens` en verde (colores nuevos con tokens en los dos temas), botones de 44 px.
+- [x] Gates de `CLAUDE.md` → "Definición de terminado" en verde (govulncheck: solo la stdlib de Go 1.26.8).
+- [ ] Vista previa en claro, oscuro y ancho de celular: la levantó `/implementar` para la persona; el agente no la revisó en el navegador.
 
 ## Diseño propuesto
 
