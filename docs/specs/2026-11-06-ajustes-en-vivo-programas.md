@@ -1,10 +1,10 @@
 # Spec: ajustes de En vivo y Programas
 
-- **Estado:** borrador
+- **Estado:** aprobada
 - **Tipo:** mejora
 - **Rama:** `feat/ajustes-en-vivo-programas`
 - **Origen:** pedido del usuario (capturas de la tira "Hoy en el canal" y del gráfico de participación), 2026-11-06
-- **Aprobada por / fecha:** —
+- **Aprobada por / fecha:** Julian Barbieri, 2026-11-06
 
 ## Contexto
 
