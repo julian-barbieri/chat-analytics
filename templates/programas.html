@@ -63,6 +63,18 @@
     {{else if .ClaudeErr}}<div class="note">{{.ClaudeErr}}</div>
     {{else}}<p class="muted">{{.NoSummary}}</p>{{end}}
   </div>
+  {{if .Motives}}<div class="grid2">
+    <div class="inner">
+      <h3>Por qué hubo mensajes negativos <span class="ia">Claude</span></h3>
+      <p class="muted">{{plural .NegN "negativo" "negativos"}} en todo el programa</p>
+      {{template "motivos" .Neg}}
+    </div>
+    <div class="inner">
+      <h3>Qué fue lo que gustó <span class="ia">Claude</span></h3>
+      <p class="muted">{{plural .PosN "positivo" "positivos"}} en todo el programa</p>
+      {{template "motivos" .Pos}}
+    </div>
+  </div>{{end}}
   <div class="detail-grid">
     <div class="inner">
       <h3>Temas de conversación {{if and .Claude .Claude.Topics}}<span class="ia">Claude</span>{{else}}<span class="chip">por reglas</span>{{end}}</h3>
@@ -76,7 +88,12 @@
     <div class="inner">
       <h3>Sentimiento del programa {{if .Claude}}<span class="ia">Claude</span>{{end}}</h3>
       {{if and .Claude (or .Claude.Sent .Claude.Tone)}}{{template "claude-sent" .Claude}}
-      {{else}}<p class="muted">Sale del resumen de Claude: todavía no hay.</p>{{end}}
+      {{else if not .Sent}}<p class="muted">Sale del resumen de Claude: todavía no hay.</p>{{end}}
+      {{if .SentRows}}<p class="muted">Cada 5 min, con las tandas de Claude:</p>
+      <ul class="sfilas">{{range .SentRows}}<li title="{{.Label}}"><span class="h">{{.Hour}}</span>
+        <span class="hbar" role="img" aria-label="{{.Label}}">{{if .Low}}<span class="low" style="width: 100%"></span>{{else}}<span class="pos" style="width: {{printf "%.1f" .Pos}}%"></span><span class="neu" style="width: {{printf "%.1f" .Neu}}%"></span><span class="neg" style="width: {{printf "%.1f" .Neg}}%"></span>{{end}}</span></li>{{end}}</ul>
+      <p class="muted leyenda"><span class="sw pos" aria-hidden="true"></span> Positivo <span class="sw neu" aria-hidden="true"></span> Neutro <span class="sw neg" aria-hidden="true"></span> Negativo <span class="sw low" aria-hidden="true"></span> Menos de 5 mensajes</p>
+      {{else if .Sent}}<p class="muted">Todavía no hay mensajes analizados por Claude en este programa.</p>{{end}}
     </div>
     <div class="inner">
       <h3>Preguntas {{if and .Claude .Claude.Questions}}<span class="ia">Claude</span>{{else}}<span class="chip">por reglas</span>{{end}}</h3>

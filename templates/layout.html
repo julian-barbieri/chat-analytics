@@ -222,8 +222,23 @@ tr.sel td { background: var(--ia-bg); }
 .schart .neg { fill: var(--sent-neg); }
 .schart .low { fill: var(--sent-low); }
 .schart .corte { stroke: var(--text-muted); stroke-dasharray: 4 3; }
-.slines { position: relative; min-height: 16px; font-size: 12px; line-height: 16px; color: var(--text-muted); }
-.slines span { position: absolute; white-space: nowrap; }
+/* Franja de programas debajo del gráfico: el nombre se corta con … y el
+   completo va en el title y en la lista de abajo. */
+.sprogs { position: relative; height: 22px; margin-top: 2px; }
+.sprog { position: absolute; top: 0; height: 22px; padding: 0 4px; box-sizing: border-box; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+  font-size: 12px; line-height: 22px; color: var(--text-secondary); background: var(--surface-0); border-left: 2px solid var(--text-muted); }
+.sprogl { list-style: none; margin: 4px 0; padding: 0; display: flex; flex-wrap: wrap; gap: 2px 14px; font-size: 13px; color: var(--text-secondary); }
+/* Programas de hoy: una fila por franja de 5 min con la barra apilada. */
+.sfilas { list-style: none; margin: 4px 0; padding: 0; max-height: 420px; overflow-y: auto; }
+.sfilas li { display: flex; align-items: center; gap: 8px; padding: 1px 0; font-size: 12px; }
+.sfilas .h { width: 40px; flex: none; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.hbar { display: flex; flex: 1; height: 12px; border-radius: 3px; overflow: hidden; }
+.hbar .pos { background: var(--sent-pos); }
+.hbar .neu { background: var(--sent-neu); }
+.hbar .neg { background: var(--sent-neg); }
+.hbar .low { background: var(--sent-low); }
+.mwin { margin: 12px 0 4px; }
+.mwin .vbtn { font-size: 13px; }
 .leyenda { display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: center; }
 .qrow { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: space-between; }
 .qgroups li.hecha { color: var(--text-muted); }

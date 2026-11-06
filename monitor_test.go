@@ -7014,6 +7014,76 @@ func TestChannelsPageWithoutSettings(t *testing.T) {
 
 // TestChannelsClaudeReadOnly (CA1.16): la tarjeta de Claude de Canales dice si
 // hay clave, pero nunca la muestra.
+// TestProgramSentiment (CA6, CA7 de sentimiento-ventanas): en el detalle de
+// un programa, una fila por franja de 5 min con sus % y los motivos de todo el
+// programa, solo con lo de ese tramo.
+func TestProgramSentiment(t *testing.T) {
+	now := noonToday()
+	day := dayStart(now)
+	keyMan := segmentKey("UC1", Segment{VideoID: "v1", Program: "LA MAÑANA", Start: day.Add(8 * time.Hour)})
+	path := "/parcial/programas/detalle?tramo=" + url.QueryEscape(keyMan)
+	lab := func(id string, at time.Time, prog, sent string) MessageLabel {
+		return MessageLabel{ID: id, VideoID: "v1", At: at, Program: prog, Sentiment: sent}
+	}
+	man := func(i int) time.Time { return day.Add(8*time.Hour + time.Duration(i)*time.Minute) }
+	var ls []MessageLabel
+	for i := range 14 { // 08:00: 5 positivos; 08:05: 3 negativos y 2 neutros; 08:10: 4 (sin color)
+		sent := "positivo"
+		switch {
+		case i >= 5 && i < 8:
+			sent = "negativo"
+		case i >= 8 && i < 10:
+			sent = "neutro"
+		}
+		ls = append(ls, lab(fmt.Sprintf("man%d", i), man(i), "LA MAÑANA", sent))
+	}
+	t.Run("con tandas", func(t *testing.T) {
+		st, srv := programServer(t, now, true)
+		st.AddBatch(ClaudeBatch{At: man(15), ChannelID: "UC1", From: man(0), To: man(13), Labels: ls, Motives: []BatchMotive{
+			{Kind: "negativo", Text: "Quejas por el tránsito", IDs: []string{"man5", "man6", "tar0"}}, // tar0 es de LA TARDE: no cuenta
+			{Kind: "positivo", Text: "La música", IDs: []string{"man0", "man1"}},
+		}})
+		st.AddBatch(ClaudeBatch{At: day.Add(10*time.Hour + 2*time.Minute), ChannelID: "UC1", From: day.Add(10 * time.Hour), To: day.Add(10*time.Hour + time.Minute),
+			Labels:  []MessageLabel{lab("tar0", day.Add(10*time.Hour), "LA TARDE", "negativo")},
+			Motives: []BatchMotive{{Kind: "negativo", Text: "Otro programa", IDs: []string{"tar0"}}}})
+		body := getBody(srv.Routes(), path)
+		hm := func(t time.Time) string { return t.Local().Format("15:04") }
+		for _, w := range []string{
+			`class="sfilas"`, hm(man(0)) + ": 100 % positivo, 0 % neutro, 0 % negativo (5 mensajes)",
+			hm(man(5)) + ": 0 % positivo, 40 % neutro, 60 % negativo (5 mensajes)", hm(man(10)) + ": 4 mensajes, menos de 5: sin color",
+			"Por qué hubo mensajes negativos", "3 negativos en todo el programa", "Quejas por el tránsito", "67 %", "«mensaje man 5»",
+			"Qué fue lo que gustó", "9 positivos en todo el programa", "La música", "22 %",
+		} {
+			if !strings.Contains(body, w) {
+				t.Errorf("falta %q", w)
+			}
+		}
+		for _, w := range []string{"Otro programa", "autor-man", "mensaje tar 0"} {
+			if strings.Contains(body, w) {
+				t.Errorf("sobra %q", w)
+			}
+		}
+		// Las filas siguen el orden de las franjas.
+		if strings.Index(body, hm(man(0))+": 100 %") > strings.Index(body, hm(man(5))+": 0 %") {
+			t.Errorf("filas fuera de orden")
+		}
+	})
+	t.Run("sin tandas", func(t *testing.T) {
+		_, srv := programServer(t, now, true)
+		body := getBody(srv.Routes(), path)
+		if !strings.Contains(body, "Todavía no hay mensajes analizados por Claude en este programa.") || strings.Contains(body, "Por qué hubo mensajes negativos") {
+			t.Errorf("sin tandas: falta el aviso o sobran los motivos")
+		}
+	})
+	t.Run("Claude apagado", func(t *testing.T) {
+		_, srv := programServer(t, now, false)
+		body := getBody(srv.Routes(), path)
+		if strings.Contains(body, "Por qué hubo mensajes negativos") || strings.Contains(body, `class="sfilas"`) {
+			t.Errorf("con Claude apagado no van las filas ni los motivos")
+		}
+	})
+}
+
 func TestChannelsClaudeReadOnly(t *testing.T) {
 	now := noonLocal(t)
 	env := func(key string) func(string) string {
@@ -7040,6 +7110,8 @@ func TestChannelsClaudeReadOnly(t *testing.T) {
 			"Último aviso: Claude rechazó la clave (401)"}, []string{"Clave cargada", "chip ok"}},
 		{"clave cargada", env(testClaudeKey), 2, defaultClaudeModel, []string{`<span class="chip ok">Clave cargada</span>`, defaultClaudeModel, "US$ 2,00 por día",
 			"Gastado hoy", "US$ 0,13", "Último análisis: ", "LA MAÑANA de Radio B.",
+			"se calcula con los tokens de cada respuesta a precio de lista", `href="https://platform.claude.com/settings/billing" target="_blank" rel="noopener"`,
+			"Ver gasto y crédito en la consola de Anthropic",
 			"<summary>Qué se le manda a Claude y qué se guarda</summary>", "Un pedido por programa", "sin nombres de usuario", "datos.analisis.jsonl", "30 días"}, nil},
 	}
 	for _, c := range cases {
@@ -7246,7 +7318,7 @@ func TestFoldParam(t *testing.T) {
 			if got := foldValue(foldParam(c.q)); got != c.want {
 				t.Errorf("foldValue = %q, quiero %q", got, c.want)
 			}
-			if _, _, got := keepView(c.q); got != c.want {
+			if _, _, got, _ := keepView(c.q); got != c.want {
 				t.Errorf("keepView abrir = %q, quiero %q", got, c.want)
 			}
 		})
@@ -9151,13 +9223,21 @@ func TestSentimentChart(t *testing.T) {
 	from := now.Add(-time.Hour)
 	slots := []SentSlot{
 		sentSlot(from.Add(10*time.Minute), "LA MAÑANA", 40, 10),
-		sentSlot(from.Add(10*time.Minute), "LA TARDE", 10, 0), // misma franja, otro programa: se suman
-		sentSlot(from.Add(30*time.Minute), "LA TARDE", 19, 5),
+		sentSlot(from.Add(10*time.Minute), "LA TARDE", 10, 0),   // misma franja, otro programa: se suman
+		sentSlot(from.Add(30*time.Minute), "LA TARDE", 5, 1),    // 5 mensajes: ya tiene color
+		sentSlot(from.Add(50*time.Minute), "LA TARDE", 4, 1),    // 4: sin color
 		sentSlot(from.Add(-30*time.Minute), "LA MAÑANA", 50, 5), // antes de la ventana
 	}
-	segs := []Segment{{Program: "LA MAÑANA", Start: from.Add(-2 * time.Hour)}, {Program: "LA TARDE", Start: from.Add(20 * time.Minute)}}
+	// LA MAÑANA empezó antes de la ventana (se recorta a from, sin línea) y el
+	// PASE de 2 min se junta con el anterior: queda un solo corte, a LA TARDE.
+	segs := []Segment{
+		{Program: "LA MAÑANA", Start: from.Add(-2 * time.Hour), End: from.Add(20 * time.Minute)},
+		{Program: "LA TARDE", Start: from.Add(20 * time.Minute), End: from.Add(40 * time.Minute)},
+		{Program: "PASE", Start: from.Add(40 * time.Minute), End: from.Add(42 * time.Minute)},
+		{Program: "LA TARDE", Start: from.Add(42 * time.Minute), End: now.Add(-time.Minute), State: SegLive},
+	}
 	c := sentimentChart(slots, segs, from, now)
-	if c.W != 13 || len(c.Bars) != 2 {
+	if c.W != 13 || len(c.Bars) != 3 {
 		t.Fatalf("W %v, barras %d", c.W, len(c.Bars))
 	}
 	b := c.Bars[0]
@@ -9165,13 +9245,29 @@ func TestSentimentChart(t *testing.T) {
 		b.Label != from.Add(10*time.Minute).Format("15:04")+": 40 % positivo, 40 % neutro, 20 % negativo (50 mensajes)" {
 		t.Errorf("barra: %+v", b)
 	}
-	if !c.Bars[1].Low || !strings.Contains(c.Bars[1].Label, "19 mensajes, menos de 20: sin color") {
-		t.Errorf("franja chica: %+v", c.Bars[1])
+	if c.Bars[1].Low || !c.Bars[2].Low || !strings.Contains(c.Bars[2].Label, "4 mensajes, menos de 5: sin color") {
+		t.Errorf("umbral del color: %+v / %+v", c.Bars[1], c.Bars[2])
 	}
-	if len(c.Lines) != 1 || c.Lines[0].Label != from.Add(20*time.Minute).Format("15:04")+" · empieza LA TARDE" || c.Lines[0].X < 4 || c.Lines[0].X >= 4.2 {
+	// El eje empieza en from alineado a 5 min y dura 13 franjas.
+	cut := float64(from.Add(20*time.Minute).Sub(slotOf(from))) / float64(slotStep)
+	if len(c.Lines) != 1 || math.Abs(c.Lines[0].X-cut) > 1e-9 {
 		t.Errorf("líneas: %+v", c.Lines)
 	}
-	if c.Ticks[1].Label != now.Format("15:04")+" en curso" || !c.Ticks[1].End || !strings.Contains(c.Aria, "2 franjas con datos") {
+	hm := func(t time.Time) string { return t.Local().Format("15:04") }
+	want := []SentProg{
+		{Name: "LA MAÑANA", Hour: hm(from.Add(-2 * time.Hour)), Range: hm(from.Add(-2*time.Hour)) + " a " + hm(from.Add(20*time.Minute)), Left: 0, Width: cut * 100 / 13},
+		{Name: "LA TARDE", Hour: hm(from.Add(20 * time.Minute)), Range: hm(from.Add(20*time.Minute)) + " a ahora", Left: cut * 100 / 13, Width: (13 - cut) * 100 / 13},
+	}
+	if len(c.Strip) != len(want) {
+		t.Fatalf("franja: %+v", c.Strip)
+	}
+	for i, w := range want {
+		g := c.Strip[i]
+		if g.Name != w.Name || g.Hour != w.Hour || g.Range != w.Range || math.Abs(g.Left-w.Left) > 0.01 || math.Abs(g.Width-w.Width) > 0.01 {
+			t.Errorf("programa %d: %+v, quería %+v", i, g, w)
+		}
+	}
+	if c.Ticks[1].Label != now.Format("15:04")+" en curso" || !c.Ticks[1].End || !strings.Contains(c.Aria, "3 franjas con datos") {
 		t.Errorf("ticks %+v, aria %q", c.Ticks, c.Aria)
 	}
 	// La tarjeta entera: SVG con role, aria-label, <title> por barra y la leyenda.
@@ -9190,11 +9286,80 @@ func TestSentimentChart(t *testing.T) {
 	st.AddBatch(ClaudeBatch{At: now, ChannelID: "UCB", From: now.Add(-4 * time.Minute), To: now.Add(-time.Second), Labels: ls})
 	body := getBody(srv.Routes(), "/parcial/vivo/analisis?canal=UCB&video=b2&ver=programa")
 	for _, w := range []string{"Cómo fue cambiando · cada 5 min", `class="schart"`, `role="img" aria-label="Sentimiento del chat cada 5 min desde las`,
-		"<title>", "Menos de 20 mensajes: sin color", "30 mensajes analizados en los últimos 5 min", "Positivo", "67 %", "Negativo", "33 %",
+		"<title>", "Menos de 5 mensajes: sin color", `class="sprogs"`, "a ahora · LA TARDE", "30 mensajes analizados en los últimos 5 min", "Positivo", "67 %", "Negativo", "33 %",
 		"Por qué hay mensajes negativos", "Qué está gustando", "todavía sin historia para comparar"} {
 		if !strings.Contains(body, w) {
 			t.Errorf("falta %q", w)
 		}
+	}
+	if strings.Contains(body, "slines") || strings.Contains(body, "· empieza ") {
+		t.Errorf("siguen los nombres arriba de las barras")
+	}
+}
+
+// TestMotivesWindow (CA3, CA4 de sentimiento-ventanas): los motivos en la
+// ventana elegida, con el total de esa ventana, el parámetro en una lista
+// cerrada y guardado en el refresco, las flechas y los otros botones.
+func TestMotivesWindow(t *testing.T) {
+	now := noonLocal(t)
+	st := liveStore(t, now)
+	srv := &Server{st: st, budget: 9000, now: func() time.Time { return now }, analyst: NewAnalyst()}
+	st.SetClaudeStatus(ClaudeStatus{On: true, Model: defaultClaudeModel, Tope: 2_000_000})
+	// Hace 25 min: 10 negativos; ahora: 2 negativos y 4 positivos.
+	old := chatRun("v", "b2", "LA TARDE", now.Add(-25*time.Minute), 5*time.Second, 10)
+	cur := chatRun("s", "b2", "LA TARDE", now.Add(-3*time.Minute), 5*time.Second, 6)
+	st.Add(append(old, cur...))
+	var oldL, curL []MessageLabel
+	for _, m := range old {
+		oldL = append(oldL, MessageLabel{ID: m.ID, VideoID: "b2", At: m.At, Program: "LA TARDE", Sentiment: "negativo"})
+	}
+	for i, m := range cur {
+		sent := "positivo"
+		if i < 2 {
+			sent = "negativo"
+		}
+		curL = append(curL, MessageLabel{ID: m.ID, VideoID: "b2", At: m.At, Program: "LA TARDE", Sentiment: sent})
+	}
+	st.AddBatch(ClaudeBatch{At: now.Add(-24 * time.Minute), ChannelID: "UCB", From: old[0].At, To: old[9].At, Labels: oldL,
+		Motives: []BatchMotive{{Kind: "negativo", Text: "Se corta el audio", IDs: []string{"v0", "v1", "v2", "v3", "v4", "v5", "v6", "v7"}}}})
+	st.AddBatch(ClaudeBatch{At: now, ChannelID: "UCB", From: cur[0].At, To: cur[5].At, Labels: curL,
+		Motives: []BatchMotive{{Kind: "negativo", Text: "No les gusta el invitado", IDs: []string{"s0", "s1"}}}})
+	base := "/parcial/vivo/analisis?canal=UCB&video=b2&ver=programa"
+	cases := []struct {
+		name, q   string
+		want, not []string
+	}{
+		{"por defecto, 5 min", "", []string{"2 negativos en los últimos 5 min", "No les gusta el invitado", "100 %",
+			`id="mot-5" class="vbtn" aria-pressed="true"`, `id="mot-30" class="vbtn" aria-pressed="false"`, ">Todo el programa</button>",
+			`<input type="hidden" class="vq" name="motivos" value="">`},
+			[]string{"Se corta el audio", "motivos=5"}},
+		{"30 min", "&motivos=30", []string{"12 negativos en los últimos 30 min", "Se corta el audio", "67 %", "No les gusta el invitado", "17 %",
+			`id="mot-30" class="vbtn" aria-pressed="true"`, `<input type="hidden" class="vq" name="motivos" value="30">`,
+			// El refresco, los otros botones y las flechas guardan la ventana.
+			"&motivos=30&horas=" + strconv.Itoa(chartHours), "ver=dia&horas=" + strconv.Itoa(chartHours) + "&motivos=30",
+			"horas=" + strconv.Itoa(chartHours) + "&amp;motivos=30&amp;ver=programa"}, nil},
+		{"todo el programa", "&motivos=programa", []string{"12 negativos en todo el programa", `id="mot-programa" class="vbtn" aria-pressed="true"`}, nil},
+		{"valor raro: 5 min y no se refleja", "&motivos=%3Cscript%3E", []string{"2 negativos en los últimos 5 min", `id="mot-5" class="vbtn" aria-pressed="true"`},
+			[]string{"<script>", "&lt;script", "%3Cscript"}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			body := getBody(srv.Routes(), base+c.q)
+			for _, w := range c.want {
+				if !strings.Contains(body, w) {
+					t.Errorf("falta %q", w)
+				}
+			}
+			for _, w := range c.not {
+				if strings.Contains(body, w) {
+					t.Errorf("sobra %q", w)
+				}
+			}
+		})
+	}
+	if body := getBody(srv.Routes(), "/parcial/vivo/analisis?canal=UCB&video=b2&ver=dia&motivos=programa"); !strings.Contains(body, ">Todo el día</button>") ||
+		!strings.Contains(body, "12 negativos en todo el día") {
+		t.Errorf("con todo el día, el último botón y el texto son del día")
 	}
 }
 

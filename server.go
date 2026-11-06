@@ -340,17 +340,42 @@ func (s *Server) liveSection(w http.ResponseWriter, r *http.Request) {
 // quotaPaused dice si se llegó al tope de cuota: el worker no revisa videos ni busca vivos.
 func (s *Server) quotaPaused(snap Snapshot) bool { return s.budget > 0 && snap.Units >= s.budget }
 
-// keepView son el "ver", las "horas" y lo plegado que está abierto del
-// análisis, que manda el chat (con hx-include), para no perderlos cuando se
-// recarga la sección.
-func keepView(q url.Values) (ver, hours, open string) {
+// keepView son el "ver", las "horas", lo plegado que está abierto y la
+// ventana de los motivos del análisis, que manda el chat (con hx-include),
+// para no perderlos cuando se recarga la sección.
+func keepView(q url.Values) (ver, hours, open, motives string) {
 	if v := q.Get("ver"); v == "dia" || v == "programa" {
 		ver = v
 	}
 	if h := q.Get("horas"); h == "24" || h == strconv.Itoa(chartHours) {
 		hours = h
 	}
-	return ver, hours, foldValue(foldParam(q))
+	return ver, hours, foldValue(foldParam(q)), motiveParam(q)
+}
+
+// motiveWindows son las ventanas de "Por qué hay mensajes negativos" y "Qué
+// está gustando": la clave del parámetro "motivos", su texto y cuánto mira
+// (0: todo el programa o todo el día). Lista cerrada, como "abrir".
+var motiveWindows = []struct {
+	Key, Label, When string
+	Span             time.Duration
+}{
+	{"5", "Últimos 5 min", "en los últimos 5 min", slotStep},
+	{"30", "30 min", "en los últimos 30 min", 30 * time.Minute},
+	{"60", "1 h", "en la última hora", time.Hour},
+	{"programa", "Todo el programa", "en todo el programa", 0},
+}
+
+// motiveParam es la ventana de los motivos pedida; "" son los últimos 5 min
+// (el valor por defecto no viaja en la URL). Lo que no está en la lista, también.
+func motiveParam(q url.Values) string {
+	v := q.Get("motivos")
+	for _, w := range motiveWindows[1:] {
+		if w.Key == v {
+			return v
+		}
+	}
+	return ""
 }
 
 // foldSections son las secciones plegables de En vivo, en el orden en que se
@@ -420,8 +445,12 @@ func (f foldState) link(sec string) Fold {
 }
 
 // analysisQuery es la consulta de "Programa en curso" o "Todo el día" de un canal.
-func analysisQuery(canal, video, ver string, hours int) url.Values {
-	return url.Values{"canal": {canal}, "video": {video}, "ver": {ver}, "horas": {strconv.Itoa(hours)}}
+func analysisQuery(canal, video, ver string, hours int, motives string) url.Values {
+	q := url.Values{"canal": {canal}, "video": {video}, "ver": {ver}, "horas": {strconv.Itoa(hours)}}
+	if motives != "" {
+		q.Set("motivos", motives)
+	}
+	return q
 }
 
 // ChatRow es una fila del chat en vivo, con su categoría ya calculada.
@@ -450,8 +479,8 @@ func (s *Server) liveChat(w http.ResponseWriter, r *http.Request) {
 		// canal: pickChannel se queda con el pedido mientras exista.
 		w.Header().Set("HX-Retarget", "#vivo")
 		w.Header().Set("HX-Reswap", "outerHTML")
-		ver, hours, open := keepView(q)
-		s.render(w, "vivo", map[string]any{"Canal": sel.Canal, "Video": sel.Video, "Ver": ver, "Horas": hours, "Abrir": open})
+		ver, hours, open, motives := keepView(q)
+		s.render(w, "vivo", map[string]any{"Canal": sel.Canal, "Video": sel.Video, "Ver": ver, "Horas": hours, "Abrir": open, "Motivos": motives})
 		return
 	}
 	// El feed es del canal: los vivos de hoy, así al cambiar de vivo no se
@@ -696,7 +725,7 @@ func (s *Server) liveAnalysis(w http.ResponseWriter, r *http.Request) {
 	open := foldParam(q)
 	for _, c := range snap.Channels {
 		if c.ID == q.Get("canal") && c.ID != "" {
-			s.channelAnalysis(w, snap, c, q.Get("video"), q.Get("ver"), hours, open, localRequest(r))
+			s.channelAnalysis(w, snap, c, q.Get("video"), q.Get("ver"), hours, open, motiveParam(q), localRequest(r))
 			return
 		}
 	}
@@ -833,23 +862,23 @@ func analysisData(msgs []Message, viewers []ViewerSample, ids []string, videos [
 // actual con el programa actual, desde el inicio del tramo menos 5 min) o
 // "Todo el día del canal" (sus vivos desde las 00:00 locales). Nunca entran
 // mensajes de otro canal.
-func (s *Server) channelAnalysis(w http.ResponseWriter, snap Snapshot, ch ChannelStatus, want, ver string, hours int, open map[string]bool, local bool) {
+func (s *Server) channelAnalysis(w http.ResponseWriter, snap Snapshot, ch ChannelStatus, want, ver string, hours int, open map[string]bool, motives string, local bool) {
 	now := s.clock()
 	ls := s.channelScope(snap, ch, want, ver, now)
 	data := analysisData(ls.msgs, ls.viewers, ls.pids, snap.Videos, ls.concurrent, now, hours, ls.sc)
 	data["Canal"], data["Video"], data["Ver"], data["Label"], data["Span"], data["Note"] = ch.ID, ls.video, ls.ver, channelName(ch), ls.span, ls.note
-	data["Abrir"] = foldValue(open)
+	data["Abrir"], data["Motivos"] = foldValue(open), motives
 	data["Monitor"] = monitorView(snap.Msgs, now)
 	cardVer := "dia"
 	if ls.prog != "" {
 		cardVer = "programa"
 	}
-	fold := foldState{Open: open, Query: analysisQuery(ch.ID, ls.video, ls.ver, hours)}
+	fold := foldState{Open: open, Query: analysisQuery(ch.ID, ls.video, ls.ver, hours, motives)}
 	data["Claude"] = s.claudeCard(snap, ch, ls.video, cardVer, local, "", fold)
 	data["ClaudeLine"] = s.claudeLine(snap, ch, now)
 	labels := s.st.Labels(messageIDs(ls.msgs))
 	data["Alertas"] = alertsData(Alerts(ls.msgs, labels, now), fold)
-	data["Sent"] = s.sentimentData(snap, ch, ls, labels, now)
+	data["Sent"] = s.sentimentData(snap, ch, ls, labels, now, motives, fold)
 	data["QG"] = s.questionsData(snap, ch, ls, labels, local)
 	s.render(w, "vivo-analisis", data)
 }
@@ -968,6 +997,14 @@ type SentData struct {
 	Chart      SentChart
 	Neg, Pos   []MotiveRow
 	NegN, PosN int
+	When       string      // "en los últimos 30 min": la ventana de los motivos
+	Wins       []MotiveWin // los botones de la ventana
+}
+
+// MotiveWin es un botón de la ventana de los motivos.
+type MotiveWin struct {
+	Key, Label, Href string
+	On               bool
 }
 
 // claudeActive dice si el análisis con Claude está prendido.
@@ -977,7 +1014,7 @@ func (s *Server) claudeActive(snap Snapshot) bool {
 
 // sentimentData arma el sentimiento del alcance con las franjas ya sumadas
 // en el Store (SentSlots) y las etiquetas de los mensajes del alcance.
-func (s *Server) sentimentData(snap Snapshot, ch ChannelStatus, ls liveScope, labels map[string]MessageLabel, now time.Time) SentData {
+func (s *Server) sentimentData(snap Snapshot, ch ChannelStatus, ls liveScope, labels map[string]MessageLabel, now time.Time, motives string, fold foldState) SentData {
 	if !s.claudeActive(snap) {
 		return SentData{Off: "El sentimiento lo calcula Claude: está apagado (ver Canales)."}
 	}
@@ -1019,13 +1056,41 @@ func (s *Server) sentimentData(snap Snapshot, ch ChannelStatus, ls liveScope, la
 	for _, m := range ls.msgs {
 		byID[m.ID] = m
 	}
-	batches := s.st.Batches(ch.ID, now.Add(-slotStep))
-	d := SentData{Chart: sentimentChart(chart, ls.segs, chartFrom, now), NegN: recent.Neg, PosN: recent.Pos,
-		Neg: Motives(batches, "negativo", recent.Neg, byID, now.Add(-slotStep)),
-		Pos: Motives(batches, "positivo", recent.Pos, byID, now.Add(-slotStep))}
+	d := SentData{Chart: sentimentChart(chart, ls.segs, chartFrom, now)}
+	since := now.Add(-slotStep)
+	for _, mw := range motiveWindows {
+		key, label, when := mw.Key, mw.Label, mw.When
+		start := now.Add(-mw.Span)
+		if mw.Span == 0 {
+			start = ls.start
+			if ls.prog == "" {
+				label, when, start = "Todo el día", "en todo el día", dayStart(now)
+			}
+		}
+		on := key == motives || key == "5" && motives == ""
+		if on {
+			since, d.When = start, when
+		}
+		q := maps.Clone(fold.Query)
+		q.Del("motivos")
+		if key != "5" {
+			q.Set("motivos", key)
+		}
+		if v := foldValue(fold.Open); v != "" {
+			q.Set("abrir", v)
+		}
+		d.Wins = append(d.Wins, MotiveWin{Key: key, Label: label, On: on, Href: "/parcial/vivo/analisis?" + q.Encode()})
+	}
+	win := sentCount(ls.msgs, labels, since, now)
+	batches := s.st.Batches(ch.ID, since)
+	d.NegN, d.PosN = win.Neg, win.Pos
+	d.Neg = Motives(batches, "negativo", win.Neg, byID, since)
+	d.Pos = Motives(batches, "positivo", win.Pos, byID, since)
+	// El cartel habla de los últimos 5 min: su causa sale de esos 5 min
+	// aunque se esté mirando otra ventana.
 	cause := ""
-	if len(d.Neg) > 0 && d.Neg[0].Text != "Otros" {
-		cause = d.Neg[0].Text
+	if neg := Motives(s.st.Batches(ch.ID, now.Add(-slotStep)), "negativo", recent.Neg, byID, now.Add(-slotStep)); len(neg) > 0 && neg[0].Text != "Otros" {
+		cause = neg[0].Text
 	}
 	d.View = sentimentCards(recent, typ, where, ok, cause)
 	return d
@@ -1204,7 +1269,7 @@ func (s *Server) claudeAnalyze(w http.ResponseWriter, r *http.Request) {
 		if r.PostForm.Get("horas") == "24" {
 			hours = 24
 		}
-		in.Fold = foldState{Open: foldParam(r.PostForm), Query: analysisQuery(ch.ID, video, "programa", hours)}
+		in.Fold = foldState{Open: foldParam(r.PostForm), Query: analysisQuery(ch.ID, video, "programa", hours, motiveParam(r.PostForm))}
 		s.render(w, "claude-card", claudeView(in))
 		return
 	}
