@@ -1,10 +1,10 @@
 # Spec: sentimiento legible, con ventanas de tiempo y en Programas de hoy
 
-- **Estado:** borrador
+- **Estado:** aprobada
 - **Tipo:** mejora
 - **Rama:** `feat/sentimiento-ventanas`
 - **Origen:** pedido de la persona (capturas de "Cómo fue cambiando" y "Sentimiento del programa"), opciones recomendadas aceptadas
-- **Aprobada por / fecha:** —
+- **Aprobada por / fecha:** Julian Barbieri, 2026-11-06
 
 ## Contexto
 
