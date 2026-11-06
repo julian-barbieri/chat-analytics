@@ -168,32 +168,14 @@
 
 {{with .Part}}<section id="momentos" class="card" aria-labelledby="momentos-h">
   <h2 id="momentos-h">Momentos con más participación (para reels)</h2>
-  {{if .ByPct}}<p class="muted">Los 5 momentos de 5 minutos en que escribió el mayor % de los que miraban (con al menos 3 personas). Participación típica del vivo: {{.Typical}} (línea punteada){{if .Concurrent}} · {{miles .Concurrent}} mirando ahora{{end}}{{if .Chart.Viewers}}. Arriba, cuántos miraban cada 5 minutos (la línea se corta donde no hay dato).{{end}}</p>
+  {{if .ByPct}}<p class="muted">Los 5 momentos de 5 minutos en que escribió el mayor % de los que miraban (con al menos 3 personas). Participación típica del vivo: {{.Typical}} (línea punteada){{if .Concurrent}} · {{miles .Concurrent}} mirando ahora{{end}}{{if .Chart.Viewers}}. La línea: cuántos miraban cada 5 minutos, con su escala a la derecha (se corta donde no hay dato).{{end}}</p>
   {{else}}<p class="muted">Sin dato de cuántos miraban: el gráfico muestra personas que escribieron y no hay ranking por %{{if .Concurrent}} · {{miles .Concurrent}} mirando ahora{{end}}</p>{{end}}
   {{if .Missing}}<p class="muted">Las franjas sin muestra de espectadores (de antes de que se empezaran a guardar o de cuando se cortó la revisión de videos) dicen «sin dato» y quedan fuera del ranking y de la participación típica.</p>{{end}}
   <div class="vbtns pwin" role="group" aria-label="Horas que muestra el gráfico">
     {{range $h := .Windows}}<button type="button" id="pwin-{{$h}}" class="vbtn" aria-pressed="{{eq $h $.Hours}}"
       hx-get="/parcial/vivo/analisis?{{template "vivo-q" $}}&horas={{$h}}" hx-target="#vivo-analisis" hx-swap="outerHTML">Últimas {{$h}} h</button>{{end}}
   </div>
-  {{with .Chart}}
-  {{if .Viewers}}<div class="pmax" aria-hidden="true">{{.Viewers.Max}}</div>
-  <div class="poyentes">
-    <svg viewBox="0 0 {{.W}} 100" preserveAspectRatio="none" role="img" aria-label="{{.Viewers.Aria}}">
-      {{range .Bars}}<rect class="hit" x="{{.X}}" y="0" width="{{.W}}" height="100"><title>{{.Label}}</title></rect>{{end}}
-      <path class="oyentes" d="{{.Viewers.Path}}" vector-effect="non-scaling-stroke"></path>
-    </svg>
-  </div>{{end}}
-  <div class="pmax" aria-hidden="true">{{.Max}}</div>
-  <div class="pmarks" aria-hidden="true">{{range .Marks}}<span style="left: {{printf "%.2f" .Left}}%">{{.Rank}}</span>{{end}}</div>
-  <div class="pchart">
-    <svg viewBox="0 0 {{.W}} 100" preserveAspectRatio="none" role="img" aria-label="{{.Aria}}">
-      {{range .Bars}}<g><title>{{.Label}}</title><rect class="hit" x="{{.X}}" y="0" width="{{.W}}" height="100"></rect><rect class="bar{{if .Class}} {{.Class}}{{end}}" x="{{.X}}" y="{{.Y}}" width="{{.W}}" height="{{.H}}"></rect></g>
-      {{end}}{{if .ByPct}}<line class="tipica" x1="0" x2="{{.W}}" y1="{{.TypicalY}}" y2="{{.TypicalY}}"></line>{{end}}
-      <line class="base" x1="0" x2="{{.W}}" y1="100" y2="100"></line>
-    </svg>
-  </div>
-  <div class="pticks" aria-hidden="true">{{range .Ticks}}<span{{if .End}} class="end"{{end}} style="left: {{printf "%.2f" .Left}}%">{{.Label}}</span>{{end}}</div>
-  {{end}}
+  {{with .Chart}}{{template "part-chart" .}}{{end}}
   {{if .Outside}}<p class="muted">{{.Outside}}</p>{{end}}
   {{if .Moments}}<table class="tops">
     <tr><th scope="col">Momento</th><th scope="col" class="n">Mirando</th><th scope="col" class="n" title="Personas distintas que escribieron en esos 5 minutos">Personas</th><th scope="col" class="n"><strong>%</strong></th></tr>
@@ -233,7 +215,7 @@
 </section>{{end}}
 
 {{with .Monitor}}<section id="monitor" class="card" aria-labelledby="monitor-h">
-  <div class="chead"><h2 id="monitor-h">Todo el monitor · últimas 24 h</h2><span class="muted">{{plural .Total "mensaje" "mensajes"}} de todos los canales, con comentarios</span></div>
+  <div class="chead"><h2 id="monitor-h">Palabras y autores {{.Of}}</h2><span class="muted">{{plural .Total "mensaje" "mensajes"}}</span></div>
   <div class="vgrid">
     <div class="inner">
       <h3>Palabras más repetidas</h3>
@@ -304,7 +286,29 @@
   {{range .Quotes}}<div class="muted">«{{.}}»</div>{{end}}
 </li>{{end}}</ul>{{else}}<p class="muted">Claude todavía no dio motivos en este período.</p>{{end}}{{end}}
 
-{{/* Preguntas agrupadas para producción (F4). "Marcar respondida" responde esta misma tarjeta. */}}
+{{/* Gráfico de participación: barras del % (o personas), la línea de los que
+miraban con su propia escala (máximo a la derecha) y la franja de programas.
+Lo usan En vivo y el detalle de Programas. */}}
+{{define "part-chart"}}<div class="pmax" aria-hidden="true"><span>{{.Max}}</span>{{with .Viewers}}<span class="vmax">{{.Max}}</span>{{end}}</div>
+  <div class="pmarks" aria-hidden="true">{{range .Marks}}<span style="left: {{printf "%.2f" .Left}}%">{{.Rank}}</span>{{end}}</div>
+  <div class="pchart">
+    <svg viewBox="0 0 {{.W}} 100" preserveAspectRatio="none" role="img" aria-label="{{.Aria}}{{with .Viewers}}. {{.Aria}}{{end}}">
+      {{range .Bars}}<g><title>{{.Label}}</title><rect class="hit" x="{{.X}}" y="0" width="{{.W}}" height="100"></rect><rect class="bar{{if .Class}} {{.Class}}{{end}}" x="{{.X}}" y="{{.Y}}" width="{{.W}}" height="{{.H}}"></rect></g>
+      {{end}}{{range .Lines}}<line class="corte" x1="{{.X}}" x2="{{.X}}" y1="0" y2="100" vector-effect="non-scaling-stroke"></line>{{end}}
+      {{if .ByPct}}<line class="tipica" x1="0" x2="{{.W}}" y1="{{.TypicalY}}" y2="{{.TypicalY}}"></line>{{end}}
+      {{with .Viewers}}<path class="oyentes" d="{{.Path}}" vector-effect="non-scaling-stroke"></path>{{end}}
+      <line class="base" x1="0" x2="{{.W}}" y1="100" y2="100"></line>
+    </svg>
+  </div>
+  {{if .Strip}}<div class="sprogs" aria-hidden="true">{{range .Strip}}<span class="sprog" style="left: {{printf "%.2f" .Left}}%; width: {{printf "%.2f" .Width}}%" title="{{.Range}} · {{.Name}}">{{.Name}}</span>{{end}}</div>{{end}}
+  <div class="pticks" aria-hidden="true">{{range .Ticks}}<span{{if .End}} class="end"{{end}} style="left: {{printf "%.2f" .Left}}%">{{.Label}}</span>{{end}}</div>
+  {{if .Strip}}<ul class="sprogl" aria-label="Programas del gráfico">{{range .Strip}}<li title="{{.Range}} · {{.Name}}">{{.Hour}} · {{.Name}}</li>{{end}}</ul>{{end}}
+{{end}}
+
+{{/* Preguntas agrupadas (F4): las 5 primeras a la vista y el resto plegado. */}}
+{{define "qgrupo"}}<li{{if .Answered}} class="hecha"{{end}}>
+    <div class="qrow"><span><strong class="num">{{.Count}}</strong> · {{.Text}}</span>{{if .Answered}}<span class="muted">Respondida</span>{{end}}</div>
+  </li>{{end}}
 {{define "vivo-preguntas"}}<section id="preguntas" class="card" aria-labelledby="preguntas-h">
   {{with .QG}}{{if .ByRules}}
   <div class="chead"><h2 id="preguntas-h">Preguntas para producción</h2><span class="chip">por reglas</span></div>
@@ -314,14 +318,13 @@
   </li>{{else}}<li class="muted">Sin preguntas todavía.</li>{{end}}</ul>
   <p class="muted">Para agruparlas, Claude tiene que estar analizando este canal en tandas (ver Canales). Para borradores de respuesta, descargá el CSV y usá el pedido del README.</p>
   {{else}}
-  <div class="chead"><h2 id="preguntas-h">Preguntas agrupadas para producción <span class="ia">Claude</span></h2><span class="muted">{{.Header}}</span></div>
-  <ul class="qlist qgroups">{{range .Rows}}<li{{if .Answered}} class="hecha"{{end}}>
-    <div class="qrow"><span><strong class="num">{{.Count}}</strong> · {{.Text}}</span>
-    {{if $.QG.Button}}{{if .Answered}}<span class="muted">Respondida ·</span> <button type="button" class="btn btn-s" hx-post="/preguntas/respondida" hx-vals="{{.Vals}}" hx-target="#preguntas" hx-swap="outerHTML">Deshacer</button>
-    {{else}}<button type="button" class="btn btn-s" hx-post="/preguntas/respondida" hx-vals="{{.Vals}}" hx-target="#preguntas" hx-swap="outerHTML">Marcar respondida</button>{{end}}
-    {{else if .Answered}}<span class="muted">Respondida</span>{{end}}</div>
-  </li>{{else}}<li class="muted">Claude todavía no agrupó preguntas en este alcance.</li>{{end}}</ul>
-  {{if .Remote}}<p class="muted">Para marcar preguntas como respondidas, abrí el dashboard en la PC del monitor.</p>{{end}}
-  <p class="muted">Agrupadas por Claude en las tandas; las cantidades las cuenta el monitor. "Respondida" es una marca local: no escribe en YouTube.</p>
+  <div class="chead"><h2 id="preguntas-h">Preguntas agrupadas <span class="ia">Claude</span></h2><span class="muted">{{.Header}}</span></div>
+  {{if .Top}}<ul class="qlist qgroups">{{range .Top}}{{template "qgrupo" .}}{{end}}</ul>
+  {{if .Rest}}<details class="plegable"{{if .Fold.Open}} open{{end}}>
+    <summary id="plegar-maspreguntas" hx-get="{{.Fold.Href}}" hx-sync="closest #vivo-analisis:replace" hx-target="#vivo-analisis" hx-swap="outerHTML">Ver {{len .Rest}} más</summary>
+    <ul class="qlist qgroups">{{range .Rest}}{{template "qgrupo" .}}{{end}}</ul>
+  </details>{{end}}
+  {{else}}<p class="muted">Claude todavía no agrupó preguntas en este alcance.</p>{{end}}
+  <p class="muted">Agrupadas por Claude en las tandas; las cantidades las cuenta el monitor.</p>
   {{end}}{{end}}
 </section>{{end}}

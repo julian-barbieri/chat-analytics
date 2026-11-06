@@ -380,7 +380,7 @@ func motiveParam(q url.Values) string {
 
 // foldSections son las secciones plegables de En vivo, en el orden en que se
 // escriben en "abrir". Lista cerrada: nada de lo que llega se refleja tal cual.
-var foldSections = []string{"preguntas", "quejas", "alertas"}
+var foldSections = []string{"preguntas", "quejas", "alertas", "maspreguntas"}
 
 // foldParam lee qué secciones plegadas están abiertas ("abrir", separadas por
 // coma). Un <details> abierto se cerraría en cada refresco de 30 s (htmx no
@@ -746,9 +746,9 @@ func (s *Server) liveAnalysis(w http.ResponseWriter, r *http.Request) {
 	now := s.clock()
 	msgs := sinceFor(snap.Msgs, id, now.Add(-24*time.Hour))
 	viewers := s.st.Viewers(id, now.Add(-24*time.Hour))
-	data := analysisData(msgs, viewers, []string{id}, snap.Videos, video.Concurrent, now, hours, scopeLast24)
+	data := analysisData(msgs, viewers, []string{id}, snap.Videos, video.Concurrent, nil, now, hours, scopeLast24)
 	data["Video"], data["Label"], data["Span"], data["Abrir"] = id, label, label+" · últimas 24 h", foldValue(open)
-	data["Monitor"] = monitorView(snap.Msgs, now)
+	data["Monitor"] = monitorView(msgs, scopeLast24)
 	// El análisis con Claude es por canal: un vivo suelto no lo tiene.
 	data["Claude"] = claudeView(claudeInput{Configured: s.analyst != nil, Status: snap.Claude, Now: now})
 	// Sin canal no hay tandas: alertas y preguntas por reglas.
@@ -768,12 +768,11 @@ var (
 	scopeProgram = scope{"del programa en curso", "en el programa en curso", "el programa en curso", "este programa", "de este programa"}
 )
 
-// monitorView es el bloque "Todo el monitor · últimas 24 h": palabras y
-// autores de todos los mensajes (también comentarios y otros canales). Sin
-// categorías: ya están en la tarjeta Categorías del alcance elegido.
-func monitorView(all []Message, now time.Time) map[string]any {
-	day := since(all, now.Add(-24*time.Hour))
-	return map[string]any{"Total": len(day), "Words": TopWords(day, 20), "Authors": TopAuthors(day, 10)}
+// monitorView es el bloque "Palabras y autores": los mensajes del mismo
+// alcance que el resto del análisis (programa en curso, día del canal o el
+// vivo suelto). Sin categorías: ya están en la tarjeta Categorías.
+func monitorView(msgs []Message, sc scope) map[string]any {
+	return map[string]any{"Total": len(msgs), "Of": sc.of, "Words": TopWords(msgs, 20), "Authors": TopAuthors(msgs, 10)}
 }
 
 // liveTiles son los números de arriba del análisis, sobre los mensajes ya
@@ -845,10 +844,10 @@ func liveTiles(msgs []Message, concurrent int64, sc scope, now time.Time) []Tile
 
 // analysisData arma las tarjetas del análisis con los mensajes ya filtrados
 // (de un vivo, del día del canal o del programa en curso).
-func analysisData(msgs []Message, viewers []ViewerSample, ids []string, videos []Video, concurrent int64, now time.Time, hours int, sc scope) map[string]any {
+func analysisData(msgs []Message, viewers []ViewerSample, ids []string, videos []Video, concurrent int64, segs []Segment, now time.Time, hours int, sc scope) map[string]any {
 	a := Analyze(msgs)
 	titles := videoTitles(videos)
-	part := participationView(msgs, viewers, ids, videos, concurrent, titles, now, hours)
+	part := participationView(msgs, viewers, ids, videos, concurrent, titles, segs, now, hours)
 	part["Window"] = sc.window
 	sup := superView(Supers(msgs, titles))
 	sup["Of"], sup["In"] = sc.of, sc.in
@@ -865,10 +864,10 @@ func analysisData(msgs []Message, viewers []ViewerSample, ids []string, videos [
 func (s *Server) channelAnalysis(w http.ResponseWriter, snap Snapshot, ch ChannelStatus, want, ver string, hours int, open map[string]bool, motives string, local bool) {
 	now := s.clock()
 	ls := s.channelScope(snap, ch, want, ver, now)
-	data := analysisData(ls.msgs, ls.viewers, ls.pids, snap.Videos, ls.concurrent, now, hours, ls.sc)
+	data := analysisData(ls.msgs, ls.viewers, ls.pids, snap.Videos, ls.concurrent, ls.segs, now, hours, ls.sc)
 	data["Canal"], data["Video"], data["Ver"], data["Label"], data["Span"], data["Note"] = ch.ID, ls.video, ls.ver, channelName(ch), ls.span, ls.note
 	data["Abrir"], data["Motivos"] = foldValue(open), motives
-	data["Monitor"] = monitorView(snap.Msgs, now)
+	data["Monitor"] = monitorView(ls.msgs, ls.sc)
 	cardVer := "dia"
 	if ls.prog != "" {
 		cardVer = "programa"
@@ -879,7 +878,7 @@ func (s *Server) channelAnalysis(w http.ResponseWriter, snap Snapshot, ch Channe
 	labels := s.st.Labels(messageIDs(ls.msgs))
 	data["Alertas"] = alertsData(Alerts(ls.msgs, labels, now), fold)
 	data["Sent"] = s.sentimentData(snap, ch, ls, labels, now, motives, fold)
-	data["QG"] = s.questionsData(snap, ch, ls, labels, local)
+	data["QG"] = s.questionsData(snap, ls, labels, fold)
 	s.render(w, "vivo-analisis", data)
 }
 
@@ -1099,19 +1098,25 @@ func (s *Server) sentimentData(snap Snapshot, ch ChannelStatus, ls liveScope, la
 // QGData es la tarjeta "Preguntas agrupadas para producción". ByRules: sin
 // Claude o sin etiquetas, la lista por reglas de siempre.
 type QGData struct {
-	ByRules        bool
-	Header         string
-	Rows           []QGRow
-	Button, Remote bool
+	ByRules   bool
+	Header    string
+	Top, Rest []QGRow // las qgTop primeras a la vista; el resto, plegado
+	Fold      Fold    // "Ver N más": sigue abierto después del refresco
 }
 
-// QGRow es un grupo con lo que manda su botón.
+// QGRow es un grupo con su cantidad ya escrita.
 type QGRow struct {
 	QGroupRow
-	Count, Vals string
+	Count string
 }
 
-func (s *Server) questionsData(snap Snapshot, ch ChannelStatus, ls liveScope, labels map[string]MessageLabel, local bool) QGData {
+// qgTop es cuántos grupos se ven sin desplegar: con muchos, la lista tapaba
+// el resto de la pantalla.
+const qgTop = 5
+
+// questionsData arma "Preguntas agrupadas". Sin botones: "Respondida" se
+// sigue mostrando si había una marca guardada, pero ya no se ofrece marcar.
+func (s *Server) questionsData(snap Snapshot, ls liveScope, labels map[string]MessageLabel, fold foldState) QGData {
 	if !s.claudeActive(snap) || len(labels) == 0 {
 		return QGData{ByRules: true}
 	}
@@ -1122,15 +1127,14 @@ func (s *Server) questionsData(snap Snapshot, ch ChannelStatus, ls liveScope, la
 		}
 	}
 	rows, n := questionGroups(ls.msgs, labels, s.st.Groups(gids), s.answers.Answered)
-	d := QGData{Header: plural(n, "pregunta", "preguntas") + " · " + plural(len(rows), "grupo", "grupos"),
-		Button: local && s.answers != nil, Remote: !local && s.answers != nil}
-	for _, r := range rows {
-		undo := "0"
-		if r.Answered {
-			undo = "1"
+	d := QGData{Header: plural(n, "pregunta", "preguntas") + " · " + plural(len(rows), "grupo", "grupos"), Fold: fold.link("maspreguntas")}
+	for i, r := range rows {
+		row := QGRow{QGroupRow: r, Count: miles(r.N)}
+		if i < qgTop {
+			d.Top = append(d.Top, row)
+		} else {
+			d.Rest = append(d.Rest, row)
 		}
-		vals, _ := json.Marshal(map[string]string{"canal": ch.ID, "video": ls.video, "ver": ls.ver, "grupo": r.ID, "deshacer": undo})
-		d.Rows = append(d.Rows, QGRow{QGroupRow: r, Count: miles(r.N), Vals: string(vals)})
 	}
 	return d
 }
@@ -1178,7 +1182,7 @@ func (s *Server) answerPost(w http.ResponseWriter, r *http.Request) {
 	}
 	ls := s.channelScope(snap, ch, r.PostForm.Get("video"), r.PostForm.Get("ver"), now)
 	labels := s.st.Labels(messageIDs(ls.msgs))
-	s.render(w, "vivo-preguntas", map[string]any{"QG": s.questionsData(snap, ch, ls, labels, true), "A": Analyze(ls.msgs)})
+	s.render(w, "vivo-preguntas", map[string]any{"QG": s.questionsData(snap, ls, labels, foldState{}), "A": Analyze(ls.msgs)})
 }
 
 // claudeLine es la línea de Claude debajo del selector: hasta dónde
@@ -1355,6 +1359,8 @@ func dayStrip(segs []Segment, ch ChannelStatus, from, now time.Time, paused bool
 		b.Text = strings.Join(parts, " · ")
 		blocks = append(blocks, b)
 	}
+	// Lo actual primero: lo que está al aire se ve sin scrollear la tira.
+	slices.Reverse(blocks)
 	return map[string]any{
 		"Blocks": blocks, "W": max(now.Sub(from).Minutes(), 1), "Banner": ContinuityBanner(segs, now),
 		"Aria": fmt.Sprintf("Hoy en el canal desde las %s: %d tramos", from.Local().Format("15:04"), len(blocks)),
@@ -1462,7 +1468,7 @@ func chartWindow(slots []Slot, hours int) []Slot {
 
 // participationView arma la sección de momentos con más participación de uno
 // o varios vivos (los de un canal). concurrent es cuántos miran ahora.
-func participationView(msgs []Message, viewers []ViewerSample, ids []string, videos []Video, concurrent int64, titles map[string]string, now time.Time, hours int) map[string]any {
+func participationView(msgs []Message, viewers []ViewerSample, ids []string, videos []Video, concurrent int64, titles map[string]string, segs []Segment, now time.Time, hours int) map[string]any {
 	slots, typical, ok := Participation(msgs, viewers, ids, now)
 	moments := TopMoments(slots, titles)
 	shown := chartWindow(slots, hours)
@@ -1511,8 +1517,12 @@ func participationView(msgs []Message, viewers []ViewerSample, ids []string, vid
 	for _, s := range slots {
 		missing = missing || s.N > 0 && s.Viewers == 0
 	}
+	chart := participationChart(shown, moments, typical, ok, titles)
+	if len(shown) > 0 {
+		chart["Strip"], chart["Lines"] = programStrip(segs, shown[0].Start, len(shown), now)
+	}
 	return map[string]any{
-		"Chart": participationChart(shown, moments, typical, ok, titles), "Moments": rows, "Why": why,
+		"Chart": chart, "Moments": rows, "Why": why,
 		"Windows": []int{chartHours, 24}, "Outside": outsideNote,
 		"ByPct": ok, "Typical": pct(typical), "Concurrent": concurrent, "Missing": concurrent > 0 && missing,
 	}
@@ -1532,14 +1542,14 @@ type Tick struct {
 	End   bool // está en el borde derecho: se alinea a la derecha para no desbordar
 }
 
-// ViewersLine es el panel de oyentes arriba de las barras: escalones con el
+// ViewersLine es la línea de oyentes sobre las barras: escalones con el
 // promedio de espectadores de cada franja, cortados donde no hay dato.
 type ViewersLine struct{ Path, Max, Aria string }
 
-// viewersLine arma el panel de oyentes de la ventana graficada, con su propia
-// escala desde 0 (para comparar "muchos" contra "pocos"). Son escalones y no
+// viewersLine arma la línea de oyentes de la ventana graficada, dentro del
+// mismo SVG de las barras pero con su propia escala desde 0 (para comparar "muchos" contra "pocos"). Son escalones y no
 // una línea entre centros: cada valor es el promedio de toda la franja y una
-// franja aislada igual se ve. Sin dato en la ventana no hay panel.
+// franja aislada igual se ve. Sin dato en la ventana no hay línea.
 func viewersLine(slots []Slot, span string) (ViewersLine, bool) {
 	var peak Slot
 	missing := 0
@@ -1655,7 +1665,7 @@ func participationChart(slots []Slot, moments []Moment, typical float64, ok bool
 		out["Aria"] = aria
 		return out
 	}
-	// La escala del panel es el máximo de la ventana recibida: cambia con 6 h / 24 h.
+	// La escala de la línea es el máximo de la ventana recibida: cambia con 6 h / 24 h.
 	if line, has := viewersLine(slots, span); has {
 		out["Viewers"] = line
 	}
@@ -1684,7 +1694,7 @@ func slotTitle(s Slot, titles map[string]string) string {
 	if s.Viewers == 0 {
 		return label + " · sin dato de espectadores"
 	}
-	// Cuántos miraban va siempre que haya dato: el panel de oyentes remite a
+	// Cuántos miraban va siempre que haya dato: la línea de oyentes remite a
 	// este tooltip también en las franjas que no entran en el ranking.
 	label += fmt.Sprintf(" · %s mirando (%s)", miles(s.Viewers), pct(s.Pct))
 	if s.Authors < minPersonasTop {
@@ -1756,16 +1766,6 @@ func (s *Server) export(w http.ResponseWriter, r *http.Request) {
 		cw.Write(csvRow(m, titles))
 	}
 	cw.Flush()
-}
-
-func since(msgs []Message, t time.Time) []Message {
-	var out []Message
-	for _, m := range msgs {
-		if !m.At.Before(t) {
-			out = append(out, m)
-		}
-	}
-	return out
 }
 
 func videoTitles(v []Video) map[string]string {

@@ -57,6 +57,11 @@
       {{if .Href}}<a class="btn btn-s" href="{{.Href}}" target="_blank" rel="noopener" title="{{.Hint}}">Abrir en YouTube</a>{{else}}<span class="muted">{{.Hint}}</span>{{end}}
     </div>
   </div>
+  {{with .Part}}<div class="inner">
+    <h3>Participación durante el programa</h3>
+    <p class="muted">{{if .ByPct}}% de los que miraban que escribió en el chat, cada 5 minutos; los números marcan los 5 momentos más altos. Típica: {{.Typical}} (línea punteada).{{with .Chart.Viewers}} La línea: cuántos miraban, con su escala a la derecha.{{end}}{{else}}Sin dato de cuántos miraban: personas que escribieron cada 5 minutos.{{end}}</p>
+    {{with .Chart}}{{template "part-chart" .}}{{end}}
+  </div>{{end}}
   <div class="inner">
     <h3>Resumen del chat {{if .Claude}}<span class="ia">Claude</span>{{end}}</h3>
     {{if .Claude}}<p>{{.Claude.Summary}}</p><p class="muted">{{.Claude.Footer}}</p>

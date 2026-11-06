@@ -10,7 +10,7 @@ privacidad, clasificador, concurrencia) están en `AGENTS.md` y se importan acá
 `yt-monitor`: bot que **no escribe en YouTube** y monitorea comentarios y chat en vivo de
 canales de YouTube (piloto de Alphamedia con Radio Rivadavia). Dos modos con el mismo
 binario: informe puntual (`go run .`) y continuo con dashboard htmx de tres pantallas:
-En vivo, Programas de hoy y Canales (`-dashboard :8080`).
+En vivo, Programas y Canales (`-dashboard :8080`).
 No publica, no modera, no usa OAuth. El dashboard escribe en tres puntos, solo desde la PC
 del monitor (`sameOrigin` + `localRequest`): la configuración de canales e intervalos de la
 pantalla Canales, incluida la tarjeta de Claude (`datos.canales.json`, ADR 0005 y 0009), pedir un análisis a Claude (cola)
