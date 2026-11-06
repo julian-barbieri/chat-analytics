@@ -50,6 +50,7 @@ type Server struct {
 	claudeWarn, claudeModel string
 	claudeUSD               float64
 	settings                *Settings // canales e intervalos editables (ADR 0005); nil: Canales en solo lectura
+	answers                 *Answers  // preguntas marcadas como respondidas (F4); nil: sin el botón
 }
 
 // ChatSettings son los intervalos del chat que usa el worker (WorkerConfig).
@@ -97,6 +98,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /parcial/canales/claude", s.channelsClaudeState)
 	mux.HandleFunc("GET /parcial/canales/claude/proyeccion", s.channelsClaudeProj)
 	mux.HandleFunc("POST /claude/analizar", s.claudeAnalyze)
+	mux.HandleFunc("POST /preguntas/respondida", s.answerPost)
 	mux.HandleFunc("GET /export.csv", s.export)
 	mux.Handle("GET /static/", http.FileServerFS(staticFS))
 	return mux
@@ -720,6 +722,10 @@ func (s *Server) liveAnalysis(w http.ResponseWriter, r *http.Request) {
 	data["Monitor"] = monitorView(snap.Msgs, now)
 	// El análisis con Claude es por canal: un vivo suelto no lo tiene.
 	data["Claude"] = claudeView(claudeInput{Configured: s.analyst != nil, Status: snap.Claude, Now: now})
+	// Sin canal no hay tandas: alertas y preguntas por reglas.
+	fold := foldState{Open: open, Query: url.Values{"video": {id}, "horas": {strconv.Itoa(hours)}}}
+	data["Alertas"] = alertsData(Alerts(msgs, nil, now), fold)
+	data["QG"] = QGData{ByRules: true}
 	s.render(w, "vivo-analisis", data)
 }
 
@@ -829,6 +835,42 @@ func analysisData(msgs []Message, viewers []ViewerSample, ids []string, videos [
 // mensajes de otro canal.
 func (s *Server) channelAnalysis(w http.ResponseWriter, snap Snapshot, ch ChannelStatus, want, ver string, hours int, open map[string]bool, local bool) {
 	now := s.clock()
+	ls := s.channelScope(snap, ch, want, ver, now)
+	data := analysisData(ls.msgs, ls.viewers, ls.pids, snap.Videos, ls.concurrent, now, hours, ls.sc)
+	data["Canal"], data["Video"], data["Ver"], data["Label"], data["Span"], data["Note"] = ch.ID, ls.video, ls.ver, channelName(ch), ls.span, ls.note
+	data["Abrir"] = foldValue(open)
+	data["Monitor"] = monitorView(snap.Msgs, now)
+	cardVer := "dia"
+	if ls.prog != "" {
+		cardVer = "programa"
+	}
+	fold := foldState{Open: open, Query: analysisQuery(ch.ID, ls.video, ls.ver, hours)}
+	data["Claude"] = s.claudeCard(snap, ch, ls.video, cardVer, local, "", fold)
+	data["ClaudeLine"] = s.claudeLine(snap, ch, now)
+	labels := s.st.Labels(messageIDs(ls.msgs))
+	data["Alertas"] = alertsData(Alerts(ls.msgs, labels, now), fold)
+	data["Sent"] = s.sentimentData(snap, ch, ls, labels, now)
+	data["QG"] = s.questionsData(snap, ch, ls, labels, local)
+	s.render(w, "vivo-analisis", data)
+}
+
+// liveScope es lo que mira el análisis de un canal: "Programa en curso" (el
+// vivo actual con el programa actual, desde el inicio del tramo menos 5 min)
+// o "Todo el día del canal" (sus vivos desde las 00:00 locales). Nunca entran
+// mensajes de otro canal.
+type liveScope struct {
+	ver, video, prog string // prog: el programa en curso; "" con todo el día
+	start            time.Time
+	segs             []Segment
+	msgs             []Message
+	viewers          []ViewerSample
+	pids             []string
+	concurrent       int64
+	span, note       string
+	sc               scope
+}
+
+func (s *Server) channelScope(snap Snapshot, ch ChannelStatus, want, ver string, now time.Time) liveScope {
 	from := dayStart(now)
 	samples := s.st.Lives(from)
 	var lives []Video
@@ -846,91 +888,285 @@ func (s *Server) channelAnalysis(w http.ResponseWriter, snap Snapshot, ch Channe
 			ids[l.VideoID] = true
 		}
 	}
-	segs := ProgramSegments(samples, ch.ID, live, from, now)
-	if ver != "dia" && ver != "programa" {
-		ver = "dia"
+	ls := liveScope{ver: ver, segs: ProgramSegments(samples, ch.ID, live, from, now), sc: scopeDay, start: from}
+	if ls.ver != "dia" && ls.ver != "programa" {
+		ls.ver = "dia"
 		if len(lives) > 0 {
-			ver = "programa"
+			ls.ver = "programa"
 		}
 	}
-	titles := videoTitles(snap.Videos)
-	var (
-		msgs       []Message
-		viewers    []ViewerSample
-		pids       []string
-		concurrent int64
-		span, note string
-		sc         = scopeDay
-	)
-	if ver == "programa" && len(lives) > 0 {
+	if len(lives) > 0 {
+		ls.video = lives[0].ID
+	}
+	if ls.ver == "programa" && len(lives) > 0 {
 		v := lives[0]
 		prog := ProgramName(v.Title, v.Channel)
 		start := from
-		for _, sg := range segs {
+		for _, sg := range ls.segs {
 			if sg.VideoID == v.ID && sg.Program == prog {
 				start = sg.Start // el último tramo de ese programa
 			}
 		}
 		// Desde 5 min antes (segmentLead): el cambio de título se ve hasta 3 min
 		// tarde. Mismo filtro que el análisis con Claude.
-		msgs = segmentMessages(snap.Msgs, Segment{VideoID: v.ID, Program: prog, Start: start, State: SegLive}, titles)
-		start = start.Add(-segmentLead)
-		viewers, pids, concurrent = s.st.Viewers(v.ID, start), []string{v.ID}, v.Concurrent
-		span, sc = programLabel(prog)+" (programa en curso)", scopeProgram
-	} else {
-		if ver == "programa" {
-			note = "No hay un programa al aire ahora: se muestra todo el día del canal."
-		}
-		for _, m := range snap.Msgs {
-			if ids[m.VideoID] && !m.At.Before(from) {
-				msgs = append(msgs, m)
-			}
-		}
-		for id := range ids {
-			pids = append(pids, id)
-		}
-		sort.Strings(pids)
-		for _, id := range pids {
-			viewers = append(viewers, s.st.Viewers(id, from)...)
-		}
-		for _, v := range lives {
-			concurrent += v.Concurrent
-		}
-		span = "todo el día del canal"
+		ls.msgs = segmentMessages(snap.Msgs, Segment{VideoID: v.ID, Program: prog, Start: start, State: SegLive}, videoTitles(snap.Videos))
+		ls.prog, ls.start = prog, start
+		ls.viewers, ls.pids, ls.concurrent = s.st.Viewers(v.ID, start.Add(-segmentLead)), []string{v.ID}, v.Concurrent
+		ls.span, ls.sc = programLabel(prog)+" (programa en curso)", scopeProgram
+		return ls
 	}
-	video := ""
-	if len(lives) > 0 {
-		video = lives[0].ID
+	if ls.ver == "programa" {
+		ls.note = "No hay un programa al aire ahora: se muestra todo el día del canal."
 	}
-	data := analysisData(msgs, viewers, pids, snap.Videos, concurrent, now, hours, sc)
-	data["Canal"], data["Video"], data["Ver"], data["Label"], data["Span"], data["Note"] = ch.ID, video, ver, channelName(ch), span, note
-	data["Abrir"] = foldValue(open)
-	data["Monitor"] = monitorView(snap.Msgs, now)
-	cardVer := "dia"
-	if ver == "programa" && len(lives) > 0 {
-		cardVer = "programa"
+	for _, m := range snap.Msgs {
+		if ids[m.VideoID] && !m.At.Before(from) {
+			ls.msgs = append(ls.msgs, m)
+		}
 	}
-	fold := foldState{Open: open, Query: analysisQuery(ch.ID, video, ver, hours)}
-	data["Claude"] = s.claudeCard(snap, ch, video, cardVer, local, "", fold)
-	data["ClaudeLine"] = s.claudeLine(snap, ch.ID, now)
-	s.render(w, "vivo-analisis", data)
+	for id := range ids {
+		ls.pids = append(ls.pids, id)
+	}
+	sort.Strings(ls.pids)
+	for _, id := range ls.pids {
+		ls.viewers = append(ls.viewers, s.st.Viewers(id, from)...)
+	}
+	for _, v := range lives {
+		ls.concurrent += v.Concurrent
+	}
+	ls.span = "todo el día del canal"
+	return ls
 }
 
-// claudeLine es la línea de Claude debajo del selector, con el análisis activo.
-func (s *Server) claudeLine(snap Snapshot, canal string, now time.Time) string {
-	if s.analyst == nil || snap.Claude.Off != "" || snap.Claude.Tope <= 0 {
-		return ""
+func messageIDs(msgs []Message) []string {
+	ids := make([]string, len(msgs))
+	for i, m := range msgs {
+		ids[i] = m.ID
 	}
-	var last time.Time
-	for _, a := range s.st.Analyses(canal, claudeFrom(now)) {
-		if !a.To.Before(dayStart(now)) && a.At.After(last) {
-			last = a.At
+	return ids
+}
+
+// AlertsData es la tarjeta de alertas con la flecha de sus mensajes plegados.
+type AlertsData struct {
+	AlertsView
+	Fold Fold
+	N    int // mensajes que se pueden ver
+}
+
+func alertsData(v AlertsView, fold foldState) AlertsData {
+	d := AlertsData{AlertsView: v, Fold: fold.link("alertas")}
+	for _, a := range v.Alerts {
+		d.N += len(a.Msgs)
+	}
+	return d
+}
+
+// SentData es la tarjeta "Sentimiento del chat". Off o Empty dicen por qué
+// no hay nada que mostrar.
+type SentData struct {
+	Off, Empty string
+	View       SentimentView
+	Chart      SentChart
+	Neg, Pos   []MotiveRow
+	NegN, PosN int
+}
+
+// claudeActive dice si el análisis con Claude está prendido.
+func (s *Server) claudeActive(snap Snapshot) bool {
+	return s.analyst != nil && snap.Claude.Off == "" && snap.Claude.Tope > 0
+}
+
+// sentimentData arma el sentimiento del alcance con las franjas ya sumadas
+// en el Store (SentSlots) y las etiquetas de los mensajes del alcance.
+func (s *Server) sentimentData(snap Snapshot, ch ChannelStatus, ls liveScope, labels map[string]MessageLabel, now time.Time) SentData {
+	if !s.claudeActive(snap) {
+		return SentData{Off: "El sentimiento lo calcula Claude: está apagado (ver Canales)."}
+	}
+	if len(labels) == 0 {
+		where := "en este programa"
+		if ls.prog == "" {
+			where = "hoy en el canal"
+		}
+		return SentData{Empty: "Todavía no hay mensajes analizados por Claude " + where + "."}
+	}
+	cur := slotOf(now)
+	all := s.st.SentSlots(ch.ID, now.Add(-7*24*time.Hour))
+	var history, today, chart []SentSlot
+	chartFrom := dayStart(now)
+	if ls.prog != "" {
+		chartFrom = now.Add(-sentChartSpan)
+	}
+	tramo := slotOf(ls.start)
+	for _, sl := range all {
+		if !sl.Start.Before(slotOf(chartFrom)) {
+			chart = append(chart, sl)
+		}
+		switch {
+		case ls.prog == "" && !sl.Start.Before(tramo) && sl.Start.Before(cur):
+			today = append(today, sl)
+		case ls.prog == "" || sl.Program != ls.prog:
+		case sl.Start.Before(tramo):
+			history = append(history, sl)
+		case sl.Start.Before(cur):
+			today = append(today, sl)
 		}
 	}
-	if last.IsZero() {
-		return "resumen al cerrar cada programa · todavía sin análisis hoy"
+	if ls.prog == "" {
+		today = mergeSlots(today)
 	}
-	return "resumen al cerrar cada programa · último análisis " + last.Local().Format("15:04")
+	recent := recentSent(ls.msgs, labels, now)
+	typ, where, ok := sentimentTypical(history, today)
+	byID := map[string]Message{}
+	for _, m := range ls.msgs {
+		byID[m.ID] = m
+	}
+	batches := s.st.Batches(ch.ID, now.Add(-slotStep))
+	d := SentData{Chart: sentimentChart(chart, ls.segs, chartFrom, now), NegN: recent.Neg, PosN: recent.Pos,
+		Neg: Motives(batches, "negativo", recent.Neg, byID, now.Add(-slotStep)),
+		Pos: Motives(batches, "positivo", recent.Pos, byID, now.Add(-slotStep))}
+	cause := ""
+	if len(d.Neg) > 0 && d.Neg[0].Text != "Otros" {
+		cause = d.Neg[0].Text
+	}
+	d.View = sentimentCards(recent, typ, where, ok, cause)
+	return d
+}
+
+// QGData es la tarjeta "Preguntas agrupadas para producción". ByRules: sin
+// Claude o sin etiquetas, la lista por reglas de siempre.
+type QGData struct {
+	ByRules        bool
+	Header         string
+	Rows           []QGRow
+	Button, Remote bool
+}
+
+// QGRow es un grupo con lo que manda su botón.
+type QGRow struct {
+	QGroupRow
+	Count, Vals string
+}
+
+func (s *Server) questionsData(snap Snapshot, ch ChannelStatus, ls liveScope, labels map[string]MessageLabel, local bool) QGData {
+	if !s.claudeActive(snap) || len(labels) == 0 {
+		return QGData{ByRules: true}
+	}
+	var gids []string
+	for _, l := range labels {
+		if l.Group != "" {
+			gids = append(gids, l.Group)
+		}
+	}
+	rows, n := questionGroups(ls.msgs, labels, s.st.Groups(gids), s.answers.Answered)
+	d := QGData{Header: plural(n, "pregunta", "preguntas") + " · " + plural(len(rows), "grupo", "grupos"),
+		Button: local && s.answers != nil, Remote: !local && s.answers != nil}
+	for _, r := range rows {
+		undo := "0"
+		if r.Answered {
+			undo = "1"
+		}
+		vals, _ := json.Marshal(map[string]string{"canal": ch.ID, "video": ls.video, "ver": ls.ver, "grupo": r.ID, "deshacer": undo})
+		d.Rows = append(d.Rows, QGRow{QGroupRow: r, Count: miles(r.N), Vals: string(vals)})
+	}
+	return d
+}
+
+// answerPost es "Marcar respondida" / "Deshacer": solo desde la PC del
+// monitor, guarda en Answers (nunca en el Store ni en YouTube) y responde la
+// tarjeta de preguntas del mismo alcance.
+func (s *Server) answerPost(w http.ResponseWriter, r *http.Request) {
+	if !sameOrigin(r) || !localRequest(r) {
+		http.Error(w, "Para marcar una pregunta, abrí el dashboard en la PC del monitor.", http.StatusForbidden)
+		return
+	}
+	if s.answers == nil {
+		http.NotFound(w, r)
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<10)
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "Pedido inválido.", http.StatusBadRequest)
+		return
+	}
+	id := r.PostForm.Get("grupo")
+	g, ok := s.st.Groups([]string{id})[id]
+	if !ok {
+		http.Error(w, "Ese grupo de preguntas no existe (puede haber vencido).", http.StatusBadRequest)
+		return
+	}
+	chID, _, _ := strings.Cut(g.ID, "|")
+	snap := s.st.Snapshot()
+	var ch ChannelStatus
+	for _, c := range snap.Channels {
+		if c.ID == chID {
+			ch = c
+		}
+	}
+	if ch.ID == "" {
+		http.Error(w, "Ese canal ya no está en la configuración.", http.StatusBadRequest)
+		return
+	}
+	now := s.clock()
+	if err := s.answers.Mark(ch.ID, g.ID, r.PostForm.Get("deshacer") == "1", now); err != nil {
+		log.Printf("aviso: no pude guardar la pregunta respondida: %v", err)
+		http.Error(w, "No pude guardar la marca: probá de nuevo.", http.StatusInternalServerError)
+		return
+	}
+	ls := s.channelScope(snap, ch, r.PostForm.Get("video"), r.PostForm.Get("ver"), now)
+	labels := s.st.Labels(messageIDs(ls.msgs))
+	s.render(w, "vivo-preguntas", map[string]any{"QG": s.questionsData(snap, ch, ls, labels, true), "A": Analyze(ls.msgs)})
+}
+
+// claudeLine es la línea de Claude debajo del selector: hasta dónde
+// analizaron las tandas del canal y con cuánta demora, o por qué no analiza.
+func (s *Server) claudeLine(snap Snapshot, ch ChannelStatus, now time.Time) string {
+	st := snap.Claude
+	switch {
+	case s.analyst == nil:
+		return ""
+	case st.Off != "":
+		return "apagado hasta reiniciar el monitor: " + st.Off
+	case st.Tope <= 0:
+		return "apagado: el tope de gasto es US$ 0 (ver Canales)"
+	case !s.batchOn(ch):
+		return "este canal no se analiza en tandas: activalo en Canales"
+	case st.RealtimeCapped:
+		return "se llegó a la parte del tope para tiempo real: se vuelve a las reglas hasta mañana"
+	}
+	model := st.RealtimeModel
+	var last ClaudeBatch
+	for _, b := range s.st.Batches(ch.ID, dayStart(now)) {
+		if b.Error == "" && b.At.After(last.At) {
+			last = b
+		}
+	}
+	if !last.At.IsZero() {
+		model = last.Model
+	}
+	parts := []string{"(" + strings.TrimPrefix(claudeModelLabel(model), "Claude ") + ")"}
+	if last.At.IsZero() {
+		parts = append(parts, "todavía sin tandas hoy")
+	} else {
+		parts = append(parts, "analizado hasta las "+last.To.Local().Format("15:04:05"),
+			fmt.Sprintf("%d s de demora", int(last.At.Sub(last.To).Seconds())))
+	}
+	if st.BatchEvery > 0 {
+		parts = append(parts, "tandas cada "+humanDur(st.BatchEvery))
+	}
+	return strings.Join(parts, " · ")
+}
+
+// batchOn dice si el canal tiene el check "Analizar el chat con Claude".
+func (s *Server) batchOn(ch ChannelStatus) bool {
+	if s.settings == nil {
+		return true
+	}
+	list, _ := s.settings.Get()
+	for _, l := range list {
+		if l.Input == ch.Input {
+			return !l.NoClaude
+		}
+	}
+	return true
 }
 
 // claudeAnalyze es el botón "Analizar ahora": solo valida y encola. Nunca

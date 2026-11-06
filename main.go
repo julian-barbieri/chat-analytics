@@ -194,6 +194,9 @@ func main() {
 			log.Printf("Clave de Claude cargada: tiempo real con %s cada %d s, resúmenes con %s, tope de US$ %s por día (0 = apagado)",
 				c.RealtimeModel, c.BatchSec, ccfg.Model, usd(c.BudgetMicros))
 		}
+		// Las preguntas marcadas como respondidas en En vivo (F4): una marca local.
+		answers, err := OpenAnswers("datos.respondidas.jsonl", time.Now())
+		check(err)
 		addr := *dash
 		if strings.HasPrefix(addr, ":") {
 			addr = "localhost" + addr
@@ -201,7 +204,7 @@ func main() {
 		log.Printf("Dashboard en http://%s (Ctrl+C para cortar)", addr)
 		// La pantalla Canales muestra los intervalos y estima la cuota; de Claude
 		// recibe solo el aviso de claudeConfig, nunca la clave.
-		srv := &Server{st: st, budget: *budget, analyst: analyst, settings: settings,
+		srv := &Server{st: st, budget: *budget, analyst: analyst, settings: settings, answers: answers,
 			chat:       ChatSettings{Peak: time.Duration(*chatPeak) * time.Second, Off: time.Duration(*chatSeg) * time.Second, PeakFrom: peakFrom, PeakTo: peakTo},
 			claudeWarn: warn, claudeModel: *claudeModel, claudeUSD: *claudeUSD}
 		check(http.ListenAndServe(addr, srv.Routes()))

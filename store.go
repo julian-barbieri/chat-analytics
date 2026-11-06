@@ -7,6 +7,7 @@ import (
 	"io"
 	"maps"
 	"os"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -40,6 +41,8 @@ type Store struct {
 	analyses  []ClaudeAnalysis
 	batches   []ClaudeBatch
 	labels    map[string]MessageLabel // por Message.ID
+	sent      map[sentKey]*SentSlot   // sentimiento por canal, franja y programa (F4)
+	groups    map[string]BatchGroup   // grupos de preguntas por ID
 	spend     claudeDay
 	claude    ClaudeStatus
 	viewers   []ViewerSample
@@ -140,7 +143,8 @@ func OpenStore(path string) (*Store, error) {
 	base := strings.TrimSuffix(path, ".jsonl")
 	s := &Store{path: path, quota: base + ".cuota.json", vpath: base + ".espectadores.jsonl", lpath: base + ".vivos.jsonl",
 		apath: base + ".analisis.jsonl", cpath: base + ".claude.json", bpath: base + ".etiquetas.jsonl",
-		seen: map[string]bool{}, labels: map[string]MessageLabel{}}
+		seen: map[string]bool{}, labels: map[string]MessageLabel{},
+		sent: map[sentKey]*SentSlot{}, groups: map[string]BatchGroup{}}
 	if b, err := os.ReadFile(s.quota); err == nil {
 		var q quotaDay
 		if json.Unmarshal(b, &q) == nil {
@@ -543,7 +547,56 @@ func (s *Store) AddBatch(b ClaudeBatch) {
 func (s *Store) indexLabels(b ClaudeBatch) {
 	for _, l := range b.Labels {
 		s.labels[l.ID] = l
+		// Se suma al guardar: En vivo pide 7 días de franjas cada 30 s y no
+		// puede recorrer todas las etiquetas cada vez.
+		k := sentKey{b.ChannelID, slotOf(l.At).Unix(), l.Program}
+		if s.sent[k] == nil {
+			s.sent[k] = &SentSlot{Start: time.Unix(k.start, 0), Program: l.Program}
+		}
+		s.sent[k].add(l.Sentiment)
 	}
+	for _, g := range b.NewGroups {
+		s.groups[g.ID] = g
+	}
+}
+
+type sentKey struct {
+	channel string
+	start   int64
+	program string
+}
+
+// SentSlots devuelve las franjas de sentimiento de un canal desde since, en
+// orden (copias).
+func (s *Store) SentSlots(channelID string, since time.Time) []SentSlot {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var out []SentSlot
+	for k, v := range s.sent {
+		if k.channel == channelID && !v.Start.Before(slotOf(since)) {
+			out = append(out, *v)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if !out[i].Start.Equal(out[j].Start) {
+			return out[i].Start.Before(out[j].Start)
+		}
+		return out[i].Program < out[j].Program
+	})
+	return out
+}
+
+// Groups devuelve los grupos de preguntas con esos IDs (los que no están, no).
+func (s *Store) Groups(ids []string) map[string]BatchGroup {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	out := map[string]BatchGroup{}
+	for _, id := range ids {
+		if g, ok := s.groups[id]; ok {
+			out[id] = g
+		}
+	}
+	return out
 }
 
 // Batches devuelve las tandas de un canal ("" = todos) que terminan desde

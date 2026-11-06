@@ -46,6 +46,12 @@ el cliente `Claude` no es concurrente y `datos.jsonl` no cambia de formato.
   mensajes, no se pierde ninguno.
 - Un mensaje que Claude no etiquetó no se vuelve a mandar mientras el monitor siga
   corriendo; después de reiniciar, sí (si es de los últimos 10 minutos).
+- **Ampliación (F4, `docs/specs/2026-11-06-claude-en-vivo.md`):** En vivo muestra las
+  etiquetas sin pedidos nuevos: sentimiento, alertas y preguntas agrupadas. "Marcar
+  respondida" se guarda en un archivo aparte, `datos.respondidas.jsonl` (`Answers`, 30 días),
+  y no en `datos.etiquetas.jsonl`, para no mezclar lo que escribe el modelo con lo que decide
+  la persona. El `Store` suma el sentimiento por franja al guardar cada tanda (`SentSlots`)
+  para que el refresco de 30 s no recorra 7 días de etiquetas.
 - Descartadas: una goroutine aparte para las tandas (dos chequeando el mismo tope pueden
   pasarlo), dos clientes `Claude`, reenviar la ventana de 5 min en cada tanda, guardar la
   etiqueta en `Message` (cambia `datos.jsonl`) y prompt caching (centavos por día con Haiku).

@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"sort"
 	"strconv"
 	"strings"
@@ -279,4 +280,439 @@ func claudeProjection(spent int64, spentModel string, first, now time.Time, mode
 		p.Cut = dayStart(now).Add(time.Duration(float64(24*time.Hour) * float64(p.Share) / float64(p.Daily)))
 	}
 	return p
+}
+
+// Lo que muestra En vivo con las etiquetas de las tandas (F4): sentimiento,
+// alertas y preguntas agrupadas. Funciones puras: los conteos los hace Go y
+// del modelo se usan solo las etiquetas validadas y los textos de grupos y
+// motivos. Los mensajes que se muestran salen siempre del Store.
+
+const (
+	minSentMsgs     = 20 // una franja con menos no tiene color ni cuenta para lo típico
+	minTypicalSlots = 6  // franjas que hacen falta para decir qué es lo típico
+	sentRisePts     = 5  // puntos de negativo sobre lo típico para el cartel
+	techAlertMin    = 15 // quejas técnicas en 5 min
+	insultAlertPct  = 5  // % de insultos en 10 min
+	insultWindow    = 10 * time.Minute
+	alertMsgsMax    = 10
+	motivesShown    = 3
+	motiveQuotes    = 2
+	sentChartSpan   = 3 * time.Hour // ventana del gráfico con "Programa en curso"
+)
+
+// SentSlot son los mensajes etiquetados por sentimiento de un canal en una
+// franja de 5 min alineada al reloj, por programa.
+type SentSlot struct {
+	Start         time.Time
+	Program       string
+	Pos, Neu, Neg int
+}
+
+func (s SentSlot) Total() int { return s.Pos + s.Neu + s.Neg }
+
+func (s *SentSlot) add(sentiment string) {
+	switch sentiment {
+	case "positivo":
+		s.Pos++
+	case "neutro":
+		s.Neu++
+	case "negativo":
+		s.Neg++
+	}
+}
+
+// SentPct es el reparto de una franja en %, sin redondear.
+type SentPct struct{ Pos, Neu, Neg float64 }
+
+func sentPct(s SentSlot) SentPct {
+	n := float64(s.Total())
+	if n == 0 {
+		return SentPct{}
+	}
+	return SentPct{float64(s.Pos) * 100 / n, float64(s.Neu) * 100 / n, float64(s.Neg) * 100 / n}
+}
+
+// mergeSlots suma las franjas que empiezan a la misma hora (dos programas en
+// la misma franja), en orden.
+func mergeSlots(slots []SentSlot) []SentSlot {
+	at := map[int64]int{}
+	var out []SentSlot
+	for _, s := range slots {
+		if i, ok := at[s.Start.Unix()]; ok {
+			out[i].Pos, out[i].Neu, out[i].Neg = out[i].Pos+s.Pos, out[i].Neu+s.Neu, out[i].Neg+s.Neg
+			continue
+		}
+		at[s.Start.Unix()] = len(out)
+		s.Program = ""
+		out = append(out, s)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Start.Before(out[j].Start) })
+	return out
+}
+
+// recentSent cuenta los mensajes de chat etiquetados de los últimos 5 min.
+func recentSent(msgs []Message, labels map[string]MessageLabel, now time.Time) SentSlot {
+	var s SentSlot
+	for _, m := range msgs {
+		if m.Source != "chat" || !m.At.After(now.Add(-slotStep)) || m.At.After(now) {
+			continue
+		}
+		if l, ok := labels[m.ID]; ok {
+			s.add(l.Sentiment)
+		}
+	}
+	return s
+}
+
+// sentimentTypical es lo típico: la mediana de cada parte entre las franjas
+// con minSentMsgs o más. Primero el mismo programa en otros días (history);
+// si no alcanza, lo de hoy (today, sin la franja actual).
+func sentimentTypical(history, today []SentSlot) (SentPct, string, bool) {
+	for _, c := range []struct {
+		slots []SentSlot
+		where string
+	}{{history, "del programa"}, {today, "de hoy"}} {
+		var pos, neu, neg []float64
+		for _, s := range c.slots {
+			if s.Total() >= minSentMsgs {
+				p := sentPct(s)
+				pos, neu, neg = append(pos, p.Pos), append(neu, p.Neu), append(neg, p.Neg)
+			}
+		}
+		if len(pos) >= minTypicalSlots {
+			return SentPct{median(pos), median(neu), median(neg)}, c.where, true
+		}
+	}
+	return SentPct{}, "", false
+}
+
+// SentCard es una de las tres tarjetas del sentimiento.
+type SentCard struct{ Class, Label, Pct, Diff string }
+
+// SentimentView es lo de arriba de la tarjeta "Sentimiento del chat".
+type SentimentView struct {
+	Header, Banner, Typical string
+	Cards                   []SentCard
+}
+
+// sentimentCards arma las tarjetas de los últimos 5 min contra lo típico y el
+// cartel si el negativo sube sentRisePts o más (solo con minSentMsgs o más).
+// cause es el motivo negativo más usado ("" si no hay).
+func sentimentCards(recent SentSlot, typ SentPct, where string, ok bool, cause string) SentimentView {
+	v := SentimentView{Header: plural(recent.Total(), "mensaje analizado", "mensajes analizados") + " en los últimos 5 min"}
+	if ok {
+		v.Typical = "Lo típico sale de las franjas " + where + " con " + strconv.Itoa(minSentMsgs) + " mensajes o más."
+	} else {
+		v.Typical = "Lo típico: todavía sin historia para comparar."
+	}
+	if recent.Total() == 0 {
+		return v
+	}
+	p := sentPct(recent)
+	round := func(f float64) int { return int(math.Round(f)) }
+	for _, c := range []struct {
+		class, label string
+		now, typ     float64
+	}{{"pos", "Positivo", p.Pos, typ.Pos}, {"neu", "Neutro", p.Neu, typ.Neu}, {"neg", "Negativo", p.Neg, typ.Neg}} {
+		card := SentCard{Class: c.class, Label: c.label, Pct: strconv.Itoa(round(c.now)) + " %"}
+		if ok {
+			switch d := round(c.now) - round(c.typ); {
+			case d > 0:
+				card.Diff = fmt.Sprintf("+%d pts sobre lo típico", d)
+			case d < 0:
+				card.Diff = fmt.Sprintf("−%d pts sobre lo típico", -d)
+			default:
+				card.Diff = "igual que lo típico"
+			}
+		}
+		v.Cards = append(v.Cards, card)
+	}
+	if ok && recent.Total() >= minSentMsgs && round(p.Neg) >= round(typ.Neg)+sentRisePts {
+		v.Banner = fmt.Sprintf("El negativo sube: %d %% en los últimos 5 min, contra %d %% típico %s.", round(p.Neg), round(typ.Neg), where)
+		if cause != "" {
+			v.Banner += " La causa principal: " + cause + "."
+		}
+	}
+	return v
+}
+
+// SentStack es una barra del gráfico: alturas en % del alto, apiladas
+// (negativo arriba, neutro, positivo abajo). Low: menos de minSentMsgs.
+type SentStack struct {
+	X, W             float64
+	NegH, NeuY, NeuH float64
+	PosY, PosH       float64
+	Low              bool
+	Label            string
+}
+
+// SentLine es la línea punteada de un cambio de programa.
+type SentLine struct {
+	X, Left float64
+	Label   string
+}
+
+// SentChart es "Cómo fue cambiando · cada 5 min".
+type SentChart struct {
+	W     float64
+	Bars  []SentStack
+	Lines []SentLine
+	Ticks []Tick
+	Aria  string
+}
+
+// sentimentChart arma el gráfico desde from (alineado a 5 min) hasta now con
+// las franjas del canal y una línea en cada programa que empieza.
+func sentimentChart(slots []SentSlot, segs []Segment, from, now time.Time) SentChart {
+	from = slotOf(from)
+	n := max(int(now.Sub(from)/slotStep)+1, 1)
+	c := SentChart{W: float64(n)}
+	withData := 0
+	for _, s := range mergeSlots(slots) {
+		i := int(s.Start.Sub(from) / slotStep)
+		if i < 0 || i >= n || s.Total() == 0 {
+			continue
+		}
+		withData++
+		b := SentStack{X: float64(i) + 0.1, W: 0.8}
+		hm := s.Start.Local().Format("15:04")
+		if s.Total() < minSentMsgs {
+			b.Low = true
+			b.Label = fmt.Sprintf("%s: %s, menos de %d: sin color", hm, plural(s.Total(), "mensaje", "mensajes"), minSentMsgs)
+		} else {
+			p := sentPct(s)
+			b.NegH, b.NeuY, b.NeuH = p.Neg, p.Neg, p.Neu
+			b.PosY, b.PosH = p.Neg+p.Neu, p.Pos
+			b.Label = fmt.Sprintf("%s: %.0f %% positivo, %.0f %% neutro, %.0f %% negativo (%s)", hm, p.Pos, p.Neu, p.Neg, plural(s.Total(), "mensaje", "mensajes"))
+		}
+		c.Bars = append(c.Bars, b)
+	}
+	for _, sg := range segs {
+		if sg.Program == "" || !sg.Start.After(from) || sg.Start.After(now) {
+			continue
+		}
+		x := float64(sg.Start.Sub(from)) / float64(slotStep)
+		c.Lines = append(c.Lines, SentLine{X: x, Left: x * 100 / c.W,
+			Label: sg.Start.Local().Format("15:04") + " · empieza " + sg.Program})
+	}
+	c.Ticks = []Tick{{Left: 0, Label: from.Local().Format("15:04")}, {Left: 100, Label: now.Local().Format("15:04") + " en curso", End: true}}
+	c.Aria = fmt.Sprintf("Sentimiento del chat cada 5 min desde las %s: %s", from.Local().Format("15:04"), plural(withData, "franja con datos", "franjas con datos"))
+	return c
+}
+
+// MotiveRow es un motivo de "Por qué hay mensajes negativos" o "Qué está
+// gustando": el texto de Claude, el % y citas del Store (sin autor).
+type MotiveRow struct {
+	Text, Pct string
+	N         int
+	Quotes    []string
+}
+
+// Motives junta los motivos de un tipo de las tandas desde since por texto
+// normalizado (minúsculas, sin tildes) y los cuenta por mensajes distintos;
+// el % es sobre total (los negativos o positivos de esos 5 min). Los 3
+// primeros y "Otros" con el resto.
+func Motives(batches []ClaudeBatch, kind string, total int, msgs map[string]Message, since time.Time) []MotiveRow {
+	type acc struct {
+		text  string
+		ids   map[string]bool
+		order []string
+	}
+	by := map[string]*acc{}
+	var keys []string
+	for _, b := range batches {
+		if b.To.Before(since) {
+			continue
+		}
+		for _, mo := range b.Motives {
+			if mo.Kind != kind {
+				continue
+			}
+			k := strings.TrimSpace(phraseText(strings.ToLower(mo.Text)))
+			if k == "" {
+				continue
+			}
+			a := by[k]
+			if a == nil {
+				a = &acc{text: mo.Text, ids: map[string]bool{}}
+				by[k] = a
+				keys = append(keys, k)
+			}
+			for _, id := range mo.IDs {
+				if !a.ids[id] {
+					a.ids[id] = true
+					a.order = append(a.order, id)
+				}
+			}
+		}
+	}
+	sort.SliceStable(keys, func(i, j int) bool { return len(by[keys[i]].ids) > len(by[keys[j]].ids) })
+	share := func(n int) string {
+		if total <= 0 {
+			return "—"
+		}
+		return strconv.Itoa(int(math.Round(float64(min(n, total))*100/float64(total)))) + " %"
+	}
+	var out []MotiveRow
+	used := 0
+	for _, k := range keys[:min(len(keys), motivesShown)] {
+		a := by[k]
+		r := MotiveRow{Text: a.text, N: len(a.ids), Pct: share(len(a.ids))}
+		for _, id := range a.order {
+			if m, ok := msgs[id]; ok && len(r.Quotes) < motiveQuotes {
+				r.Quotes = append(r.Quotes, m.Text)
+			}
+		}
+		used += r.N
+		out = append(out, r)
+	}
+	if len(out) > 0 && total > used {
+		out = append(out, MotiveRow{Text: "Otros", N: total - used, Pct: share(total - used)})
+	}
+	return out
+}
+
+// AlertMsg es un mensaje de una alerta: autor, hora y texto del Store.
+type AlertMsg struct{ Author, Hour, Text string }
+
+// Alert es una alerta que se pasó de su umbral, con sus mensajes.
+type Alert struct {
+	Kind, Title string
+	Msgs        []AlertMsg
+}
+
+// AlertsView es la tarjeta de alertas: las que saltaron o la línea de calma,
+// y qué parte salió de Claude y qué de las reglas.
+type AlertsView struct {
+	Alerts     []Alert
+	Calm, Note string
+}
+
+// Alerts mira los umbrales fijos: quejas técnicas ≥ techAlertMin en 5 min y
+// insultos ≥ insultAlertPct % de los mensajes de 10 min con al menos
+// minSentMsgs mensajes. Un mensaje con etiqueta de Claude usa la etiqueta;
+// sin etiqueta, las reglas (TechIssue, Classify).
+func Alerts(msgs []Message, labels map[string]MessageLabel, now time.Time) AlertsView {
+	var tech, insults []Message
+	n10, byClaude := 0, 0
+	for _, m := range msgs {
+		if m.Source != "chat" || !m.At.After(now.Add(-insultWindow)) || m.At.After(now) {
+			continue
+		}
+		n10++
+		l, ok := labels[m.ID]
+		if ok {
+			byClaude++
+		}
+		if (ok && l.Cat == CatInsulto) || (!ok && Classify(m.Text) == CatInsulto) {
+			insults = append(insults, m)
+		}
+		if m.At.After(now.Add(-slotStep)) && ((ok && l.Tech) || (!ok && TechIssue(m.Text) != "")) {
+			tech = append(tech, m)
+		}
+	}
+	show := func(ms []Message) []AlertMsg {
+		sort.SliceStable(ms, func(i, j int) bool { return ms[i].At.After(ms[j].At) })
+		var out []AlertMsg
+		for _, m := range ms[:min(len(ms), alertMsgsMax)] {
+			out = append(out, AlertMsg{m.Author, m.At.Local().Format("15:04"), m.Text})
+		}
+		return out
+	}
+	var v AlertsView
+	insPct := 0.0
+	if n10 > 0 {
+		insPct = float64(len(insults)) * 100 / float64(n10)
+	}
+	if len(tech) >= techAlertMin {
+		v.Alerts = append(v.Alerts, Alert{Kind: "tecnica", Msgs: show(tech),
+			Title: fmt.Sprintf("Quejas técnicas: %d en los últimos 5 min (umbral %d)", len(tech), techAlertMin)})
+	}
+	if n10 >= minSentMsgs && len(insults)*100 >= insultAlertPct*n10 {
+		v.Alerts = append(v.Alerts, Alert{Kind: "insulto", Msgs: show(insults),
+			Title: fmt.Sprintf("Insultos: %s de los mensajes de los últimos 10 min (umbral %d %%)", shortPct(insPct), insultAlertPct)})
+	}
+	if len(v.Alerts) == 0 {
+		v.Calm = fmt.Sprintf("Sin alertas: %s en 5 min (umbral %d) · %s de insultos en 10 min (umbral %d %%)",
+			plural(len(tech), "queja técnica", "quejas técnicas"), techAlertMin, shortPct(insPct), insultAlertPct)
+	}
+	switch {
+	case n10 == 0:
+		v.Note = "Sin mensajes de chat en los últimos 10 min."
+	case byClaude == n10:
+		v.Note = "Todos los mensajes de los últimos 10 min tienen etiqueta de Claude."
+	case byClaude == 0:
+		v.Note = "Por reglas: ningún mensaje de los últimos 10 min tiene etiqueta de Claude."
+	default:
+		v.Note = fmt.Sprintf("%s de %s con etiqueta de Claude; el resto, por reglas.", miles(byClaude), plural(n10, "mensaje", "mensajes"))
+	}
+	return v
+}
+
+// QGroupRow es un grupo de preguntas en "Preguntas agrupadas para producción".
+type QGroupRow struct {
+	ID, Text string
+	N        int
+	Last     time.Time
+	Answered bool
+}
+
+// questionGroups cuenta las preguntas de esos mensajes por grupo de Claude
+// (los grupos que no están, por ejemplo vencidos, no cuentan) y los ordena por
+// cantidad; en empate, el de la pregunta más reciente primero. Los
+// respondidos van al final. questions es la suma de las cantidades.
+func questionGroups(msgs []Message, labels map[string]MessageLabel, groups map[string]BatchGroup, answered func(string) bool) (rows []QGroupRow, questions int) {
+	by := map[string]*QGroupRow{}
+	for _, m := range msgs {
+		l, ok := labels[m.ID]
+		if !ok || l.Group == "" {
+			continue
+		}
+		g, ok := groups[l.Group]
+		if !ok {
+			continue
+		}
+		r := by[g.ID]
+		if r == nil {
+			r = &QGroupRow{ID: g.ID, Text: g.Text, Answered: answered != nil && answered(g.ID)}
+			by[g.ID] = r
+		}
+		r.N++
+		questions++
+		if m.At.After(r.Last) {
+			r.Last = m.At
+		}
+	}
+	for _, r := range by {
+		rows = append(rows, *r)
+	}
+	sort.Slice(rows, func(i, j int) bool {
+		a, b := rows[i], rows[j]
+		if a.Answered != b.Answered {
+			return !a.Answered
+		}
+		if a.N != b.N {
+			return a.N > b.N
+		}
+		if !a.Last.Equal(b.Last) {
+			return a.Last.After(b.Last)
+		}
+		return a.ID < b.ID
+	})
+	return rows, questions
+}
+
+// slotOf es el inicio de la franja de 5 min de t, alineada a la hora local
+// (como las franjas de participación: 12:00, 12:05…).
+func slotOf(t time.Time) time.Time {
+	d := dayStart(t)
+	return d.Add(t.Sub(d).Truncate(slotStep))
+}
+
+// shortPct es un % con un decimal solo si hace falta: "5 %", "4,9 %".
+func shortPct(f float64) string {
+	if r := math.Round(f*10) / 10; r == math.Trunc(r) {
+		return strconv.Itoa(int(r)) + " %"
+	}
+	return pct(f)
 }

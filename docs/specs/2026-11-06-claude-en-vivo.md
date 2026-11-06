@@ -1,6 +1,6 @@
 # Spec: En vivo con Claude: sentimiento, alertas y preguntas agrupadas (F4)
 
-- **Estado:** aprobada
+- **Estado:** implementada (CA13 se revisa a mano en el navegador)
 - **Tipo:** mejora (feat)
 - **Rama:** `feat/claude-en-vivo`
 - **Origen:** pedido de Julian Barbieri (2026-11-06): "Arrancá la fase 4 (tandas de Claude) sin
@@ -33,39 +33,39 @@ Son CA4.1 a CA4.13 de la madre, **adoptados tal cual**; acá el resumen y su tes
 `monitor_test.go`, sin red ni `datos.jsonl`; el primero falla hoy en ejecución (salida en
 `factory/manual/claude-en-vivo/`).
 
-- [ ] CA1 (falla hoy, = CA4.1): `id="sentimiento"` "Sentimiento del chat" con chip Claude; sin
+- [x] CA1 (falla hoy, = CA4.1): `id="sentimiento"` "Sentimiento del chat" con chip Claude; sin
   etiquetas "Todavía no hay mensajes analizados por Claude en este programa"; apagado "El
   sentimiento lo calcula Claude: está apagado (ver Canales)"; En vivo sin `class="csent"`
   (Programas sí) — `TestSentimentCard`.
-- [ ] CA2 (= CA4.2): `sentimentSlots` (pura), franjas de 5 min, < 20 mensajes sin color, tarjetas
+- [x] CA2 (= CA4.2): `sentimentSlots` (pura), franjas de 5 min, < 20 mensajes sin color, tarjetas
   "±N pts sobre lo típico", cartel "El negativo sube…" si X ≥ Y + 5 — `TestSentimentSlots`.
-- [ ] CA3 (= CA4.3): lo típico: mismo canal y programa en 7 días (≥ 6 franjas), si no el tramo de
+- [x] CA3 (= CA4.3): lo típico: mismo canal y programa en 7 días (≥ 6 franjas), si no el tramo de
   hoy (≥ 6), si no "todavía sin historia para comparar" — `TestSentimentTypical`.
-- [ ] CA4 (= CA4.4): SVG apilado al 100 % "Cómo fue cambiando · cada 5 min", líneas de cambio de
+- [x] CA4 (= CA4.4): SVG apilado al 100 % "Cómo fue cambiando · cada 5 min", líneas de cambio de
   programa, textos en HTML, `--sent-low` nuevo en los dos temas — `TestSentimentChart`,
   `TestTemplateTokens`.
-- [ ] CA5 (= CA4.5): "Por qué hay mensajes negativos" / "Qué está gustando": motivos de 5 min
+- [x] CA5 (= CA4.5): "Por qué hay mensajes negativos" / "Qué está gustando": motivos de 5 min
   juntados por texto normalizado, top 3 + "Otros", ≤ 2 citas por motivo del `Store` (sin autor) —
   `TestMotives`.
-- [ ] CA6 (= CA4.6): `#alertas` reemplaza a `#quejas`: técnicas ≥ 15 en 5 min, insultos ≥ 5 % en
+- [x] CA6 (= CA4.6): `#alertas` reemplaza a `#quejas`: técnicas ≥ 15 en 5 min, insultos ≥ 5 % en
   10 min con ≥ 20 mensajes (Claude, o reglas sin etiqueta); "Ver los mensajes (N)" plegado
   (`abrir=alertas`), ≤ 10 con autor, hora y texto del `Store` — `TestAlerts` (bordes).
-- [ ] CA7 (= CA4.7): `#preguntas` "Preguntas agrupadas para producción": "N · pregunta" por
+- [x] CA7 (= CA4.7): `#preguntas` "Preguntas agrupadas para producción": "N · pregunta" por
   cantidad, "P preguntas · G grupos", respondidas al final con "Deshacer"; sin etiquetas, lista
   por reglas con "por reglas" — `TestQuestionGroups`.
-- [ ] CA8 (= CA4.8): `POST /preguntas/respondida` (`grupo`, `deshacer`): 403 sin guardas, 1 KB,
+- [x] CA8 (= CA4.8): `POST /preguntas/respondida` (`grupo`, `deshacer`): 403 sin guardas, 1 KB,
   grupo inexistente 400; `Answers` (`answers.go`, mutex propio) agrega a
   `datos.respondidas.jsonl`; al abrir 30 días y tmp + `os.Rename`; botón 44 px solo en loopback —
   `TestAnswerPost`, `TestAnswersOpen`.
-- [ ] CA9 (= CA4.9): orden `#canal`, selector, tiles, `#alertas`, `#claude-card`, `#sentimiento`,
+- [x] CA9 (= CA4.9): orden `#canal`, selector, tiles, `#alertas`, `#claude-card`, `#sentimiento`,
   `#preguntas`, `#categorias`, `#momentos` (sin cambios), `#chat`, `#supers`, `#monitor` —
   `TestLiveScreenOrder`.
-- [ ] CA10 (= CA4.10): `claudeLine`: "Claude (Haiku 5.5) · analizado hasta las HH:MM:SS · N s de
+- [x] CA10 (= CA4.10): `claudeLine`: "Claude (Haiku 5.5) · analizado hasta las HH:MM:SS · N s de
   demora · tandas cada 30 s" o el motivo (apagado, tope de tiempo real, canal sin el check) —
   `TestLiveAnalysisClaudeLine` extendido.
-- [ ] CA11 (= CA4.11): sin copiar 7 días de etiquetas por pedido: `Store.SentSlots(canal, desde)`
+- [x] CA11 (= CA4.11): sin copiar 7 días de etiquetas por pedido: `Store.SentSlots(canal, desde)`
   agregado por franja y programa — `BenchmarkSentimentView` (70.000 etiquetas, informativo).
-- [ ] CA12 (= CA4.12): README, AGENTS.md, CLAUDE.md (tercer punto de escritura del dashboard,
+- [x] CA12 (= CA4.12): README, AGENTS.md, CLAUDE.md (tercer punto de escritura del dashboard,
   `Answers`, `datos.respondidas.jsonl`) y ADR 0009 ampliado —
   `grep -n "datos.respondidas.jsonl" README.md AGENTS.md CLAUDE.md`.
 - [ ] CA13: cuota de YouTube igual (`git diff main -- youtube.go worker.go` vacío) y navegador con
@@ -81,6 +81,11 @@ Son CA4.1 a CA4.13 de la madre, **adoptados tal cual**; acá el resumen y su tes
 - `server.go` / `partials.html`: `#alertas`, `#sentimiento`, `#preguntas` nuevas; `claude-block`
   sin `Sent` en En vivo; `claudeLine` con la última tanda; ruta `POST /preguntas/respondida`.
 - `main.go`: abre `datos.respondidas.jsonl`. Primer test: `TestSentimentCard`.
+
+Notas de la implementación: el cartel dice "La causa principal: <motivo>." (el motivo es un
+texto libre de Claude y "son" no siempre concuerda); las franjas se alinean a la hora local
+(`slotOf`); `BenchmarkSentimentView` da ~180 ms por pedido con 70.000 etiquetas, casi todo de
+las tarjetas por reglas de antes (`Analyze`, `Classify`), no de F4.
 
 ## Fuera de alcance
 

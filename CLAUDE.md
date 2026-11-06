@@ -11,9 +11,10 @@ privacidad, clasificador, concurrencia) están en `AGENTS.md` y se importan acá
 canales de YouTube (piloto de Alphamedia con Radio Rivadavia). Dos modos con el mismo
 binario: informe puntual (`go run .`) y continuo con dashboard htmx de tres pantallas:
 En vivo, Programas de hoy y Canales (`-dashboard :8080`).
-No publica, no modera, no usa OAuth. El dashboard escribe en dos puntos, solo desde la PC
+No publica, no modera, no usa OAuth. El dashboard escribe en tres puntos, solo desde la PC
 del monitor (`sameOrigin` + `localRequest`): la configuración de canales e intervalos de la
-pantalla Canales, incluida la tarjeta de Claude (`datos.canales.json`, ADR 0005 y 0009), y pedir un análisis a Claude (cola).
+pantalla Canales, incluida la tarjeta de Claude (`datos.canales.json`, ADR 0005 y 0009), pedir un análisis a Claude (cola)
+y marcar una pregunta agrupada como respondida en En vivo (`datos.respondidas.jsonl`, una marca local).
 Si se activa (`CLAUDE_API_KEY` y un tope > 0, de `-claude-usd` o de Canales), el dashboard
 manda el **texto** de los mensajes de chat (sin autores) a la API de Anthropic para resumir
 cada programa (ADR 0006) y etiquetar el chat en tandas (ADR 0009). Sigue sin escribir en YouTube.
