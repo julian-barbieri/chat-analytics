@@ -1,6 +1,6 @@
 # Spec: Claude en tandas, configuración y estado (F3)
 
-- **Estado:** borrador
+- **Estado:** aprobada
 - **Tipo:** mejora (feat)
 - **Rama:** `feat/claude-tandas`
 - **Origen:** pedido de Julian Barbieri (2026-11-06): "Arrancá la fase 3 (tandas de Claude)
@@ -8,7 +8,7 @@
   (aprobada el 2026-11-05 con las 12 recomendaciones), en el flujo manual (ADR 0008). Esta spec
   es la versión corta para implementar; el detalle (costos, choques (b) y (c), reglas que
   cambian) está en la madre, secciones "F3".
-- **Aprobada por / fecha:** —
+- **Aprobada por / fecha:** Julian Barbieri, 2026-11-06
 
 ## Contexto
 
