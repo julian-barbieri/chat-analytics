@@ -1,10 +1,10 @@
 # Spec: fidelización, emisión por emisión y franjas en Programas
 
-- **Estado:** borrador
+- **Estado:** aprobada
 - **Tipo:** mejora
 - **Rama:** `feat/fidelizacion-programas`
 - **Origen:** pedido del usuario (2026-11-06) con cuatro capturas de referencia.
-- **Aprobada por / fecha:** —
+- **Aprobada por / fecha:** Julian Barbieri, 2026-11-06
 
 ## Contexto
 
