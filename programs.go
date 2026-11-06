@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -258,6 +259,41 @@ func (q programsQuery) Partial() string { return "/parcial/programas?" + q.value
 // WithTramo es la misma pantalla con otro programa elegido.
 func (q programsQuery) WithTramo(key string) programsQuery { q.Tramo = key; return q }
 
+// programChannels son los canales de la configuración y, después, los que
+// tienen muestras en datos.vivos.jsonl pero no están configurados (quitados
+// desde Canales, también antes de reiniciar, o de un vivo suelto de -vivos):
+// sus programas siguen hasta que vencen. No se guarda nada nuevo.
+func programChannels(snap Snapshot, samples []LiveSample) []ChannelStatus {
+	out := append([]ChannelStatus(nil), snap.Channels...)
+	known := func(id string) bool {
+		return slices.ContainsFunc(out, func(c ChannelStatus) bool { return c.ID == id })
+	}
+	// Canales de los vivos que se siguen ahora sin ser de la configuración: los de -vivos.
+	loose := map[string]bool{}
+	for _, v := range snap.Videos {
+		if !known(v.ChannelID) {
+			loose[v.ChannelID] = true
+		}
+	}
+	for _, sm := range samples {
+		if sm.ChannelID != "" && !known(sm.ChannelID) {
+			name := sm.Channel
+			if name == "" {
+				name = sm.ChannelID
+			}
+			switch {
+			case loose[sm.ChannelID]:
+				name += " (vivo suelto)"
+			case len(snap.Pending) == 0:
+				// Mientras haya canales sin resolver no se sabe si este es uno de ellos.
+				name += " (no está en Canales)"
+			}
+			out = append(out, ChannelStatus{ID: sm.ChannelID, Name: name})
+		}
+	}
+	return out
+}
+
 // readPrograms valida ?dia= y ?canal=: un valor desconocido vale el de por
 // defecto (hoy, todos los canales).
 func readPrograms(v url.Values, channels []ChannelStatus) programsQuery {
@@ -281,18 +317,20 @@ type ChannelOption struct {
 func (s *Server) programsData(v url.Values) map[string]any {
 	now := s.clock()
 	snap := s.st.Status()
-	q := readPrograms(v, snap.Channels)
-	_, days := dayRange(q.Dia, now)
+	_, days := dayRange(v.Get("dia"), now)
+	oldest := days[len(days)-1].Add(-12 * time.Hour)
+	samples := s.st.Lives(oldest)
+	all := programChannels(snap, samples)
+	q := readPrograms(v, all)
 	var chans []ChannelStatus
 	opts := []ChannelOption{{Name: "Todos los canales", Selected: q.Canal == ""}}
-	for _, c := range snap.Channels {
+	for _, c := range all {
 		opts = append(opts, ChannelOption{c.ID, channelName(c), c.ID == q.Canal})
 		if q.Canal == "" || c.ID == q.Canal {
 			chans = append(chans, c)
 		}
 	}
-	oldest := days[len(days)-1].Add(-12 * time.Hour)
-	segs := programSegs(chans, s.st.Lives(oldest), snap.Videos, days, now)
+	segs := programSegs(chans, samples, snap.Videos, days, now)
 	ids, from := map[string]bool{}, now
 	for _, ps := range segs {
 		ids[ps.Seg.VideoID] = true
@@ -446,12 +484,13 @@ func (s *Server) findProgram(key, dia string, snap Snapshot, now time.Time) (Pro
 	if dia == "" {
 		dia = "7d"
 	}
-	for _, ch := range snap.Channels {
+	_, days := dayRange(dia, now)
+	samples := s.st.Lives(days[len(days)-1].Add(-12 * time.Hour))
+	for _, ch := range programChannels(snap, samples) {
 		if ch.ID != canal || canal == "" {
 			continue
 		}
-		_, days := dayRange(dia, now)
-		for _, ps := range programSegs([]ChannelStatus{ch}, s.st.Lives(days[len(days)-1].Add(-12*time.Hour)), snap.Videos, days, now) {
+		for _, ps := range programSegs([]ChannelStatus{ch}, samples, snap.Videos, days, now) {
 			if ps.Key == key {
 				msgs := s.st.MessagesOf(map[string]bool{ps.Seg.VideoID: true}, ps.Seg.Start.Add(-segmentLead))
 				return ps, segmentMessages(msgs, ps.Seg, videoTitles(snap.Videos)), true

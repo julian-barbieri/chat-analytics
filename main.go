@@ -42,15 +42,15 @@ func setZone(name string) error {
 }
 
 func main() {
-	channel := flag.String("canal", "UCLAj5TzCrNbqe3LosSKHLcQ", "IDs, @handles o links de canales separados por coma; el primero es el principal (por defecto Radio Rivadavia) y de los demás solo se siguen los vivos")
+	channel := flag.String("canal", "UCLAj5TzCrNbqe3LosSKHLcQ", "IDs, @handles o links de canales separados por coma; el primero es el principal (por defecto Radio Rivadavia) y de los demás solo se siguen los vivos. En el modo continuo es el valor inicial: si existe datos.canales.json (se edita en Canales), valen los canales guardados ahí")
 	videos := flag.Int("videos", 15, "cantidad de videos recientes a revisar")
 	hours := flag.Int("horas", 24, "revisar comentarios de las últimas N horas")
 	chatMin := flag.Int("chat-min", 0, "si hay un vivo, leer su chat durante N minutos (0 = no leer)")
 	outDir := flag.String("salida", "informes", "carpeta de salida")
 	dash := flag.String("dashboard", "", "modo continuo: dirección del dashboard, por ejemplo :8080")
 	budget := flag.Int("cuota", 9000, "modo continuo: tope de unidades diarias (YouTube da 10.000)")
-	chatSeg := flag.Int("chat-seg", 180, "modo continuo: segundos entre lecturas del chat en vivo fuera del horario pico")
-	chatPeak := flag.Int("chat-seg-pico", 60, "modo continuo: segundos entre lecturas del chat en vivo en el horario pico")
+	chatSeg := flag.Int("chat-seg", 180, "modo continuo: segundos entre lecturas del chat en vivo fuera del horario pico. Valor inicial: con N canales, cada uno lee cada N veces esto, y si existe datos.canales.json valen los intervalos de cada canal guardados ahí; los vivos de -vivos que no son de esos canales usan este valor")
+	chatPeak := flag.Int("chat-seg-pico", 60, "modo continuo: segundos entre lecturas del chat en vivo en el horario pico (valor inicial, como -chat-seg)")
 	peakHours := flag.String("pico", "7-20", "modo continuo: horario pico en hora local, desde-hasta (\"\" = sin horario pico)")
 	comMin := flag.Int("comentarios-min", 10, "modo continuo: minutos entre lecturas de comentarios")
 	realTime := flag.String("tiempo-real", "", "modo continuo: links o IDs de vivos con tiempo real continuo, separados por coma: se reconectan apenas YouTube corta la conexión (~1.800 unidades por hora cada uno)")
@@ -136,11 +136,26 @@ func main() {
 	if *dash != "" {
 		st, err := OpenStore("datos.jsonl")
 		check(err)
+		// Los canales y sus intervalos se editan en Canales (ADR 0005): sin
+		// datos.canales.json valen -canal y -chat-seg* × N (el gasto de antes).
+		var manual []string
+		flag.Visit(func(f *flag.Flag) {
+			if f.Name == "canal" || f.Name == "chat-seg" || f.Name == "chat-seg-pico" {
+				manual = append(manual, f.Name)
+			}
+		})
+		settings, err := LoadSettings(settingsPath("datos.jsonl"), flagSettings(channels, *chatPeak, *chatSeg), manual)
+		if err != nil {
+			log.Fatal(err)
+		}
+		if w := settings.Warning(); w != "" {
+			log.Printf("aviso: %s", w)
+		}
 		go RunWorker(context.Background(), yt, st, WorkerConfig{
 			Channels: channels, Videos: *videos, Extra: extra, VideosEvery: 3 * time.Minute,
 			CommentsEvery: time.Duration(*comMin) * time.Minute,
 			ChatEvery:     time.Duration(*chatSeg) * time.Second, ChatPeak: time.Duration(*chatPeak) * time.Second,
-			PeakFrom: peakFrom, PeakTo: peakTo, Budget: *budget, RealTime: rt,
+			PeakFrom: peakFrom, PeakTo: peakTo, Budget: *budget, RealTime: rt, Settings: settings,
 		})
 		// El análisis con Claude va en su propia goroutine (ADR 0006): sin
 		// clave, con -claude-usd 0 o con un modelo sin precio, todo sigue como siempre.
@@ -162,7 +177,7 @@ func main() {
 		log.Printf("Dashboard en http://%s (Ctrl+C para cortar)", addr)
 		// La pantalla Canales muestra los intervalos y estima la cuota; de Claude
 		// recibe solo el aviso de claudeConfig, nunca la clave.
-		srv := &Server{st: st, budget: *budget, analyst: analyst,
+		srv := &Server{st: st, budget: *budget, analyst: analyst, settings: settings,
 			chat:       ChatSettings{Peak: time.Duration(*chatPeak) * time.Second, Off: time.Duration(*chatSeg) * time.Second, PeakFrom: peakFrom, PeakTo: peakTo},
 			claudeWarn: warn, claudeModel: *claudeModel, claudeUSD: *claudeUSD}
 		check(http.ListenAndServe(addr, srv.Routes()))

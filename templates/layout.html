@@ -249,11 +249,28 @@ tr.sel td { background: var(--ia-bg); }
 .q-vid { background: var(--text-muted); }
 .q-com { background: var(--sent-neu); }
 .q-chat { background: var(--series-1); }
+.q-loose { background: var(--series-3); }
 .qmark { position: absolute; top: 0; bottom: 0; border-left: 2px dashed var(--text-primary); }
 .qmark.stop { border-left: 2px solid var(--live); }
 .qmark span { position: absolute; top: 0; transform: translateX(-50%); font-size: 12px; white-space: nowrap; }
 .qmark.stop span { color: var(--crit-text); }
 .steps { margin: 0; padding-left: 20px; display: grid; gap: 6px; font-size: 14px; }
+/* Canales editable: el formulario no se refresca solo; el estado sí. */
+.chips { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.addform { display: grid; gap: 8px; margin-top: 8px; }
+.addrow { display: flex; flex-wrap: wrap; gap: 8px; }
+.addrow .inp { flex: 1 1 260px; min-width: 0; }
+.cfg { display: flex; flex-direction: column; gap: 10px; margin: 0; min-width: 0; }
+.cfg legend { padding: 0 4px; }
+.cfgrow { display: flex; flex-wrap: wrap; gap: 12px; }
+.cfgrow .field { flex: 1 1 180px; }
+.cfg p { margin: 0; }
+#canales-form { display: flex; flex-direction: column; gap: 12px; }
+#canales-form > h2 { margin: 0; }
+#canales-form #canales-cuota { border: 0; padding: 0; }
+.formfoot { align-items: center; justify-content: flex-end; }
+.formfoot p { flex: 1 1 260px; margin: 0; }
+.btn:disabled, .inp:disabled { opacity: .55; cursor: not-allowed; }
 details summary { cursor: pointer; min-height: 32px; font-weight: 600; }
 /* Plegables del resumen de Claude: la flecha es el marcador nativo (display
    list-item lo conserva) y la fila mide 44 px para tocarla en el celular. */

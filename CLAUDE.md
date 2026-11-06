@@ -7,13 +7,16 @@ privacidad, clasificador, concurrencia) están en `AGENTS.md` y se importan acá
 
 ## Propósito
 
-`yt-monitor`: bot de **solo lectura** que monitorea comentarios y chat en vivo de
+`yt-monitor`: bot que **no escribe en YouTube** y monitorea comentarios y chat en vivo de
 canales de YouTube (piloto de Alphamedia con Radio Rivadavia). Dos modos con el mismo
 binario: informe puntual (`go run .`) y continuo con dashboard htmx de tres pantallas:
 En vivo, Programas de hoy y Canales (`-dashboard :8080`).
-No publica, no modera, no usa OAuth. Si se activa (`-claude-usd` > 0 y `CLAUDE_API_KEY`),
-el dashboard manda el **texto** de los mensajes de chat de cada programa (sin autores) a
-la API de Anthropic para resumirlos y agruparlos (ADR 0006). Sigue sin escribir en YouTube.
+No publica, no modera, no usa OAuth. El dashboard escribe en dos puntos, solo desde la PC
+del monitor (`sameOrigin` + `localRequest`): la configuración de canales e intervalos de la
+pantalla Canales (`datos.canales.json`, ADR 0005) y pedir un análisis a Claude (cola).
+Si se activa (`-claude-usd` > 0 y `CLAUDE_API_KEY`), el dashboard manda el **texto** de los
+mensajes de chat de cada programa (sin autores) a la API de Anthropic para resumirlos y
+agruparlos (ADR 0006). Sigue sin escribir en YouTube.
 
 ## Comandos exactos
 

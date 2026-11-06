@@ -188,28 +188,29 @@ func TestFlowAgainstFakeAPI(t *testing.T) {
 
 func TestNextChat(t *testing.T) {
 	now := time.Now()
+	one := map[string]chatGroup{"": {}} // sin Settings: un solo grupo, como antes
 	lives := []Video{{ID: "a"}, {ID: "b"}, {ID: "c"}}
 	chats := map[string]*chatState{
 		"a": {last: now.Add(-time.Minute)},
 		"b": {last: now.Add(-2 * time.Minute)},
 		"c": {last: now.Add(-3 * time.Minute), blocked: true},
 	}
-	if next, active := nextChat(lives, chats, now); next == nil || next.ID != "b" || active != 2 {
+	if next, active := nextChat(lives, chats, one, now); next == nil || next.ID != "b" || active != 2 {
 		t.Fatalf("nextChat = %v, %d; quería b, 2", next, active)
 	}
 	// Si YouTube pidió esperar más, le toca al otro.
 	chats["b"].wait = 5 * time.Minute
-	if next, _ := nextChat(lives, chats, now); next == nil || next.ID != "a" {
+	if next, _ := nextChat(lives, chats, one, now); next == nil || next.ID != "a" {
 		t.Fatalf("nextChat con espera = %v; quería a", next)
 	}
 	// Con el streaming abierto no hace falta leerlo, pero sigue contando como activo.
 	chats["b"].wait, chats["b"].open = 0, true
-	if next, active := nextChat(lives, chats, now); next == nil || next.ID != "a" || active != 2 {
+	if next, active := nextChat(lives, chats, one, now); next == nil || next.ID != "a" || active != 2 {
 		t.Fatalf("nextChat con streaming abierto = %v, %d; quería a, 2", next, active)
 	}
 	// Un vivo nuevo (nunca leído) va primero.
 	chats["d"] = &chatState{}
-	if next, active := nextChat(append(lives, Video{ID: "d"}), chats, now); next == nil || next.ID != "d" || active != 3 {
+	if next, active := nextChat(append(lives, Video{ID: "d"}), chats, one, now); next == nil || next.ID != "d" || active != 3 {
 		t.Fatalf("nextChat con vivo nuevo = %v, %d; quería d, 3", next, active)
 	}
 }
@@ -6836,6 +6837,10 @@ func TestEstimateQuota(t *testing.T) {
 		}, 1920, []int{2610, 1600}, 7130, true, "Entra en el día. Quedan 370 unidades antes de que se pause el chat"},
 		{"un canal en pausa no lee chat", 2, 0, []ChatGroup{day24, {PeakEvery: time.Minute, OffEvery: time.Minute, PeakHours: 13, OffHours: 11, Paused: true}},
 			1920, []int{5000, 0}, 7920, false, "No entra: faltan 420 unidades"},
+		{"un canal cada 30 s y otro en pausa (CA2.7 de la 012)", 2, 0, []ChatGroup{
+			{PeakEvery: 30 * time.Second, OffEvery: time.Minute, PeakHours: 13, OffHours: 11},
+			{PeakEvery: 30 * time.Second, OffEvery: time.Minute, PeakHours: 13, OffHours: 11, Paused: true},
+		}, 1920, []int{11100, 0}, 14020, false, "No entra: faltan 6.520 unidades"},
 	}
 	for _, c := range cases {
 		q := EstimateQuota(c.channels, c.cuts, c.groups, 9000)
@@ -6899,9 +6904,11 @@ func channelsServer(t *testing.T, now time.Time, two bool) *Server {
 	return &Server{st: st, budget: 9000, now: func() time.Time { return now }}
 }
 
-// TestChannelsPageReadOnly (CA1.14, CA1.15): Canales en solo lectura, con el
-// estado de cada canal y la cuota estimada.
-func TestChannelsPageReadOnly(t *testing.T) {
+// TestChannelsPageWithoutSettings (CA1.14, CA1.15 de la 010): sin Settings
+// (el Server de los tests de antes) Canales queda en solo lectura, con el
+// estado de cada canal y la cuota estimada con un solo grupo de chat. Con
+// Settings la cubre TestChannelsPage (CA2.8 de la 012).
+func TestChannelsPageWithoutSettings(t *testing.T) {
 	now := noonLocal(t)
 	hm := func(t time.Time) string { return t.Local().Format("15:04") }
 	cases := []struct {
@@ -7220,5 +7227,1100 @@ func TestLiveFoldHostileValues(t *testing.T) {
 	h.ServeHTTP(w, postClaude("canal=UC1&video=v1&ver=programa&horas=24&abrir="+enc, nil))
 	if body := w.Body.String(); strings.Contains(body, "onload") || strings.Contains(body, "alert(7)") || strings.Contains(body, "PREGUNTAS") {
 		t.Errorf("POST refleja un abrir inválido:\n%s", body)
+	}
+}
+
+// TestNextChatByChannel (CA2.1 de la 012): cada canal tiene su intervalo
+// entre dos conexiones o lecturas de sus vivos (que se turnan entre ellos);
+// los vivos sueltos usan el grupo "" (-chat-seg-pico / -chat-seg). Con now
+// fijo, cada caso llama a nextChat una vez tras otra y hace lo que hace el
+// worker con el elegido: el vivo y su canal quedan al día.
+func TestNextChatByChannel(t *testing.T) {
+	now := time.Date(2026, 11, 5, 12, 0, 0, 0, time.UTC)
+	ago := func(d time.Duration) time.Time { return now.Add(-d) }
+	type live struct {
+		id, channel   string
+		last, wait    time.Duration // last: hace cuánto se leyó (0 = nunca)
+		open, blocked bool
+	}
+	cases := []struct {
+		name   string
+		lives  []live
+		groups map[string]chatGroup
+		picks  []string // "" = ninguno listo
+		active int
+	}{
+		// Con un solo lastChat (hoy) el segundo nunca está listo en el mismo momento.
+		{"dos canales listos a la vez", []live{{id: "a", channel: "UCA", last: 2 * time.Minute}, {id: "b", channel: "UCB", last: time.Minute}},
+			map[string]chatGroup{"UCA": {last: ago(2 * time.Minute), every: time.Minute}, "UCB": {last: ago(time.Minute), every: time.Minute}, "": {every: time.Minute}},
+			[]string{"a", "b", ""}, 2},
+		{"dentro del canal, por turnos", []live{{id: "a1", channel: "UCA", last: 3 * time.Minute}, {id: "a2", channel: "UCA", last: time.Minute}},
+			map[string]chatGroup{"UCA": {last: ago(time.Minute), every: time.Minute}}, []string{"a1", ""}, 2},
+		{"el intervalo del canal no se cumplió", []live{{id: "a", channel: "UCA", last: 30 * time.Second}},
+			map[string]chatGroup{"UCA": {last: ago(30 * time.Second), every: time.Minute}}, []string{""}, 1},
+		{"respeta la espera de YouTube", []live{{id: "a", channel: "UCA", last: 2 * time.Minute, wait: 5 * time.Minute}, {id: "b", channel: "UCB", last: 2 * time.Minute}},
+			map[string]chatGroup{"UCA": {last: ago(2 * time.Minute), every: 30 * time.Second}, "UCB": {last: ago(2 * time.Minute), every: time.Hour}}, []string{""}, 2},
+		{"un canal en pausa no se elige", []live{{id: "a", channel: "UCA"}, {id: "b", channel: "UCB"}},
+			map[string]chatGroup{"UCA": {every: time.Minute, paused: true}, "UCB": {every: time.Minute}}, []string{"b", ""}, 2},
+		{"primero el canal más atrasado", []live{{id: "a", channel: "UCA", last: 61 * time.Minute}, {id: "b", channel: "UCB", last: 5 * time.Minute}},
+			map[string]chatGroup{"UCA": {last: ago(61 * time.Minute), every: time.Hour}, "UCB": {last: ago(5 * time.Minute), every: time.Minute}},
+			[]string{"b", "a", ""}, 2},
+		{"los sueltos usan el intervalo de los flags", []live{{id: "x", channel: "UCX", last: 2 * time.Minute}, {id: "a", channel: "UCA", last: 2 * time.Minute}},
+			map[string]chatGroup{"": {last: ago(2 * time.Minute), every: 3 * time.Minute}, "UCA": {last: ago(2 * time.Minute), every: time.Minute}},
+			[]string{"a", ""}, 2},
+		{"bloqueado o con el streaming abierto no se eligen", []live{{id: "a", channel: "UCA", blocked: true}, {id: "b", channel: "UCB", open: true}, {id: "c", channel: "UCC"}},
+			map[string]chatGroup{"UCA": {every: time.Minute}, "UCB": {every: time.Minute}, "UCC": {every: time.Minute}}, []string{"c", ""}, 2},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			var lives []Video
+			chats := map[string]*chatState{}
+			for _, l := range c.lives {
+				lives = append(lives, Video{ID: l.id, ChannelID: l.channel})
+				cs := &chatState{wait: l.wait, open: l.open, blocked: l.blocked}
+				if l.last > 0 {
+					cs.last = ago(l.last)
+				}
+				chats[l.id] = cs
+			}
+			groups := map[string]chatGroup{}
+			for k, g := range c.groups {
+				groups[k] = g
+			}
+			var got []string
+			for range c.picks {
+				next, active := nextChat(lives, chats, groups, now)
+				if active != c.active {
+					t.Errorf("activos = %d, quería %d", active, c.active)
+				}
+				if next == nil {
+					got = append(got, "")
+					continue
+				}
+				got = append(got, next.ID)
+				chats[next.ID].last = now
+				g := next.ChannelID
+				if _, ok := groups[g]; !ok {
+					g = ""
+				}
+				gr := groups[g]
+				gr.last = now
+				groups[g] = gr
+			}
+			if !slices.Equal(got, c.picks) {
+				t.Errorf("elige %q, quería %q", got, c.picks)
+			}
+		})
+	}
+}
+
+// TestLoadSettings (CA2.3): sin datos.canales.json valen -canal y los
+// intervalos × N (el gasto de hoy); con el archivo manda el archivo y los
+// flags pasados a mano se avisan; un archivo ilegible frena y no se pisa.
+func TestLoadSettings(t *testing.T) {
+	path := t.TempDir() + "/datos.canales.json"
+	flags := flagSettings([]string{"UCLAj5TzCrNbqe3LosSKHLcQ", "@rockandpop"}, 60, 180)
+	want := []ChannelSetting{{Input: "UCLAj5TzCrNbqe3LosSKHLcQ", ChatPeakSec: 120, ChatOffSec: 360}, {Input: "@rockandpop", ChatPeakSec: 120, ChatOffSec: 360}}
+	s, err := LoadSettings(path, flags, []string{"canal"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := s.Get(); !slices.Equal(got, want) || s.FromFile() || s.Warning() != "" {
+		t.Errorf("sin archivo = %+v, archivo %v, aviso %q; quería %+v", got, s.FromFile(), s.Warning(), want)
+	}
+	if one := flagSettings([]string{"UC1"}, 60, 180); !slices.Equal(one, []ChannelSetting{{Input: "UC1", ChatPeakSec: 60, ChatOffSec: 180}}) {
+		t.Errorf("con un canal = %+v, quería los flags sin multiplicar", one)
+	}
+	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("sin cambios no se escribe el archivo: %v", err)
+	}
+
+	file := `{"Channels":[{"Input":"@otra","ChatPeakSec":90,"ChatOffSec":300,"Paused":true}]}`
+	if err := os.WriteFile(path, []byte(file), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s, err = LoadSettings(path, flags, []string{"canal", "chat-seg"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, _ := s.Get()
+	if !slices.Equal(got, []ChannelSetting{{Input: "@otra", ChatPeakSec: 90, ChatOffSec: 300, Paused: true}}) || !s.FromFile() {
+		t.Errorf("con archivo = %+v (archivo %v)", got, s.FromFile())
+	}
+	for _, w := range []string{"-canal", "-chat-seg", "datos.canales.json", "Canales"} {
+		if !strings.Contains(s.Warning(), w) {
+			t.Errorf("el aviso %q no dice %q", s.Warning(), w)
+		}
+	}
+	if s, err := LoadSettings(path, flags, nil); err != nil || s.Warning() != "" {
+		t.Errorf("sin flags a mano: %v, aviso %q", err, s.Warning())
+	}
+
+	for _, bad := range []string{
+		"{roto",
+		`{"Channels":[]}`,
+		`{"Channels":[{"Input":"no es un canal","ChatPeakSec":60,"ChatOffSec":180}]}`,
+		`{"Channels":[{"Input":"UC1","ChatPeakSec":0,"ChatOffSec":180}]}`,
+		`{"Channels":[{"Input":"UC1","ChatPeakSec":60,"ChatOffSec":-30}]}`,
+		// más de maxChannels (5) canales
+		`{"Channels":[` + strings.TrimSuffix(strings.Repeat(`{"Input":"UC1","ChatPeakSec":60,"ChatOffSec":180},`, 6), ",") + `]}`,
+	} {
+		if err := os.WriteFile(path, []byte(bad), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		_, err := LoadSettings(path, flags, nil)
+		if err == nil || !strings.Contains(err.Error(), "datos.canales.json") || !strings.Contains(err.Error(), "borralo") {
+			t.Errorf("%s: error = %v, quería uno que diga qué hacer", bad, err)
+		}
+		if b, _ := os.ReadFile(path); string(b) != bad {
+			t.Errorf("%s: se pisó el archivo: %s", bad, b)
+		}
+	}
+}
+
+// TestSettingsUpdate (CA2.4): Update valida, guarda con tmp + os.Rename y
+// recién ahí cambia la configuración y la versión.
+func TestSettingsUpdate(t *testing.T) {
+	dir := t.TempDir()
+	path := dir + "/datos.canales.json"
+	// -chat-seg 900 está fuera de los permitidos: se conserva mientras no se cambie.
+	s, err := LoadSettings(path, []ChannelSetting{{Input: "UC1", ChatPeakSec: 60, ChatOffSec: 900}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	add := func(in string, peak, off int) func([]ChannelSetting) ([]ChannelSetting, error) {
+		return func(cs []ChannelSetting) ([]ChannelSetting, error) {
+			return append(cs, ChannelSetting{Input: in, ChatPeakSec: peak, ChatOffSec: off}), nil
+		}
+	}
+	edit := func(i, peak, off int, paused bool) func([]ChannelSetting) ([]ChannelSetting, error) {
+		return func(cs []ChannelSetting) ([]ChannelSetting, error) {
+			cs[i].ChatPeakSec, cs[i].ChatOffSec, cs[i].Paused = peak, off, paused
+			return cs, nil
+		}
+	}
+	cases := []struct {
+		name string
+		f    func([]ChannelSetting) ([]ChannelSetting, error)
+		want []ChannelSetting // nil: no se acepta y queda lo anterior
+	}{
+		{"pausar con un intervalo de los flags", edit(0, 60, 900, true), []ChannelSetting{{Input: "UC1", ChatPeakSec: 60, ChatOffSec: 900, Paused: true}}},
+		{"cambiarlo a otro fuera de rango", edit(0, 60, 660, true), nil},
+		{"agrega un link y queda el @handle", add("https://www.youtube.com/@Radio", 120, 300),
+			[]ChannelSetting{{Input: "UC1", ChatPeakSec: 60, ChatOffSec: 900, Paused: true}, {Input: "@Radio", ChatPeakSec: 120, ChatOffSec: 300}}},
+		{"repetido", add("@radio", 120, 300), nil},
+		{"no es un canal", add("hola mundo", 60, 180), nil},
+		{"handle con comillas", add(`@a"b`, 60, 180), nil},
+		{"no es múltiplo de 30 s", add("@b", 45, 180), nil},
+		{"menos de 30 s", add("@b", 0, 180), nil},
+		{"más de 10 min", add("@b", 60, 660), nil},
+		{"sin canales", func([]ChannelSetting) ([]ChannelSetting, error) { return nil, nil }, nil},
+		{"más de 5", func(cs []ChannelSetting) ([]ChannelSetting, error) {
+			for _, h := range []string{"@c", "@d", "@e", "@f"} {
+				cs = append(cs, ChannelSetting{Input: h, ChatPeakSec: 60, ChatOffSec: 180})
+			}
+			return cs, nil
+		}, nil},
+		{"la función falla", func([]ChannelSetting) ([]ChannelSetting, error) {
+			return nil, errors.New("no se puede quitar el único canal")
+		}, nil},
+		{"30 s y 10 min valen", edit(1, 30, 600, false),
+			[]ChannelSetting{{Input: "UC1", ChatPeakSec: 60, ChatOffSec: 900, Paused: true}, {Input: "@Radio", ChatPeakSec: 30, ChatOffSec: 600}}},
+	}
+	for _, c := range cases {
+		before, v := s.Get()
+		file, _ := os.ReadFile(path)
+		err := s.Update(c.f)
+		got, v2 := s.Get()
+		now, _ := os.ReadFile(path)
+		if c.want == nil {
+			if err == nil || !slices.Equal(got, before) || v2 != v || string(now) != string(file) {
+				t.Errorf("%s: err %v; quedó %+v (versión %d → %d)", c.name, err, got, v, v2)
+			}
+			continue
+		}
+		var saved struct{ Channels []ChannelSetting }
+		if jerr := json.Unmarshal(now, &saved); err != nil || jerr != nil || !slices.Equal(got, c.want) || v2 != v+1 || !slices.Equal(saved.Channels, c.want) {
+			t.Errorf("%s: err %v; quedó %+v (versión %d → %d), archivo %s", c.name, err, got, v, v2, now)
+		}
+	}
+	if _, err := os.Stat(path + ".tmp"); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("quedó el temporal: %v", err)
+	}
+	// Si no se puede guardar, devuelve el error y no cambia nada.
+	bad, err := LoadSettings(dir+"/no/existe/datos.canales.json", flagSettings([]string{"UC1"}, 60, 180), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := bad.Update(add("@b", 60, 180)); err == nil || !strings.Contains(err.Error(), "no se pudo guardar") {
+		t.Errorf("sin poder guardar: %v", err)
+	}
+	if got, v := bad.Get(); len(got) != 1 || v != 0 {
+		t.Errorf("sin poder guardar quedó %+v (versión %d)", got, v)
+	}
+}
+
+// postLocal arma un POST como lo manda htmx desde la PC del monitor.
+func postLocal(path, body string, edit func(r *http.Request)) *http.Request {
+	r := httptest.NewRequest("POST", "http://localhost:8080"+path, strings.NewReader(body))
+	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	r.Header.Set("HX-Request", "true")
+	r.Header.Set("Origin", "http://localhost:8080")
+	r.Header.Set("Sec-Fetch-Site", "same-origin")
+	r.RemoteAddr = "127.0.0.1:50000"
+	if edit != nil {
+		edit(r)
+	}
+	return r
+}
+
+// getLocal es un GET desde la PC del monitor (o desde otra, con remote).
+func getLocal(h http.Handler, path string) string {
+	r := httptest.NewRequest("GET", "http://localhost:8080"+path, nil)
+	r.RemoteAddr = "127.0.0.1:50000"
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	return w.Body.String()
+}
+
+// settingsServer es channelsServer con la configuración editable: Radio B y
+// Radio C resueltos (C en pausa, con un intervalo que no está en la lista),
+// @nueva todavía sin resolver y @mala que no existe.
+func settingsServer(t *testing.T, now time.Time) (*Server, string) {
+	t.Helper()
+	srv := channelsServer(t, now, true)
+	path := t.TempDir() + "/datos.canales.json"
+	s, err := LoadSettings(path, []ChannelSetting{
+		{Input: "@radiob", ChatPeakSec: 60, ChatOffSec: 180},
+		{Input: "UCC", ChatPeakSec: 90, ChatOffSec: 420, Paused: true},
+		{Input: "@nueva", ChatPeakSec: 300, ChatOffSec: 600},
+		{Input: "@mala", ChatPeakSec: 300, ChatOffSec: 600},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv.settings = s
+	srv.st.SetPending([]ChannelStatus{{Input: "@nueva"}, {Input: "@mala", Err: "no se encontró el canal @mala"}})
+	return srv, path
+}
+
+// TestChannelsPage (CA2.8): Canales editable desde la PC del monitor, en
+// solo lectura desde otra; la barra se recalcula sin escribir.
+func TestChannelsPage(t *testing.T) {
+	now := noonLocal(t)
+	srv, path := settingsServer(t, now)
+	h := srv.Routes()
+	body := getLocal(h, "/canales")
+	for _, s := range []string{
+		`<form id="canales-agregar"`, `hx-post="/canales/agregar"`, `<label class="lbl" for="nuevo">Agregar canal</label>`,
+		`placeholder="Link, @handle o ID del canal"`,
+		`<label class="lbl" for="pico-0">Actualizar el chat cada</label>`, `<label class="lbl" for="fuera-0">Fuera del pico, cada</label>`,
+		`<option value="30">30 s</option>`, `<option value="60" selected>1 min</option>`, `<option value="90">1 min 30 s</option>`,
+		`<option value="300">5 min</option>`, `<option value="180" selected>3 min</option>`, `<option value="600">10 min</option>`,
+		`<option value="90" selected>1 min 30 s</option>`, `<option value="420" selected>7 min</option>`,
+		"Cuota estimada de este chat: 5.000 unidades por día (sin historial)", "Cuota estimada de este chat: 0 unidades por día (en pausa)",
+		"Cuota estimada de este chat: 1.110 unidades por día (sin historial)",
+		`hx-post="/canales/pausar"`, ">Pausar</button>", ">Reanudar</button>", `hx-post="/canales/quitar"`,
+		`hx-confirm="¿Quitar Radio B? Lo guardado queda hasta que venza (30 días)."`,
+		"Los cambios se aplican sin reiniciar el monitor", `hx-get="/parcial/canales/form"`, ">Descartar</button>",
+		`hx-post="/canales"`, ">Guardar cambios</button>", `hx-get="/parcial/canales/cuota"`, `hx-include="#canales-form"`,
+		`hx-get="/parcial/canales/estado" hx-trigger="every 5s"`, "<strong>11.100</strong>", "No entra: faltan 3.600 unidades", "subí algún intervalo",
+		"Resolviendo…", "no se encontró el canal @mala", "Chat en pausa",
+	} {
+		if !strings.Contains(body, s) {
+			t.Errorf("loopback: falta %q", s)
+		}
+	}
+	// El formulario no se refresca solo: no pisa lo que se está editando.
+	if i := strings.Index(body, `<form id="canales-form"`); i < 0 || strings.Contains(body[i:i+strings.Index(body[i:], ">")], "every") {
+		t.Errorf("el formulario no tiene que refrescarse solo")
+	}
+	if strings.Contains(body, "Por ahora los canales y los intervalos se cambian con") {
+		t.Errorf("sigue el texto de solo lectura")
+	}
+	if t.Failed() {
+		t.Logf("canales:\n%s", body)
+	}
+
+	// Desde otra PC: el estado y ningún control.
+	far := getBody(h, "/canales")
+	if !strings.Contains(far, "Para cambiar la configuración, abrí el dashboard en la PC del monitor") || !strings.Contains(far, "<h3>Radio B</h3>") {
+		t.Errorf("desde otra PC falta el aviso o el estado:\n%s", far)
+	}
+	for _, s := range []string{"<form", "<input", "<select", "hx-post"} {
+		if strings.Contains(far, s) {
+			t.Errorf("desde otra PC no debería tener %q", s)
+		}
+	}
+
+	// La barra con lo elegido, sin guardar; un valor que no vale se ignora.
+	q := "/parcial/canales/cuota?canal=%40radiob&pico=300&fuera=600&canal=UCC&pico=90&fuera=420&canal=%40nueva&pico=45&fuera=600&canal=%40mala&pico=300&fuera=600"
+	cuota := getLocal(h, q)
+	for _, s := range []string{`id="canales-cuota"`, "<strong>7.210</strong>", "Entra en el día. Quedan 290 unidades",
+		`id="cuota-0" hx-swap-oob="true"`, "Cuota estimada de este chat: 1.110 unidades por día (sin historial)"} {
+		if !strings.Contains(cuota, s) {
+			t.Errorf("cuota: falta %q\n%s", s, cuota)
+		}
+	}
+	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("recalcular la cuota escribió el archivo: %v", err)
+	}
+	if got, _ := srv.settings.Get(); got[0].ChatPeakSec != 60 {
+		t.Errorf("recalcular la cuota cambió la configuración: %+v", got)
+	}
+	// Descartar vuelve a lo guardado.
+	if form := getLocal(h, "/parcial/canales/form"); !strings.Contains(form, `<form id="canales-form"`) || !strings.Contains(form, `<option value="60" selected>1 min</option>`) || strings.Contains(form, "<h1>") {
+		t.Errorf("descartar:\n%s", form)
+	}
+}
+
+// TestChannelsPostGuards (CA2.9): los POST de Canales pasan por sameOrigin y
+// localRequest de guard.go y tienen el cuerpo limitado; si no pasan, no se
+// toca datos.canales.json.
+func TestChannelsPostGuards(t *testing.T) {
+	now := noonLocal(t)
+	srv, path := settingsServer(t, now)
+	h := srv.Routes()
+	bad := []struct {
+		name string
+		edit func(r *http.Request)
+		code int
+	}{
+		{"sin HX-Request", func(r *http.Request) { r.Header.Del("HX-Request") }, 403},
+		{"otro Origin", func(r *http.Request) { r.Header.Set("Origin", "http://malo.example") }, 403},
+		{"sin Origin", func(r *http.Request) { r.Header.Del("Origin") }, 403},
+		{"cross-site", func(r *http.Request) { r.Header.Set("Sec-Fetch-Site", "cross-site") }, 403},
+		{"Host de afuera", func(r *http.Request) {
+			r.Host = "monitor.example:8080"
+			r.Header.Set("Origin", "http://monitor.example:8080")
+		}, 403},
+		{"desde otra PC", func(r *http.Request) { r.RemoteAddr = "192.168.0.10:5000" }, 403},
+	}
+	steps := []struct {
+		path, body string
+		ok         func([]ChannelSetting) bool
+	}{
+		{"/canales", "canal=%40radiob&pico=120&fuera=300&canal=UCC&pico=90&fuera=420&canal=%40nueva&pico=300&fuera=600&canal=%40mala&pico=300&fuera=600",
+			func(cs []ChannelSetting) bool { return cs[0].ChatPeakSec == 120 && cs[0].ChatOffSec == 300 }},
+		{"/canales/pausar", "objetivo=%40radiob", func(cs []ChannelSetting) bool { return cs[0].Paused }},
+		{"/canales/quitar", "objetivo=%40mala", func(cs []ChannelSetting) bool { return len(cs) == 3 }},
+		{"/canales/agregar", "nuevo=https%3A%2F%2Fwww.youtube.com%2F%40otra", func(cs []ChannelSetting) bool { return len(cs) == 4 && cs[3].Input == "@otra" }},
+	}
+	for _, st := range steps {
+		for _, b := range append(bad, struct {
+			name string
+			edit func(r *http.Request)
+			code int
+		}{"cuerpo de más de 16 KB", nil, 400}) {
+			before, _ := os.ReadFile(path)
+			w := httptest.NewRecorder()
+			body := st.body
+			if b.edit == nil {
+				body += "&x=" + strings.Repeat("a", 17<<10)
+			}
+			h.ServeHTTP(w, postLocal(st.path, body, b.edit))
+			after, _ := os.ReadFile(path)
+			if w.Code != b.code || string(after) != string(before) {
+				t.Errorf("%s %s: %d (quería %d), archivo cambiado: %v", st.path, b.name, w.Code, b.code, string(after) != string(before))
+			}
+		}
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, postLocal(st.path, st.body, nil))
+		got, _ := srv.settings.Get()
+		var saved struct{ Channels []ChannelSetting }
+		b, _ := os.ReadFile(path)
+		json.Unmarshal(b, &saved)
+		if w.Code != 200 || !st.ok(got) || !slices.Equal(saved.Channels, got) {
+			t.Errorf("%s válido: %d, quedó %+v, archivo %s\n%s", st.path, w.Code, got, b, w.Body.String())
+		}
+	}
+	// Lo que no vale se avisa en el formulario y no se guarda.
+	before, _ := os.ReadFile(path)
+	for _, c := range []struct{ path, body, want string }{
+		{"/canales/agregar", "nuevo=hola+mundo", "No reconozco el canal"},
+		{"/canales/agregar", "nuevo=%40otra", "ya está"},
+		{"/canales", "canal=%40radiob&pico=45&fuera=300", "No se guardó"},
+		{"/canales/quitar", "objetivo=%40noesta", "No se guardó"},
+	} {
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, postLocal(c.path, c.body, nil))
+		if after, _ := os.ReadFile(path); w.Code != 200 || !strings.Contains(w.Body.String(), c.want) || string(after) != string(before) {
+			t.Errorf("%s %s: %d, falta %q o cambió el archivo\n%s", c.path, c.body, w.Code, c.want, w.Body.String())
+		}
+	}
+	// No se puede quitar el último canal.
+	for _, in := range []string{"%40radiob", "UCC", "%40nueva"} {
+		h.ServeHTTP(httptest.NewRecorder(), postLocal("/canales/quitar", "objetivo="+in, nil))
+	}
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, postLocal("/canales/quitar", "objetivo=%40otra", nil))
+	if got, _ := srv.settings.Get(); len(got) != 1 || !strings.Contains(w.Body.String(), "No se puede quitar el único canal") {
+		t.Errorf("quitar el último: quedó %+v\n%s", got, w.Body.String())
+	}
+}
+
+// fakeChannelsAPI es una API falsa con dos canales: UCA ("Radio A", vivo a1
+// con el chat ka) y @b (UCB, "Radio B", vivo b1 con el chat kb). Cuenta la
+// cuota de lo que respondió, las conexiones por chat y qué listas se pidieron.
+type fakeChannelsAPI struct {
+	mu             sync.Mutex
+	units, handles int
+	opened, closed map[string]int
+	lists          []string
+	srv            *httptest.Server
+}
+
+func newFakeChannelsAPI(t *testing.T) *fakeChannelsAPI {
+	f := &fakeChannelsAPI{opened: map[string]int{}, closed: map[string]int{}}
+	now := time.Now().UTC().Format(time.RFC3339)
+	video := func(id, ch, name, prog, chat string) string {
+		return `{"id":"` + id + `","snippet":{"title":"` + strings.ToUpper(name) + ` en VIVO | ` + prog + `","channelId":"` + ch + `","channelTitle":"` + name +
+			`","publishedAt":"` + now + `","liveBroadcastContent":"live"},"statistics":{},"liveStreamingDetails":{"activeLiveChatId":"` + chat + `"}}`
+	}
+	f.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+		f.mu.Lock()
+		switch r.URL.Path {
+		case "/channels":
+			f.units++
+			switch {
+			case q.Get("id") == "UCA":
+				w.Write([]byte(`{"items":[{"id":"UCA","snippet":{"title":"Radio A"},"contentDetails":{"relatedPlaylists":{"uploads":"UUA"}}}]}`))
+			case q.Get("forHandle") == "@b":
+				f.handles++
+				w.Write([]byte(`{"items":[{"id":"UCB","snippet":{"title":"Radio B"},"contentDetails":{"relatedPlaylists":{"uploads":"UUB"}}}]}`))
+			case q.Get("forHandle") == "@a": // el mismo canal que UCA, por su @handle
+				f.handles++
+				w.Write([]byte(`{"items":[{"id":"UCA","snippet":{"title":"Radio A"},"contentDetails":{"relatedPlaylists":{"uploads":"UUA"}}}]}`))
+			case q.Get("forHandle") == "@caido": // YouTube falla con este pedido
+				f.handles++
+				w.WriteHeader(500)
+				w.Write([]byte(`{"error":{"code":500,"message":"backendError"}}`))
+			default:
+				if q.Get("forHandle") != "" {
+					f.handles++
+				}
+				w.Write([]byte(`{"items":[]}`))
+			}
+		case "/playlistItems":
+			f.units++
+			f.lists = append(f.lists, q.Get("playlistId"))
+			id := map[string]string{"UULVA": "a1", "UULVB": "b1"}[q.Get("playlistId")]
+			if id == "" {
+				w.Write([]byte(`{"items":[]}`))
+			} else {
+				w.Write([]byte(`{"items":[{"contentDetails":{"videoId":"` + id + `"}}]}`))
+			}
+		case "/videos":
+			f.units++
+			var out []string
+			for _, id := range strings.Split(q.Get("id"), ",") {
+				switch id {
+				case "a1":
+					out = append(out, video("a1", "UCA", "Radio A", "MAÑANA A", "ka"))
+				case "b1":
+					out = append(out, video("b1", "UCB", "Radio B", "TARDE B", "kb"))
+				}
+			}
+			w.Write([]byte(`{"items":[` + strings.Join(out, ",") + `]}`))
+		case "/liveChat/messages/stream":
+			f.units += 5
+			chat := q.Get("liveChatId")
+			f.opened[chat]++
+			w.Write([]byte("["))
+			w.(http.Flusher).Flush()
+			f.mu.Unlock()
+			<-r.Context().Done() // queda abierta hasta que el worker la corta
+			f.mu.Lock()
+			f.closed[chat]++
+		default:
+			w.WriteHeader(404)
+		}
+		f.mu.Unlock()
+	}))
+	return f
+}
+
+func (f *fakeChannelsAPI) count(m map[string]int, k string) int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return m[k]
+}
+
+func (f *fakeChannelsAPI) get() (units, handles int, lists []string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.units, f.handles, append([]string(nil), f.lists...)
+}
+
+// waitFor espera hasta d a que pase ok; si no, corta el test.
+func waitFor(t *testing.T, d time.Duration, what string, ok func() bool) {
+	t.Helper()
+	for end := time.Now().Add(d); time.Now().Before(end); time.Sleep(5 * time.Millisecond) {
+		if ok() {
+			return
+		}
+	}
+	t.Fatalf("no pasó en %s: %s", d, what)
+}
+
+// TestWorkerAppliesSettings (CA2.5, CA2.10): el worker toma los cambios de
+// Settings sin reiniciar; En vivo y Programas también.
+func TestWorkerAppliesSettings(t *testing.T) {
+	defer func(k time.Duration) { workerTick = k }(workerTick)
+	workerTick = 5 * time.Millisecond
+	var logs lockedLog
+	log.SetOutput(&logs)
+	defer log.SetOutput(os.Stderr)
+	f := newFakeChannelsAPI(t)
+	defer f.srv.Close()
+	st, err := OpenStore(t.TempDir() + "/datos.jsonl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, err := LoadSettings(t.TempDir()+"/datos.canales.json", flagSettings([]string{"UCA"}, 30, 30), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	yt := NewYouTube("k")
+	yt.BaseURL = f.srv.URL
+	stop := startWorker(t, yt, st, WorkerConfig{
+		Channels: []string{"UCA"}, Videos: 5, VideosEvery: 150 * time.Millisecond, CommentsEvery: time.Hour,
+		ChatEvery: time.Hour, ChatPeak: time.Hour, Budget: 9000, Settings: s,
+	})
+	defer stop()
+	waitFor(t, 3*time.Second, "chat de A abierto", func() bool { return f.count(f.opened, "ka") == 1 })
+
+	// Agregar: lo resuelve el worker (1 unidad con spend) y abre su chat.
+	if err := s.Update(func(cs []ChannelSetting) ([]ChannelSetting, error) {
+		return append(cs, ChannelSetting{Input: "@b", ChatPeakSec: 30, ChatOffSec: 30}), nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, 3*time.Second, "chat de B abierto", func() bool { return f.count(f.opened, "kb") == 1 })
+	if ch := st.Status().Channels; len(ch) != 2 || ch[0].ID != "UCA" || ch[1].ID != "UCB" || ch[1].Input != "@b" || ch[1].Name != "Radio B" {
+		t.Errorf("canales = %+v", ch)
+	}
+	if _, handles, _ := f.get(); handles != 1 {
+		t.Errorf("se pidió @b %d veces, quería 1", handles)
+	}
+	waitFor(t, 3*time.Second, "cuota sumada con spend", func() bool { u, _, _ := f.get(); return st.Units() == u })
+
+	// Pausar: corta el chat y no lo vuelve a abrir, pero sus vivos se siguen revisando.
+	setPaused := func(in string, p bool) {
+		t.Helper()
+		if err := s.Update(func(cs []ChannelSetting) ([]ChannelSetting, error) {
+			for i := range cs {
+				if cs[i].Input == in {
+					cs[i].Paused = p
+				}
+			}
+			return cs, nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	setPaused("@b", true)
+	waitFor(t, 3*time.Second, "chat de B cortado", func() bool { return f.count(f.closed, "kb") == 1 })
+	_, _, lists := f.get()
+	n := len(lists)
+	waitFor(t, 3*time.Second, "dos revisiones más con la lista de vivos de B", func() bool {
+		_, _, l := f.get()
+		return slices.Contains(l[n:], "UULVB") && len(l) >= n+6
+	})
+	if got := f.count(f.opened, "kb"); got != 1 {
+		t.Errorf("en pausa se abrió el chat de B %d veces", got)
+	}
+	if l := logs.String(); !strings.Contains(l, "chat de b1: chat en pausa desde Canales") || strings.Contains(l, "chat de b1: YouTube cerró") {
+		t.Errorf("el log de la pausa no lo dice:\n%s", l)
+	}
+	if ch := st.Status().Channels; len(ch) != 2 || !ch[1].Paused || ch[0].Paused {
+		t.Errorf("pausa en el estado = %+v", ch)
+	}
+	if ci := st.Status().ChatInfo["b1"]; !ci.Held {
+		t.Errorf("el chat de B no figura en pausa: %+v", ci)
+	}
+	srv := &Server{st: st, budget: 9000, settings: s}
+	if body := getBody(srv.Routes(), "/parcial/vivo/chat?canal=UCB&video=b1"); !strings.Contains(body, "Chat en pausa desde Canales") {
+		t.Errorf("En vivo no dice que el chat está en pausa:\n%s", body)
+	}
+	// Reanudar no saltea el intervalo del canal (30 s): la próxima conexión
+	// queda agendada dentro de ese intervalo.
+	setPaused("@b", false)
+	waitFor(t, 3*time.Second, "chat de B reanudado", func() bool {
+		ci := st.Status().ChatInfo["b1"]
+		return !ci.Held && ci.Gap == 30*time.Second && ci.Next.After(time.Now()) && time.Until(ci.Next) <= 30*time.Second
+	})
+
+	// Quitar el principal: corta su chat y pasa a serlo el siguiente.
+	if err := s.Update(func(cs []ChannelSetting) ([]ChannelSetting, error) { return cs[1:], nil }); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, 3*time.Second, "chat de A cortado", func() bool { return f.count(f.closed, "ka") == 1 })
+	waitFor(t, 3*time.Second, "B principal", func() bool {
+		snap := st.Status()
+		return len(snap.Channels) == 1 && snap.Channels[0].ID == "UCB" && snap.Channel == "Radio B"
+	})
+	_, _, lists = f.get()
+	n = len(lists)
+	waitFor(t, 3*time.Second, "revisión con las subidas de B", func() bool { _, _, l := f.get(); return slices.Contains(l[n:], "UUB") })
+	_, _, lists = f.get()
+	if slices.Contains(lists[n:], "UUA") || slices.Contains(lists[n:], "UULVA") || f.count(f.opened, "ka") != 1 {
+		t.Errorf("A se sigue revisando: %q", lists[n:])
+	}
+	if err := s.Update(func([]ChannelSetting) ([]ChannelSetting, error) { return nil, nil }); err == nil {
+		t.Errorf("se pudo quitar el último canal")
+	}
+
+	// En vivo ya no tiene el botón de A; sus programas siguen en Programas.
+	h := srv.Routes()
+	if body := getBody(h, "/parcial/vivo/canal"); !strings.Contains(body, "Radio B") || strings.Contains(body, "canal=UCA") || strings.Contains(body, "Radio A") {
+		t.Errorf("En vivo después de quitar A:\n%s", body)
+	}
+	if body := getBody(h, "/parcial/programas"); !strings.Contains(body, "MAÑANA A") || !strings.Contains(body, "TARDE B") {
+		t.Errorf("Programas después de quitar A:\n%s", body)
+	}
+}
+
+// TestWorkerChatPerChannel (CA2.2): cada canal con su intervalo; nunca dos
+// lecturas comunes en curso a la vez.
+func TestWorkerChatPerChannel(t *testing.T) {
+	defer func(k time.Duration) { workerTick = k }(workerTick)
+	workerTick = 10 * time.Millisecond
+	now := time.Now().UTC().Format(time.RFC3339)
+	var mu sync.Mutex
+	reqs := map[string]int{}
+	var inFlight, maxFlight atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+		switch r.URL.Path {
+		case "/channels":
+			id := q.Get("id")
+			w.Write([]byte(`{"items":[{"id":"` + id + `","snippet":{"title":"Radio ` + id + `"},"contentDetails":{"relatedPlaylists":{"uploads":"UU` + id + `"}}}]}`))
+		case "/playlistItems":
+			id := map[string]string{"UULVA": "va", "UULVB": "vb"}[q.Get("playlistId")]
+			if id == "" {
+				w.Write([]byte(`{"items":[]}`))
+				return
+			}
+			w.Write([]byte(`{"items":[{"contentDetails":{"videoId":"` + id + `"}}]}`))
+		case "/videos":
+			var out []string
+			for _, id := range strings.Split(q.Get("id"), ",") {
+				ch := strings.ToUpper(strings.TrimPrefix(id, "v"))
+				out = append(out, `{"id":"`+id+`","snippet":{"title":"VIVO `+id+`","channelId":"`+ch+`","channelTitle":"Radio `+ch+`","publishedAt":"`+now+
+					`","liveBroadcastContent":"live"},"statistics":{},"liveStreamingDetails":{"activeLiveChatId":"k`+id+`"}}`)
+			}
+			w.Write([]byte(`{"items":[` + strings.Join(out, ",") + `]}`))
+		case "/liveChat/messages/stream":
+			mu.Lock()
+			reqs[q.Get("liveChatId")]++
+			mu.Unlock()
+			w.WriteHeader(404) // sin tiempo real: se lee por turnos
+		case "/liveChat/messages":
+			if n := inFlight.Add(1); n > maxFlight.Load() {
+				maxFlight.Store(n)
+			}
+			mu.Lock()
+			reqs[q.Get("liveChatId")]++
+			mu.Unlock()
+			time.Sleep(5 * time.Millisecond)
+			inFlight.Add(-1)
+			w.Write([]byte(`{"pollingIntervalMillis":1,"items":[]}`))
+		default:
+			w.WriteHeader(404)
+		}
+	}))
+	defer srv.Close()
+	st, err := OpenStore(t.TempDir() + "/datos.jsonl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A cada 1 s (los intervalos se guardan en segundos) y B cada 1 h.
+	s, err := LoadSettings(t.TempDir()+"/datos.canales.json", []ChannelSetting{
+		{Input: "A", ChatPeakSec: 1, ChatOffSec: 1}, {Input: "B", ChatPeakSec: 3600, ChatOffSec: 3600}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	yt := NewYouTube("k")
+	yt.BaseURL = srv.URL
+	stop := startWorker(t, yt, st, WorkerConfig{
+		Channels: []string{"A", "B"}, Videos: 5, VideosEvery: time.Hour, CommentsEvery: time.Hour,
+		ChatEvery: time.Hour, ChatPeak: time.Hour, Budget: 9000, Settings: s,
+	})
+	time.Sleep(3500 * time.Millisecond)
+	stop()
+	mu.Lock()
+	a, b := reqs["kva"], reqs["kvb"]
+	mu.Unlock()
+	if a < 3 || b != 1 {
+		t.Errorf("conexiones o lecturas: A %d (quería al menos 3), B %d (quería 1)", a, b)
+	}
+	if m := maxFlight.Load(); m > 1 {
+		t.Errorf("hubo %d lecturas comunes a la vez", m)
+	}
+}
+
+// TestChannelsAddDoesNotCallAPI (CA2.6): agregar un @handle no llama a
+// YouTube desde el handler; lo resuelve el worker, o anota que no existe.
+func TestChannelsAddDoesNotCallAPI(t *testing.T) {
+	defer func(k time.Duration) { workerTick = k }(workerTick)
+	workerTick = 5 * time.Millisecond
+	f := newFakeChannelsAPI(t)
+	defer f.srv.Close()
+	st, err := OpenStore(t.TempDir() + "/datos.jsonl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, err := LoadSettings(t.TempDir()+"/datos.canales.json", flagSettings([]string{"UCA"}, 60, 180), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := (&Server{st: st, budget: 9000, settings: s}).Routes()
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, postLocal("/canales/agregar", "nuevo=%40x", nil))
+	if u, handles, _ := f.get(); w.Code != 200 || u != 0 || handles != 0 {
+		t.Fatalf("agregar: %d, el falso recibió %d unidades y %d handles\n%s", w.Code, u, handles, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "@x") {
+		t.Errorf("la respuesta no tiene el canal nuevo:\n%s", w.Body.String())
+	}
+	if body := getLocal(h, "/parcial/canales/estado"); !strings.Contains(body, "@x") || !strings.Contains(body, "Resolviendo…") {
+		t.Errorf("sin worker tiene que quedar resolviendo:\n%s", body)
+	}
+	yt := NewYouTube("k")
+	yt.BaseURL = f.srv.URL
+	stop := startWorker(t, yt, st, WorkerConfig{
+		Channels: []string{"UCA"}, Videos: 5, VideosEvery: 100 * time.Millisecond, CommentsEvery: time.Hour,
+		ChatEvery: time.Hour, ChatPeak: time.Hour, Budget: 9000, Settings: s,
+	})
+	defer stop()
+	waitFor(t, 3*time.Second, "el worker anota que @x no existe", func() bool {
+		p := st.Status().Pending
+		return len(p) == 1 && p[0].Input == "@x" && p[0].Err != ""
+	})
+	// No se insiste: el pedido de @x se hace una sola vez.
+	_, _, lists := f.get()
+	n := len(lists)
+	waitFor(t, 3*time.Second, "otra revisión", func() bool { _, _, l := f.get(); return len(l) >= n+4 })
+	if _, handles, _ := f.get(); handles != 1 {
+		t.Errorf("se pidió @x %d veces", handles)
+	}
+	if body := getLocal(h, "/parcial/canales/estado"); !strings.Contains(body, "no se encontró el canal @x") || !strings.Contains(body, "<h3>Radio A</h3>") {
+		t.Errorf("estado:\n%s", body)
+	}
+}
+
+// TestSettingsRejectsHostileInputs (CA2.4, tester): nada con comillas, HTML,
+// espacios o saltos de línea llega a la configuración ni al archivo.
+func TestSettingsRejectsHostileInputs(t *testing.T) {
+	path := t.TempDir() + "/datos.canales.json"
+	s, err := LoadSettings(path, flagSettings([]string{"UC1"}, 60, 180), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, in := range []string{
+		`@a"b`, `@a'b`, `@<script>alert(1)</script>`, `<b>@x</b>`, "@a b", "UC1 UC2", "@a\nb", "UCx\"y", `UC"><img src=x>`,
+		"@", "UC", "@a/b", "javascript:alert(1)", "", "   ",
+	} {
+		err := s.Update(func(cs []ChannelSetting) ([]ChannelSetting, error) {
+			return append(cs, ChannelSetting{Input: in, ChatPeakSec: 60, ChatOffSec: 180}), nil
+		})
+		if err == nil {
+			t.Errorf("%q: se aceptó", in)
+		}
+	}
+	if got, v := s.Get(); len(got) != 1 || v != 0 {
+		t.Errorf("quedó %+v (versión %d)", got, v)
+	}
+	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("se escribió el archivo: %v", err)
+	}
+	// Mismo rechazo por el handler, sin escribir el archivo.
+	srv := &Server{st: mustStore(t), budget: 9000, settings: s}
+	h := srv.Routes()
+	for _, in := range []string{"%40a%22b", "%3Cscript%3E", "%40a+b", "%40a%0Ab"} {
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, postLocal("/canales/agregar", "nuevo="+in, nil))
+		if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) || strings.Contains(w.Body.String(), "<script>") {
+			t.Errorf("%s: archivo %v\n%s", in, err, w.Body.String())
+		}
+	}
+}
+
+func mustStore(t *testing.T) *Store {
+	t.Helper()
+	st, err := OpenStore(t.TempDir() + "/datos.jsonl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return st
+}
+
+// TestSettingsConcurrent (CA2.4/CA2.5, tester): Update en paralelo con quien
+// lee (como el worker en cada tick); se corre con -race.
+func TestSettingsConcurrent(t *testing.T) {
+	s, err := LoadSettings(t.TempDir()+"/datos.canales.json", flagSettings([]string{"UC1", "@b"}, 60, 180), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wg sync.WaitGroup
+	stop := make(chan struct{})
+	for i := 0; i < 4; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			lastV := -1
+			for {
+				select {
+				case <-stop:
+					return
+				default:
+				}
+				cs, v := s.Get()
+				if len(cs) == 0 || v < lastV {
+					t.Errorf("lectura inconsistente: %d canales, versión %d tras %d", len(cs), v, lastV)
+					return
+				}
+				lastV = v
+				s.FromFile()
+				s.Warning()
+			}
+		}()
+	}
+	for i := 0; i < 50; i++ {
+		p := i%2 == 0
+		if err := s.Update(func(cs []ChannelSetting) ([]ChannelSetting, error) {
+			cs[0].Paused = p
+			return cs, nil
+		}); err != nil {
+			t.Error(err)
+		}
+	}
+	close(stop)
+	wg.Wait()
+	if _, v := s.Get(); v != 50 {
+		t.Errorf("versión %d, quería 50", v)
+	}
+}
+
+// TestChannelsPostWithoutSettings (CA2.12, tester): sin Settings (modo
+// informe o dashboard viejo) los POST de Canales no escriben ni rompen.
+func TestChannelsPostWithoutSettings(t *testing.T) {
+	dir := t.TempDir()
+	st, err := OpenStore(dir + "/datos.jsonl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := (&Server{st: st, budget: 9000}).Routes()
+	for _, p := range []string{"/canales", "/canales/agregar", "/canales/pausar", "/canales/quitar"} {
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, postLocal(p, "nuevo=%40x&objetivo=%40x", nil))
+		if w.Code != http.StatusNotFound {
+			t.Errorf("%s: %d, quería 404 (no hay configuración editable)", p, w.Code)
+		}
+	}
+	if _, err := os.Stat(settingsPath(dir + "/datos.jsonl")); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("se escribió %s: %v", settingsPath(dir+"/datos.jsonl"), err)
+	}
+}
+
+// TestSettingsReloadKeepsFlagIntervals (bloqueante 1 del reviewer): un
+// intervalo heredado de los flags que no está en la lista (900, 75) se
+// conserva al pausar y el monitor vuelve a arrancar con ese archivo.
+func TestSettingsReloadKeepsFlagIntervals(t *testing.T) {
+	path := t.TempDir() + "/datos.canales.json"
+	flags := []ChannelSetting{{Input: "UC1", ChatPeakSec: 75, ChatOffSec: 900}, {Input: "@otra", ChatPeakSec: 60, ChatOffSec: 720}}
+	s, err := LoadSettings(path, flags, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Update(func(cs []ChannelSetting) ([]ChannelSetting, error) { cs[0].Paused = true; return cs, nil }); err != nil {
+		t.Fatalf("pausar: %v", err)
+	}
+	again, err := LoadSettings(path, nil, nil)
+	if err != nil {
+		t.Fatalf("no arranca con lo que guardó: %v", err)
+	}
+	want := []ChannelSetting{{Input: "UC1", ChatPeakSec: 75, ChatOffSec: 900, Paused: true}, {Input: "@otra", ChatPeakSec: 60, ChatOffSec: 720}}
+	if got, _ := again.Get(); !slices.Equal(got, want) {
+		t.Errorf("al volver a arrancar = %+v, quería %+v", got, want)
+	}
+	// Lo estricto sigue valiendo para lo que cambia después de arrancar.
+	if err := again.Update(func(cs []ChannelSetting) ([]ChannelSetting, error) { cs[1].ChatOffSec = 660; return cs, nil }); err == nil {
+		t.Errorf("aceptó cambiar a 660 s")
+	}
+	if err := again.Update(func(cs []ChannelSetting) ([]ChannelSetting, error) { cs[1].Paused = true; return cs, nil }); err != nil {
+		t.Errorf("después de arrancar, pausar con 720 s: %v", err)
+	}
+}
+
+// TestProgramsKeepRemovedAfterRestart (CA2.10, importante 2 del reviewer):
+// los programas de un canal que ya no está en la configuración siguen en
+// Programas después de reiniciar, sacados de datos.vivos.jsonl.
+func TestProgramsKeepRemovedAfterRestart(t *testing.T) {
+	now := noonLocal(t)
+	path := t.TempDir() + "/datos.jsonl"
+	st, err := OpenStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, sm := range append(livesEvery("a1", "UCA", "Radio A", "RADIO A en VIVO | MAÑANA A", now.Add(-3*time.Hour), now.Add(-2*time.Hour)),
+		livesEvery("b1", "UCB", "Radio B", "RADIO B en VIVO | TARDE B", now.Add(-time.Hour), now.Add(-time.Minute))...) {
+		st.AddLives(sm.At, []Video{{ID: sm.VideoID, ChannelID: sm.ChannelID, Channel: sm.Channel, Title: sm.Title, LiveStatus: "live"}})
+	}
+	// Reinicio: un Store nuevo con el mismo archivo y solo B configurado.
+	st, err = OpenStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st.SetChannels([]ChannelStatus{{ID: "UCB", Name: "Radio B", Input: "@b", Live: true}})
+	st.SetVideos("Radio B", []Video{{ID: "b1", ChannelID: "UCB", Channel: "Radio B", Title: "RADIO B en VIVO | TARDE B", LiveStatus: "live"}})
+	h := (&Server{st: st, budget: 9000, now: func() time.Time { return now }}).Routes()
+	body := getBody(h, "/parcial/programas")
+	for _, want := range []string{"MAÑANA A", "Radio A", "TARDE B"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("Programas después de reiniciar: falta %q", want)
+		}
+	}
+	if body := getBody(h, "/parcial/programas?canal=UCA"); !strings.Contains(body, "MAÑANA A") || strings.Contains(body, "TARDE B") {
+		t.Errorf("filtrando por el canal quitado:\n%s", body)
+	}
+	if t.Failed() {
+		t.Logf("programas:\n%s", body)
+	}
+}
+
+// TestChannelsQuotaLooseLives (importante 3 del reviewer): un vivo suelto de
+// -vivos que no es de un canal configurado lee su chat aparte, con
+// -chat-seg-pico / -chat-seg: la cuota estimada lo suma.
+func TestChannelsQuotaLooseLives(t *testing.T) {
+	now := noonLocal(t)
+	srv, _ := settingsServer(t, now)
+	snap := srv.st.Status()
+	srv.st.SetVideos(snap.Channel, append(snap.Videos, Video{ID: "x1", ChannelID: "UCX", Channel: "Otra", Title: "Otra en VIVO", LiveStatus: "live", LiveChatID: "cx1"}))
+	body := getLocal(srv.Routes(), "/canales")
+	// 11.100 de los cuatro canales + 5.000 del vivo suelto (cada 1 min en el pico y 3 fuera, 24 h).
+	for _, want := range []string{"<strong>16.100</strong>", "Vivos sueltos de -vivos · 5.000", "No entra: faltan 8.600 unidades"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("falta %q", want)
+		}
+	}
+	if t.Failed() {
+		i := strings.Index(body, `id="canales-cuota"`)
+		t.Logf("cuota:\n%s", body[max(i, 0):])
+	}
+}
+
+// TestWorkerDuplicateChannel (menor 4 del reviewer): un @handle que resulta
+// ser un canal que ya está no se suma dos veces: queda anotado.
+func TestWorkerDuplicateChannel(t *testing.T) {
+	defer func(k time.Duration) { workerTick = k }(workerTick)
+	workerTick = 5 * time.Millisecond
+	f := newFakeChannelsAPI(t)
+	defer f.srv.Close()
+	st := mustStore(t)
+	s, err := LoadSettings(t.TempDir()+"/datos.canales.json", []ChannelSetting{{Input: "UCA", ChatPeakSec: 30, ChatOffSec: 30}, {Input: "@a", ChatPeakSec: 30, ChatOffSec: 30}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	yt := NewYouTube("k")
+	yt.BaseURL = f.srv.URL
+	stop := startWorker(t, yt, st, WorkerConfig{Videos: 5, VideosEvery: 100 * time.Millisecond, CommentsEvery: time.Hour,
+		ChatEvery: time.Hour, ChatPeak: time.Hour, Budget: 9000, Settings: s})
+	defer stop()
+	waitFor(t, 3*time.Second, "@a anotado como repetido", func() bool {
+		p := st.Status().Pending
+		return len(p) == 1 && p[0].Input == "@a" && strings.Contains(p[0].Err, "ya está como Radio A")
+	})
+	_, _, lists := f.get()
+	n := len(lists)
+	waitFor(t, 3*time.Second, "otra revisión", func() bool { _, _, l := f.get(); return len(l) >= n+4 })
+	_, handles, lists := f.get()
+	if ch := st.Status().Channels; len(ch) != 1 || ch[0].ID != "UCA" || handles != 1 {
+		t.Errorf("canales = %+v, @a pedido %d veces", ch, handles)
+	}
+	// La lista de vivos de A se pide una vez por revisión, no dos.
+	for i := n; i+1 < len(lists); i++ {
+		if lists[i] == "UULVA" && lists[i+1] == "UULVA" {
+			t.Errorf("A se revisa dos veces por revisión: %q", lists[n:])
+			break
+		}
+	}
+}
+
+// TestWorkerLookupFailureKeepsOthers (menor 8 del reviewer): si YouTube
+// falla al buscar un canal nuevo (no es "no se encontró"), los demás se
+// siguen revisando y solo ese se vuelve a pedir en la revisión siguiente.
+func TestWorkerLookupFailureKeepsOthers(t *testing.T) {
+	defer func(k time.Duration) { workerTick = k }(workerTick)
+	workerTick = 5 * time.Millisecond
+	f := newFakeChannelsAPI(t)
+	defer f.srv.Close()
+	st := mustStore(t)
+	s, err := LoadSettings(t.TempDir()+"/datos.canales.json", []ChannelSetting{{Input: "UCA", ChatPeakSec: 30, ChatOffSec: 30}, {Input: "@caido", ChatPeakSec: 30, ChatOffSec: 30}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	yt := NewYouTube("k")
+	yt.BaseURL = f.srv.URL
+	stop := startWorker(t, yt, st, WorkerConfig{Videos: 5, VideosEvery: 100 * time.Millisecond, CommentsEvery: time.Hour,
+		ChatEvery: time.Hour, ChatPeak: time.Hour, Budget: 9000, Settings: s})
+	defer stop()
+	waitFor(t, 3*time.Second, "chat de A abierto aunque @caido falle", func() bool { return f.count(f.opened, "ka") == 1 })
+	waitFor(t, 3*time.Second, "@caido se vuelve a pedir", func() bool { _, h, _ := f.get(); return h >= 2 })
+	snap := st.Status()
+	if len(snap.Channels) != 1 || snap.Channels[0].ID != "UCA" || len(snap.Pending) != 1 || snap.Pending[0].Err != "" || !strings.Contains(snap.LastErr, "@caido") {
+		t.Errorf("canales %+v, pendientes %+v, error %q", snap.Channels, snap.Pending, snap.LastErr)
+	}
+	// Sin el reintento rápido de 30 s: las revisiones siguen cada VideosEvery.
+	units, _, _ := f.get()
+	if units > 200 {
+		t.Errorf("gastó %d unidades: ¿reintenta todo seguido?", units)
+	}
+}
+
+// Un vivo suelto sin chat no suma cuota: el worker no lo lee (revisión 2 de F2).
+func TestChannelsQuotaLooseWithoutChat(t *testing.T) {
+	now := noonLocal(t)
+	srv, _ := settingsServer(t, now)
+	snap := srv.st.Status()
+	srv.st.SetVideos(snap.Channel, append(snap.Videos, Video{ID: "x1", ChannelID: "UCX", Channel: "Otra", Title: "Otra en VIVO", LiveStatus: "live"}))
+	if body := getLocal(srv.Routes(), "/canales"); strings.Contains(body, "Vivos sueltos de -vivos") {
+		t.Error("un vivo sin chat no debería sumar el grupo de vivos sueltos")
+	}
+}
+
+// programChannels distingue los vivos sueltos de los canales quitados y no
+// marca nada mientras haya canales sin resolver (revisión 2 de F2).
+func TestProgramChannelsLabels(t *testing.T) {
+	samples := []LiveSample{
+		{VideoID: "a1", ChannelID: "UCA", Channel: "Radio A"},
+		{VideoID: "q1", ChannelID: "UCQ", Channel: "Quitado"},
+		{VideoID: "s1", ChannelID: "UCS", Channel: "Suelto"},
+	}
+	base := Snapshot{
+		Channels: []ChannelStatus{{ID: "UCA", Name: "Radio A"}},
+		Videos:   []Video{{ID: "s1", ChannelID: "UCS", LiveStatus: "live"}},
+	}
+	pending := base
+	pending.Pending = []ChannelStatus{{Name: "@nuevo"}}
+	for _, tc := range []struct {
+		name string
+		snap Snapshot
+		want []string
+	}{
+		{"resueltos", base, []string{"Radio A", "Quitado (no está en Canales)", "Suelto (vivo suelto)"}},
+		{"con pendientes", pending, []string{"Radio A", "Quitado", "Suelto (vivo suelto)"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var got []string
+			for _, c := range programChannels(tc.snap, samples) {
+				got = append(got, c.Name)
+			}
+			if !slices.Equal(got, tc.want) {
+				t.Errorf("nombres = %q, quería %q", got, tc.want)
+			}
+		})
 	}
 }
