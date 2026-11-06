@@ -13,10 +13,10 @@ binario: informe puntual (`go run .`) y continuo con dashboard htmx de tres pant
 En vivo, Programas de hoy y Canales (`-dashboard :8080`).
 No publica, no modera, no usa OAuth. El dashboard escribe en dos puntos, solo desde la PC
 del monitor (`sameOrigin` + `localRequest`): la configuración de canales e intervalos de la
-pantalla Canales (`datos.canales.json`, ADR 0005) y pedir un análisis a Claude (cola).
-Si se activa (`-claude-usd` > 0 y `CLAUDE_API_KEY`), el dashboard manda el **texto** de los
-mensajes de chat de cada programa (sin autores) a la API de Anthropic para resumirlos y
-agruparlos (ADR 0006). Sigue sin escribir en YouTube.
+pantalla Canales, incluida la tarjeta de Claude (`datos.canales.json`, ADR 0005 y 0009), y pedir un análisis a Claude (cola).
+Si se activa (`CLAUDE_API_KEY` y un tope > 0, de `-claude-usd` o de Canales), el dashboard
+manda el **texto** de los mensajes de chat (sin autores) a la API de Anthropic para resumir
+cada programa (ADR 0006) y etiquetar el chat en tandas (ADR 0009). Sigue sin escribir en YouTube.
 
 ## Comandos exactos
 
@@ -43,7 +43,8 @@ solo por eso, el arreglo es actualizar Go, no el código. Decilo en el PR.
 
 Prohibido sin pedido explícito del usuario: `go run .` contra la API real (gasta cuota
 compartida, escribe `informes/` y `datos.jsonl`), cualquier corrida con `-claude-usd` > 0
-contra la API real de Anthropic (gasta plata y manda mensajes de usuarios) y cualquier
+(o con un tope guardado en Canales) contra la API real de Anthropic (gasta plata y manda
+mensajes de usuarios; las tandas gastan todo el día) y cualquier
 `-dashboard` que quede corriendo, salvo la vista previa del paso 7b de `/factory` o la de
 `/implementar` (`go run ./tools/preview`), que la persona pide (correr `/implementar` ya es el pedido), usa una copia temporal y una API de
 YouTube y de Claude simulada (saca las dos claves del entorno) y se corta con `-cortar`
@@ -170,7 +171,7 @@ solo, `/factory`.
   toca el dashboard o lo que muestra): `go run ./tools/preview -datos <checkout
   principal>/datos.jsonl` levanta la rama en `http://localhost:8081` con una copia
   temporal de los datos (`datos.jsonl`, `datos.cuota.json`, `datos.espectadores.jsonl`,
-  `datos.vivos.jsonl` y `datos.analisis.jsonl`; no `datos.claude.json` ni
+  `datos.vivos.jsonl`, `datos.analisis.jsonl` y `datos.etiquetas.jsonl`; no `datos.claude.json` ni
   `datos.canales.json`) y una API simulada; `go run ./tools/preview -cortar` la corta y
   borra la copia. Siempre se corta antes de cerrar la tarea.
 - Modelo y esfuerzo fijos en el frontmatter de cada agente (no heredan la sesión):

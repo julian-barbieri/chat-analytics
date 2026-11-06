@@ -93,6 +93,9 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /canales/agregar", s.channelsAdd)
 	mux.HandleFunc("POST /canales/pausar", s.channelsPause)
 	mux.HandleFunc("POST /canales/quitar", s.channelsRemove)
+	mux.HandleFunc("POST /canales/claude", s.channelsClaude)
+	mux.HandleFunc("GET /parcial/canales/claude", s.channelsClaudeState)
+	mux.HandleFunc("GET /parcial/canales/claude/proyeccion", s.channelsClaudeProj)
 	mux.HandleFunc("POST /claude/analizar", s.claudeAnalyze)
 	mux.HandleFunc("GET /export.csv", s.export)
 	mux.Handle("GET /static/", http.FileServerFS(staticFS))
@@ -915,7 +918,7 @@ func (s *Server) channelAnalysis(w http.ResponseWriter, snap Snapshot, ch Channe
 
 // claudeLine es la línea de Claude debajo del selector, con el análisis activo.
 func (s *Server) claudeLine(snap Snapshot, canal string, now time.Time) string {
-	if s.analyst == nil || snap.Claude.Off != "" {
+	if s.analyst == nil || snap.Claude.Off != "" || snap.Claude.Tope <= 0 {
 		return ""
 	}
 	var last time.Time
@@ -1543,6 +1546,10 @@ type claudeInput struct {
 
 const claudeOffText = "El análisis con Claude está apagado. Para activarlo, mirá la sección del README."
 
+// claudeZeroText: con la clave cargada el analista corre, pero con tope 0 no
+// manda nada (ADR 0009).
+const claudeZeroText = "El análisis con Claude está apagado: el tope de gasto es US$ 0. Para activarlo, poné un tope en Canales."
+
 // claudeView arma la tarjeta 7: con "Programa en curso", el último análisis
 // del tramo al aire y el botón; con "Todo el día", un bloque por programa.
 func claudeView(in claudeInput) ClaudeCard {
@@ -1559,6 +1566,8 @@ func claudeView(in claudeInput) ClaudeCard {
 		return ClaudeCard{Title: title, Off: claudeOffText}
 	case st.Off != "":
 		return ClaudeCard{Title: title, Off: "El análisis con Claude se apagó hasta reiniciar el monitor. " + st.Off}
+	case st.Tope <= 0:
+		return ClaudeCard{Title: title, Off: claudeZeroText}
 	case in.Canal == "":
 		return ClaudeCard{Title: title, Off: "El análisis con Claude es por canal: elegí el botón del canal para verlo."}
 	case in.Ver == "dia":
@@ -1753,7 +1762,7 @@ func (s *Server) channelsPage(w http.ResponseWriter, r *http.Request) {
 	edit := s.editable(r)
 	data := s.channelsData(snap, now, edit)
 	data["Tab"], data["Channel"] = "canales", snap.Channel
-	data["Claude"] = s.claudeSetup(snap, now)
+	data["Claude"] = s.claudeSetupFull(r, snap, now)
 	data["FastEvery"], data["FastFor"], data["FastMax"] = humanDur(fastEvery), humanDur(fastFor), fastUnitsPerCut()
 	every := 3 * time.Minute
 	for _, c := range snap.Channels {
@@ -2060,6 +2069,11 @@ func (s *Server) channelsQuota(w http.ResponseWriter, r *http.Request) {
 // settingsPost son las guardas de los POST de Canales: mismo origen, desde
 // la PC del monitor y un cuerpo chico. Si devuelve false ya respondió.
 func (s *Server) settingsPost(w http.ResponseWriter, r *http.Request) bool {
+	return s.settingsPostN(w, r, 16<<10)
+}
+
+// settingsPostN es settingsPost con otro límite de cuerpo.
+func (s *Server) settingsPostN(w http.ResponseWriter, r *http.Request, limit int64) bool {
 	if s.settings == nil {
 		http.NotFound(w, r)
 		return false
@@ -2068,7 +2082,7 @@ func (s *Server) settingsPost(w http.ResponseWriter, r *http.Request) bool {
 		http.Error(w, "Para cambiar la configuración, abrí el dashboard en la PC del monitor.", http.StatusForbidden)
 		return false
 	}
-	r.Body = http.MaxBytesReader(w, r.Body, 16<<10)
+	r.Body = http.MaxBytesReader(w, r.Body, limit)
 	if err := r.ParseForm(); err != nil {
 		http.Error(w, "Pedido inválido.", http.StatusBadRequest)
 		return false
@@ -2214,6 +2228,46 @@ type ClaudeSetup struct {
 	Chip, ChipClass    string
 	Model, Tope, Spent string
 	Last, Warn         string
+	// Con Settings y la clave cargada: las tandas (ADR 0009). Form solo
+	// desde la PC del monitor; si no, Text con los valores.
+	Realtime bool
+	Form     *ClaudeForm
+	Text     string
+	State    ClaudeState
+}
+
+// ClaudeForm es el formulario de la tarjeta de Claude en Canales.
+type ClaudeForm struct {
+	Models, Batches           []claudeOpt
+	Tope                      string
+	Channels                  []claudeCheck
+	Summary                   string
+	Projection                ClaudeProj
+	Notice, NoticeClass, Warn string
+}
+
+type claudeOpt struct {
+	Value, Label string
+	Selected     bool
+}
+
+type claudeCheck struct {
+	Input, Name string
+	On          bool
+}
+
+// ClaudeProj es la proyección de gasto al lado del modelo de tiempo real.
+type ClaudeProj struct {
+	Text string
+	Fits bool
+}
+
+// ClaudeState son las tres tarjetas de estado de las tandas.
+type ClaudeState struct {
+	Analyzed, AnalyzedSub string
+	Spend, SpendSub       string
+	Last, LastSub         string
+	Note, NoteClass       string
 }
 
 func (s *Server) claudeSetup(snap Snapshot, now time.Time) ClaudeSetup {
@@ -2236,6 +2290,9 @@ func (s *Server) claudeSetup(snap Snapshot, now time.Time) ClaudeSetup {
 			c.Model = st.Model
 		}
 		c.Tope = "US$ " + usd(st.Tope) + " por día"
+		if st.Tope <= 0 {
+			c.Tope = "US$ 0 (apagado: poné un tope para activarlo)"
+		}
 	case strings.Contains(s.claudeWarn, "CLAUDE_API_KEY"):
 		c.Chip, c.ChipClass = "Falta CLAUDE_API_KEY", "warn"
 	case s.claudeUSD == 0 && s.claudeWarn == "":
@@ -2266,4 +2323,266 @@ func (s *Server) claudeSetup(snap Snapshot, now time.Time) ClaudeSetup {
 		c.Last = fmt.Sprintf("Último análisis: %s, %s de %s.", last.At.Local().Format("15:04"), programLabel(last.Program), lastCh)
 	}
 	return c
+}
+
+// claudeSetupFull es claudeSetup con las tandas: el formulario (desde la PC
+// del monitor) o los valores en texto, y las tarjetas de estado.
+func (s *Server) claudeSetupFull(r *http.Request, snap Snapshot, now time.Time) ClaudeSetup {
+	c := s.claudeSetup(snap, now)
+	if s.settings == nil || s.analyst == nil {
+		return c
+	}
+	c.Realtime = true
+	cs, _ := s.settings.Claude()
+	if s.editable(r) {
+		f := s.claudeForm(snap, now, cs, nil, "", "")
+		c.Form = &f
+	} else {
+		c.Text = fmt.Sprintf("Tiempo real: %s, cada %s, tope US$ %s por día. Resúmenes de cada programa: %s.",
+			claudeModelLabel(cs.RealtimeModel), humanDur(cs.every()), usd(cs.BudgetMicros), c.Model)
+	}
+	c.State = s.claudeState(snap, now)
+	return c
+}
+
+// claudeModelLabel es el nombre de un modelo para mostrar.
+func claudeModelLabel(m string) string {
+	if l, ok := map[string]string{"claude-haiku-5-5": "Claude Haiku 5.5", "claude-sonnet-5-5": "Claude Sonnet 5.5",
+		"claude-opus-5-5": "Claude Opus 5.5"}[m]; ok {
+		return l
+	}
+	return m
+}
+
+// claudeForm arma el formulario con cs; analyze son los canales con el check
+// (nil: los de la configuración).
+func (s *Server) claudeForm(snap Snapshot, now time.Time, cs ClaudeSettings, analyze map[string]bool, notice, class string) ClaudeForm {
+	f := ClaudeForm{Tope: fmt.Sprintf("%.2f", float64(cs.BudgetMicros)/1e6), Notice: notice, NoticeClass: class, Warn: s.settings.ClaudeWarning(),
+		Summary: "Resúmenes de cada programa: " + s.summaryModel(snap) + " (se cambia con -claude-modelo)"}
+	models := slices.Sorted(maps.Keys(claudePrices))
+	// Haiku primero: es el recomendado para tiempo real.
+	slices.SortStableFunc(models, func(a, b string) int { return cmpBool(b == defaultRealtimeModel, a == defaultRealtimeModel) })
+	for _, m := range models {
+		label := claudeModelLabel(m)
+		if m == defaultRealtimeModel {
+			label += " (rápido, recomendado)"
+		}
+		f.Models = append(f.Models, claudeOpt{m, label, m == cs.RealtimeModel})
+	}
+	for _, sec := range batchChoices {
+		f.Batches = append(f.Batches, claudeOpt{strconv.Itoa(sec), humanDur(time.Duration(sec) * time.Second), sec == cs.BatchSec})
+	}
+	names := map[string]string{}
+	for _, ch := range append(snap.Channels, snap.Pending...) {
+		names[ch.Input] = channelName(ch)
+	}
+	list, _ := s.settings.Get()
+	on := 0
+	for _, l := range list {
+		check := !l.NoClaude
+		if analyze != nil {
+			check = analyze[l.Input]
+		}
+		if check {
+			on++
+		}
+		name := names[l.Input]
+		if name == "" {
+			name = l.Input
+		}
+		f.Channels = append(f.Channels, claudeCheck{l.Input, name, check})
+	}
+	f.Projection = s.claudeProj(now, cs, on)
+	return f
+}
+
+func cmpBool(a, b bool) int {
+	switch {
+	case a == b:
+		return 0
+	case a:
+		return 1
+	}
+	return -1
+}
+
+// summaryModel es el modelo de los resúmenes de cada programa (-claude-modelo).
+func (s *Server) summaryModel(snap Snapshot) string {
+	if snap.Claude.Model != "" {
+		return snap.Claude.Model
+	}
+	if s.claudeModel != "" {
+		return s.claudeModel
+	}
+	return defaultClaudeModel
+}
+
+// claudeProj es la proyección de gasto por día del tiempo real con cs y
+// channels canales con el check.
+func (s *Server) claudeProj(now time.Time, cs ClaudeSettings, channels int) ClaudeProj {
+	label := claudeModelLabel(cs.RealtimeModel)
+	if cs.BudgetMicros <= 0 {
+		return ClaudeProj{Text: "Con tope US$ 0 no se manda nada a Claude.", Fits: true}
+	}
+	if channels == 0 {
+		return ClaudeProj{Text: "Ningún canal tiene el check: no hay tandas.", Fits: true}
+	}
+	today := dayStart(now)
+	var spent int64
+	var first time.Time
+	model := ""
+	for _, b := range s.st.Batches("", today) {
+		if b.At.Before(today) {
+			continue
+		}
+		spent += b.CostMicros
+		if first.IsZero() || b.At.Before(first) {
+			first = b.At
+		}
+		model = b.Model
+	}
+	p := claudeProjection(spent, model, first, now, cs.RealtimeModel, cs.BatchSec, channels, cs.BudgetMicros)
+	how := "con el chat de hoy"
+	if p.Hypothesis {
+		how = "según la estimación del README"
+	}
+	if p.Fits {
+		return ClaudeProj{Text: fmt.Sprintf("Con %s gastaría ~US$ %s por día (%s): entra en la parte del tope para tiempo real (US$ %s).",
+			label, usd(p.Daily), how, usd(p.Share)), Fits: true}
+	}
+	return ClaudeProj{Text: fmt.Sprintf("Con %s gastaría ~US$ %s por día (%s) y la parte del tope es US$ %s: se cortaría a las ~%s.",
+		label, usd(p.Daily), how, usd(p.Share), p.Cut.Local().Format("15:04"))}
+}
+
+// claudeState son las tarjetas de estado de las tandas de hoy, de los
+// canales con el check.
+func (s *Server) claudeState(snap Snapshot, now time.Time) ClaudeState {
+	st, today := snap.Claude, dayStart(now)
+	off := map[string]bool{}
+	if s.settings != nil {
+		list, _ := s.settings.Get()
+		for _, l := range list {
+			off[l.Input] = l.NoClaude
+		}
+	}
+	total, labeled := 0, 0
+	batched := false
+	for _, ch := range snap.Channels {
+		if off[ch.Input] {
+			continue
+		}
+		var first time.Time
+		for _, b := range s.st.Batches(ch.ID, today) {
+			if !b.At.Before(today) && (first.IsZero() || b.From.Before(first)) {
+				first = b.From
+			}
+		}
+		if first.IsZero() {
+			continue
+		}
+		batched = true
+		ids := liveOf(snap.Videos, ch.ID)
+		for _, l := range s.st.Lives(today) {
+			if l.ChannelID == ch.ID {
+				ids[l.VideoID] = true
+			}
+		}
+		var check []string
+		for _, m := range s.st.MessagesOf(ids, first) {
+			if m.Source == "chat" && strings.TrimSpace(m.Text) != "" && Classify(m.Text) != CatSpam {
+				check = append(check, m.ID)
+			}
+		}
+		total += len(check)
+		labeled += len(s.st.Labels(check))
+	}
+	rt := s.st.RealtimeSpend(today)
+	c := ClaudeState{
+		Analyzed: miles(labeled), AnalyzedSub: fmt.Sprintf("de %s (%s en la próxima tanda)", miles(total), miles(st.Pending)),
+		Spend: "US$ " + usd(st.Spent), SpendSub: fmt.Sprintf("con los tokens que informa la API · tiempo real US$ %s · resúmenes US$ %s · tope US$ %s",
+			usd(rt), usd(max(st.Spent-rt, 0)), usd(st.Tope)),
+		Last: "Todavía no hubo tandas hoy",
+	}
+	if !batched {
+		c.AnalyzedSub = fmt.Sprintf("(%s en la próxima tanda)", miles(st.Pending))
+	}
+	if !st.LastBatch.IsZero() && !st.LastBatch.Before(today) {
+		c.Last = "hace " + humanDur(max(now.Sub(st.LastBatch), 0))
+		c.LastSub = "sin errores"
+		if st.LastBatchErr != "" {
+			c.LastSub = st.LastBatchErr
+		}
+	}
+	switch {
+	case st.Tope <= 0:
+		c.Note, c.NoteClass = claudeZeroText, "warn"
+	case st.RealtimeCapped:
+		c.Note, c.NoteClass = "Se llegó a la parte del tope para tiempo real (US$ "+usd(realtimeShare(st.Tope))+"): se vuelve a las reglas hasta mañana", "warn"
+	}
+	return c
+}
+
+// channelsClaudeState es el estado de las tandas (cada 10 s).
+func (s *Server) channelsClaudeState(w http.ResponseWriter, r *http.Request) {
+	if s.settings == nil || s.analyst == nil {
+		http.NotFound(w, r)
+		return
+	}
+	s.render(w, "canales-claude-estado", s.claudeState(s.st.Status(), s.clock()))
+}
+
+// claudeDraft lee el formulario de Claude. ok es false si algún valor no se
+// entiende (el tope acepta coma decimal: "2,5").
+func claudeDraft(v url.Values) (ClaudeSettings, map[string]bool, bool) {
+	sec, err1 := strconv.Atoi(v.Get("tanda"))
+	usdVal, err2 := strconv.ParseFloat(strings.Replace(strings.TrimSpace(v.Get("tope")), ",", ".", 1), 64)
+	analyze := map[string]bool{}
+	for _, in := range v["analizar"] {
+		analyze[in] = true
+	}
+	if err1 != nil || err2 != nil || math.IsNaN(usdVal) || math.IsInf(usdVal, 0) || usdVal < 0 || usdVal > maxClaudeUSD {
+		return ClaudeSettings{}, analyze, false
+	}
+	return ClaudeSettings{RealtimeModel: v.Get("modelo"), BatchSec: sec, BudgetMicros: int64(math.Round(usdVal * 1e6))}, analyze, true
+}
+
+// channelsClaudeProj recalcula la proyección con lo elegido, sin guardar.
+func (s *Server) channelsClaudeProj(w http.ResponseWriter, r *http.Request) {
+	if !s.editable(r) || s.analyst == nil {
+		http.Error(w, "Para cambiar la configuración, abrí el dashboard en la PC del monitor.", http.StatusForbidden)
+		return
+	}
+	cs, analyze, ok := claudeDraft(r.URL.Query())
+	if !ok || validClaudeSettings(cs) != nil {
+		s.render(w, "canales-claude-proy", ClaudeProj{Text: "Revisá los valores: el tope va de 0 a 50 dólares.", Fits: false})
+		return
+	}
+	s.render(w, "canales-claude-proy", s.claudeProj(s.clock(), cs, len(analyze)))
+}
+
+// channelsClaude es "Guardar" de la tarjeta de Claude: modelo de tiempo
+// real, tandas, tope y qué canales se analizan. El analista lo toma sin
+// reiniciar; el handler no llama a Claude ni escribe el Store.
+func (s *Server) channelsClaude(w http.ResponseWriter, r *http.Request) {
+	if s.analyst == nil {
+		http.NotFound(w, r)
+		return
+	}
+	if !s.settingsPostN(w, r, 1<<10) {
+		return
+	}
+	cs, analyze, ok := claudeDraft(r.PostForm)
+	if !ok {
+		http.Error(w, "El tope tiene que ser un monto entre 0 y 50 dólares.", http.StatusBadRequest)
+		return
+	}
+	if err := s.settings.UpdateClaude(cs, analyze); err != nil {
+		http.Error(w, "No se guardó: "+err.Error()+".", http.StatusBadRequest)
+		return
+	}
+	notice := "Listo: se guardó. El análisis toma los cambios en unos segundos, sin reiniciar el monitor."
+	if cs.BudgetMicros == 0 {
+		notice = "Listo: se guardó con tope US$ 0, así que el análisis con Claude queda apagado."
+	}
+	s.render(w, "canales-claude-form", s.claudeForm(s.st.Status(), s.clock(), cs, nil, notice, "ok"))
 }

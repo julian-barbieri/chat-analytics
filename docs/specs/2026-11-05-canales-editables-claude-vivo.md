@@ -1,6 +1,6 @@
 # Spec: canales editables, Claude en tandas y En vivo con sentimiento, alertas y preguntas agrupadas
 
-- **Estado:** aprobada (F1 implementada, falta la revisión en el navegador CA1.9; F2 implementada en `feat/canales-editables`, revisada (reviewer: aprobado con cambios menores), falta la revisión en el navegador CA2.14; F3 y F4 pendientes)
+- **Estado:** aprobada (F1 implementada, falta la revisión en el navegador CA1.9; F2 implementada en `feat/canales-editables`, revisada (reviewer: aprobado con cambios menores), falta la revisión en el navegador CA2.14; F3 implementada en `feat/claude-tandas` con el flujo manual (spec corta `docs/specs/2026-11-06-claude-tandas.md`; su ADR es el 0009 porque el 0008 ya era el flujo manual), falta la revisión en el navegador; F4 pendiente)
 - **Tipo:** mejora (feat)
 - **Rama:** la spec, en `feat/canales-editables-claude-vivo`. Implementación en cuatro
   fases con un PR cada una, cada rama desde `main` actualizado después de que entre la

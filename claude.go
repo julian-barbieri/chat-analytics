@@ -101,11 +101,13 @@ type ClaudeConfig struct {
 }
 
 // claudeConfig arma la configuración con las variables de entorno (ya con el
-// archivo de la clave cargado) y los flags. El aviso, si hay, nunca tiene la clave.
+// archivo de la clave cargado) y los flags. El aviso, si hay, nunca tiene la
+// clave. Con la clave queda On aunque el tope sea 0 (ADR 0009): el analista
+// arranca y no manda nada hasta que haya tope, desde -claude-usd o Canales.
 func claudeConfig(getenv func(string) string, usd float64, model string) (ClaudeConfig, string) {
 	const off = "; sigo sin análisis con Claude"
 	switch {
-	case usd == 0 || math.IsNaN(usd):
+	case math.IsNaN(usd):
 		return ClaudeConfig{}, ""
 	case usd < 0 || math.IsInf(usd, 0):
 		return ClaudeConfig{}, fmt.Sprintf("-claude-usd tiene que ser un monto en dólares mayor que 0 (0 = apagado)%s", off)
@@ -119,6 +121,9 @@ func claudeConfig(getenv func(string) string, usd float64, model string) (Claude
 		return ClaudeConfig{}, fmt.Sprintf("-claude-modelo: no conozco el precio de %q (conozco %s)%s", model, strings.Join(known, ", "), off)
 	}
 	key := strings.TrimSpace(getenv("CLAUDE_API_KEY"))
+	if key == "" && usd == 0 {
+		return ClaudeConfig{}, "" // apagado por defecto: sin clave ni tope no hace falta avisar
+	}
 	if key == "" {
 		return ClaudeConfig{}, "falta CLAUDE_API_KEY: ponela en el archivo de la clave o como variable de entorno (ver README.md)" + off
 	}
@@ -262,10 +267,31 @@ const claudeSystem = `Analizás el chat de YouTube de un programa de radio argen
 	`quejas: hasta 5 quejas técnicas (audio, cortes) o sobre la programación. ` +
 	`En cada tema, pregunta o queja, mensajes son los números de los mensajes que lo muestran.`
 
-// AnalyzeChat pide un análisis. Sin reintentos acá adentro: los decide el
-// analista. Si hubo respuesta 200 (aunque después falle), devuelve el modelo
-// y los tokens para cobrarlos.
+// AnalyzeChat pide un análisis de un programa con el modelo de resúmenes.
+// Sin reintentos acá adentro: los decide el analista. Si hubo respuesta 200
+// (aunque después falle), devuelve el modelo y los tokens para cobrarlos.
 func (c *Claude) AnalyzeChat(ctx context.Context, system, user string) (ClaudeReply, error) {
+	rep, text, err := c.call(ctx, c.Model, "-claude-modelo", system, user, claudeSchema, claudeMaxTokens)
+	if err == nil {
+		rep.Raw, err = decodeClaudeRaw(text)
+	}
+	return rep, err
+}
+
+// LabelBatch pide las etiquetas de una tanda con el modelo de tiempo real.
+// Como AnalyzeChat, sin reintentos y con los tokens aunque falle.
+func (c *Claude) LabelBatch(ctx context.Context, model, user string) (ClaudeReply, BatchRaw, error) {
+	rep, text, err := c.call(ctx, model, "el modelo de tiempo real en Canales", batchSystem, user, batchSchema, claudeBatchMaxTokens)
+	var raw BatchRaw
+	if err == nil {
+		raw, err = decodeBatchRaw(text)
+	}
+	return rep, raw, err
+}
+
+// call hace un pedido a la Messages API con salida estructurada y devuelve
+// el primer bloque de texto. where dice dónde se cambia el modelo (para el 404).
+func (c *Claude) call(ctx context.Context, model, where, system, user string, schema json.RawMessage, maxTokens int) (ClaudeReply, string, error) {
 	type message struct {
 		Role    string `json:"role"`
 		Content string `json:"content"`
@@ -286,16 +312,16 @@ func (c *Claude) AnalyzeChat(ctx context.Context, system, user string) (ClaudeRe
 		System       string       `json:"system"`
 		Messages     []message    `json:"messages"`
 		OutputConfig outputConfig `json:"output_config"`
-	}{c.Model, claudeMaxTokens, system, []message{{"user", user}}, outputConfig{claudeEffort, format{"json_schema", claudeSchema}}}
+	}{model, maxTokens, system, []message{{"user", user}}, outputConfig{claudeEffort, format{"json_schema", schema}}}
 	var body bytes.Buffer
 	enc := json.NewEncoder(&body)
 	enc.SetEscapeHTML(false)
 	if err := enc.Encode(req); err != nil {
-		return ClaudeReply{}, &claudeErr{Kind: errFinal, Msg: "no pude armar el pedido a Claude"}
+		return ClaudeReply{}, "", &claudeErr{Kind: errFinal, Msg: "no pude armar el pedido a Claude"}
 	}
 	hr, err := http.NewRequestWithContext(ctx, "POST", c.BaseURL+"/v1/messages", &body)
 	if err != nil {
-		return ClaudeReply{}, &claudeErr{Kind: errFatal, Msg: c.scrub("CLAUDE_BASE_URL no sirve: " + err.Error())}
+		return ClaudeReply{}, "", &claudeErr{Kind: errFatal, Msg: c.scrub("CLAUDE_BASE_URL no sirve: " + err.Error())}
 	}
 	// La clave va solo en este header, nunca en la URL ni en los logs.
 	hr.Header.Set("x-api-key", c.Key)
@@ -304,16 +330,16 @@ func (c *Claude) AnalyzeChat(ctx context.Context, system, user string) (ClaudeRe
 	res, err := c.HTTP.Do(hr)
 	if err != nil {
 		// Si no se llegó a conectar, el pedido no salió; si no, pudo haberse cobrado.
-		return ClaudeReply{MaybeBilled: !notSent(err)}, &claudeErr{Kind: errRetry, Msg: c.scrub("no pude conectar con Claude: " + err.Error())}
+		return ClaudeReply{MaybeBilled: !notSent(err)}, "", &claudeErr{Kind: errRetry, Msg: c.scrub("no pude conectar con Claude: " + err.Error())}
 	}
 	defer res.Body.Close()
 	const maxBody = 4 << 20
 	raw, err := io.ReadAll(io.LimitReader(res.Body, maxBody+1))
 	if err != nil {
-		return ClaudeReply{MaybeBilled: true}, &claudeErr{Kind: errRetry, Msg: c.scrub("se cortó la respuesta de Claude: " + err.Error())}
+		return ClaudeReply{MaybeBilled: true}, "", &claudeErr{Kind: errRetry, Msg: c.scrub("se cortó la respuesta de Claude: " + err.Error())}
 	}
 	if res.StatusCode != http.StatusOK {
-		return ClaudeReply{}, c.statusErr(res, raw)
+		return ClaudeReply{}, "", c.statusErr(res, raw, model, where)
 	}
 	var r struct {
 		Model       string `json:"model"`
@@ -331,7 +357,7 @@ func (c *Claude) AnalyzeChat(ctx context.Context, system, user string) (ClaudeRe
 		} `json:"usage"`
 	}
 	if len(raw) > maxBody || json.Unmarshal(raw, &r) != nil {
-		return ClaudeReply{MaybeBilled: true}, errNotUnderstood
+		return ClaudeReply{MaybeBilled: true}, "", errNotUnderstood
 	}
 	rep := ClaudeReply{Model: r.Model, StopReason: r.StopReason, InputTokens: r.Usage.InputTokens, OutputTokens: r.Usage.OutputTokens}
 	// Un 200 sin usage se cobró igual: no se sabe cuánto.
@@ -341,19 +367,17 @@ func (c *Claude) AnalyzeChat(ctx context.Context, system, user string) (ClaudeRe
 		if r.StopDetails != nil {
 			rep.RefusalCategory = r.StopDetails.Category
 		}
-		return rep, errRefusal{rep.RefusalCategory}
+		return rep, "", errRefusal{rep.RefusalCategory}
 	case "max_tokens":
-		return rep, errTruncated
+		return rep, "", errTruncated
 	}
 	// Con thinking adaptive puede haber bloques antes: el JSON es el primer bloque text.
 	for _, b := range r.Content {
 		if b.Type == "text" {
-			out, err := decodeClaudeRaw(b.Text)
-			rep.Raw = out
-			return rep, err
+			return rep, b.Text, nil
 		}
 	}
-	return rep, errNotUnderstood
+	return rep, "", errNotUnderstood
 }
 
 // decodeClaudeRaw lee el JSON del esquema; un campo de más o de otro tipo es
@@ -401,7 +425,7 @@ func decodeClaudeRaw(text string) (ClaudeRaw, error) {
 
 // statusErr traduce una respuesta con error de la API. El mensaje de la API
 // se incluye (ayuda a saber qué pasó) pero sin la clave.
-func (c *Claude) statusErr(res *http.Response, raw []byte) error {
+func (c *Claude) statusErr(res *http.Response, raw []byte, model, where string) error {
 	var e struct {
 		Error struct {
 			Message string `json:"message"`
@@ -422,7 +446,7 @@ func (c *Claude) statusErr(res *http.Response, raw []byte) error {
 	case code == 403:
 		ce.Kind, ce.Msg = errFatal, "Claude no deja usar esta clave (403): revisá los permisos de la cuenta en la consola de Anthropic y reiniciá el monitor"+detail
 	case code == 404:
-		ce.Kind, ce.Msg = errFatal, fmt.Sprintf("Claude no encontró el modelo %q (404): revisá -claude-modelo y reiniciá el monitor", c.Model)
+		ce.Kind, ce.Msg = errFatal, fmt.Sprintf("Claude no encontró el modelo %q (404): revisá %s y reiniciá el monitor", model, where)
 	case code == 400:
 		ce.Msg = "Claude rechazó el pedido (400)" + detail
 	case code == 413:

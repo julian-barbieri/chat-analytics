@@ -457,6 +457,8 @@ func (s *Server) programDetail(ps ProgramSeg, msgs []Message, a *ClaudeAnalysis,
 		d.NoSummary = claudeOffText
 	case snap.Claude.Off != "":
 		d.NoSummary = "El análisis con Claude se apagó hasta reiniciar el monitor. " + snap.Claude.Off
+	case snap.Claude.Tope <= 0:
+		d.NoSummary = claudeZeroText
 	default:
 		d.NoSummary = "Todavía no hay resumen: se hace solo cuando termina el programa."
 	}

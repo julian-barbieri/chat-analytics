@@ -331,6 +331,7 @@ func TestPreviewStartup(t *testing.T) {
 		// Los vivos y los análisis se copian (ADR 0007); el gasto de Claude y los canales, no.
 		writeFile(t, filepath.Join(src, "datos.vivos.jsonl"), `{"At":"2026-10-30T10:00:00Z","VideoID":"vivoViejo11","ChannelID":"UCsintetico","Channel":"Canal Sintético","Title":"SINTÉTICO en VIVO | PROGRAMA"}`+"\n")
 		writeFile(t, filepath.Join(src, "datos.analisis.jsonl"), `{"Key":"UCsintetico|vivoViejo11|PROGRAMA|2026-10-30T10:00:00Z","ChannelID":"UCsintetico","Program":"PROGRAMA"}`+"\n")
+		writeFile(t, filepath.Join(src, "datos.etiquetas.jsonl"), `{"ChannelID":"UCsintetico","To":"2026-10-30T10:00:00Z","Labels":[{"ID":"m1","Sentiment":"neutro","Cat":"otro"}]}`+"\n")
 		writeFile(t, filepath.Join(src, "datos.claude.json"), `{"Day":"2026-10-30","Micros":999}`)
 		writeFile(t, filepath.Join(src, "datos.canales.json"), `{}`)
 		writeFile(t, filepath.Join(src, "otro.txt"), "no se copia")
@@ -352,10 +353,10 @@ func TestPreviewStartup(t *testing.T) {
 		if runtime.GOOS != "windows" && info.Mode().Perm() != 0o700 {
 			t.Errorf("permisos de la copia %v, quiero 0700", info.Mode().Perm())
 		}
-		if got := strings.Join(entries(t, p.dir), ","); got != "datos.analisis.jsonl,datos.cuota.json,datos.espectadores.jsonl,datos.jsonl,datos.vivos.jsonl" {
+		if got := strings.Join(entries(t, p.dir), ","); got != "datos.analisis.jsonl,datos.cuota.json,datos.espectadores.jsonl,datos.etiquetas.jsonl,datos.jsonl,datos.vivos.jsonl" {
 			t.Errorf("copió %s", got)
 		}
-		for _, n := range []string{"datos.jsonl", "datos.cuota.json", "datos.espectadores.jsonl", "datos.vivos.jsonl", "datos.analisis.jsonl"} {
+		for _, n := range []string{"datos.jsonl", "datos.cuota.json", "datos.espectadores.jsonl", "datos.vivos.jsonl", "datos.analisis.jsonl", "datos.etiquetas.jsonl"} {
 			a, _ := os.ReadFile(filepath.Join(src, n))
 			b, _ := os.ReadFile(filepath.Join(p.dir, n))
 			if !bytes.Equal(a, b) {
@@ -795,6 +796,29 @@ func TestFakeClaudeMessages(t *testing.T) {
 		if code, _ := post(c[0], c[1], fakeClaudeKey); code != 404 {
 			t.Errorf("%s %s = %d, quiero 404", c[0], c[1], code)
 		}
+	}
+	// Una tanda (ADR 0009) se reconoce por el esquema: una etiqueta por número de mensaje.
+	batch := `{"model":"claude-haiku-5-5","messages":[{"role":"user","content":"<mensajes>\n[1] 10:00:00 ` + secret +
+		`\n[2] 10:00:01 otro\n</mensajes>"}],"output_config":{"format":{"schema":{"properties":{"grupos_nuevos":{}}}}}}`
+	req, _ := http.NewRequest("POST", srv.URL+"/v1/messages", strings.NewReader(batch))
+	req.Header.Set("x-api-key", fakeClaudeKey)
+	hres, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, _ := io.ReadAll(hres.Body)
+	hres.Body.Close()
+	var br struct{ Content []struct{ Text string } }
+	var labels struct {
+		Mensajes []struct {
+			N                      int
+			Sentimiento, Categoria string
+		}
+		GruposNuevos []struct{ Clave string } `json:"grupos_nuevos"`
+	}
+	if json.Unmarshal(b, &br) != nil || len(br.Content) != 1 || json.Unmarshal([]byte(br.Content[0].Text), &labels) != nil ||
+		len(labels.Mensajes) != 2 || labels.Mensajes[1].N != 2 || len(labels.GruposNuevos) != 1 || strings.Contains(string(b), secret) {
+		t.Errorf("tanda simulada = %s", b)
 	}
 	// Lo que llega no se guarda: el falso no tiene dónde.
 	if strings.Contains(fmt.Sprintf("%+v", fake), secret) {
