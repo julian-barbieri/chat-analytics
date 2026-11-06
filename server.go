@@ -878,7 +878,14 @@ func (s *Server) channelAnalysis(w http.ResponseWriter, snap Snapshot, ch Channe
 	labels := s.st.Labels(messageIDs(ls.msgs))
 	data["Alertas"] = alertsData(Alerts(ls.msgs, labels, now), fold)
 	data["Sent"] = s.sentimentData(snap, ch, ls, labels, now, motives, fold)
-	data["QG"] = s.questionsData(snap, ls, labels, fold)
+	qg := s.questionsData(snap, ls, labels, fold)
+	data["QG"] = qg
+	if !qg.ByRules {
+		// El tile cuenta lo mismo que "Preguntas agrupadas": con dos números
+		// distintos para lo mismo, la persona no sabía cuál creer.
+		tiles := data["Tiles"].([]Tile)
+		tiles[len(tiles)-1] = Tile{"Preguntas", miles(qg.N), "agrupadas por Claude"}
+	}
 	s.render(w, "vivo-analisis", data)
 }
 
@@ -1099,6 +1106,7 @@ func (s *Server) sentimentData(snap Snapshot, ch ChannelStatus, ls liveScope, la
 // Claude o sin etiquetas, la lista por reglas de siempre.
 type QGData struct {
 	ByRules   bool
+	N         int // preguntas en grupos: la suma de las cantidades
 	Header    string
 	Top, Rest []QGRow // las qgTop primeras a la vista; el resto, plegado
 	Fold      Fold    // "Ver N más": sigue abierto después del refresco
@@ -1127,7 +1135,7 @@ func (s *Server) questionsData(snap Snapshot, ls liveScope, labels map[string]Me
 		}
 	}
 	rows, n := questionGroups(ls.msgs, labels, s.st.Groups(gids), s.answers.Answered)
-	d := QGData{Header: plural(n, "pregunta", "preguntas") + " · " + plural(len(rows), "grupo", "grupos"), Fold: fold.link("maspreguntas")}
+	d := QGData{N: n, Header: plural(n, "pregunta", "preguntas") + " · " + plural(len(rows), "grupo", "grupos"), Fold: fold.link("maspreguntas")}
 	for i, r := range rows {
 		row := QGRow{QGroupRow: r, Count: miles(r.N)}
 		if i < qgTop {
@@ -1564,13 +1572,16 @@ func viewersLine(slots []Slot, span string) (ViewersLine, bool) {
 	if peak.Viewers == 0 {
 		return ViewersLine{}, false
 	}
+	// Lo más nuevo a la izquierda, como las barras: se recorre al revés.
+	rev := slices.Clone(slots)
+	slices.Reverse(rev)
 	var path strings.Builder
-	for i, s := range slots {
+	for i, s := range rev {
 		if s.Viewers == 0 {
 			continue // corta el tramo: el siguiente arranca con otro M, no baja a 0
 		}
 		y := 100 - float64(s.Viewers)/float64(peak.Viewers)*100
-		if i == 0 || slots[i-1].Viewers == 0 {
+		if i == 0 || rev[i-1].Viewers == 0 {
 			fmt.Fprintf(&path, "M%d %.2fH%d", i, y, i+1)
 		} else {
 			fmt.Fprintf(&path, "V%.2fH%d", y, i+1)
@@ -1629,11 +1640,13 @@ func participationChart(slots []Slot, moments []Moment, typical float64, ok bool
 		if v > 0 {
 			h = max(v/scale*100, 1)
 		}
-		b := Bar{X: float64(i) + 0.1, Y: 100 - h, W: 0.8, H: h, N: s.Authors, Label: slotTitle(s, titles)}
+		// Lo más nuevo a la izquierda: la franja i va en la posición len-1-i.
+		pos := float64(len(slots) - 1 - i)
+		b := Bar{X: pos + 0.1, Y: 100 - h, W: 0.8, H: h, N: s.Authors, Label: slotTitle(s, titles)}
 		if r := rank[s.Start]; ok && r > 0 {
 			b.Class = "top"
 			b.Label += fmt.Sprintf(" · N.º %d de los %d con más participación", r, maxMomentos)
-			marks = append(marks, Mark{Left: (float64(i) + 0.5) / float64(w) * 100, Rank: r})
+			marks = append(marks, Mark{Left: (pos + 0.5) / float64(w) * 100, Rank: r})
 		}
 		bars = append(bars, b)
 	}
@@ -1649,9 +1662,12 @@ func participationChart(slots []Slot, moments []Moment, typical float64, ok bool
 	if len(slots) > 0 && len(slots) < slotCount {
 		span = "desde las " + slots[0].Start.Local().Format("15:04")
 	}
+	// Lo más nuevo a la izquierda: las horas se cuentan desde el final, para
+	// que el borde de ahora (End) siempre tenga rótulo, y salen de izquierda a
+	// derecha (el CSS alinea la primera y la última por su posición).
 	var ticks []Tick
-	for i := 0; i <= len(slots) && len(slots) > 0; i += step {
-		ticks = append(ticks, Tick{Left: float64(i) / float64(w) * 100, Label: slots[0].Start.Add(time.Duration(i) * slotStep).Local().Format("15:04"), End: i == len(slots)})
+	for i := len(slots); i >= 0 && len(slots) > 0; i -= step {
+		ticks = append(ticks, Tick{Left: 100 - float64(i)/float64(w)*100, Label: slots[0].Start.Add(time.Duration(i) * slotStep).Local().Format("15:04"), End: i == len(slots)})
 	}
 	out := map[string]any{"Bars": bars, "W": w, "Marks": marks, "Ticks": ticks, "ByPct": ok}
 	if !ok {

@@ -1970,7 +1970,7 @@ func TestParticipationChart(t *testing.T) {
 			t.Fatalf("barras = %d", len(bars))
 		}
 		for i, b := range bars {
-			if !near(b.X, float64(i)+0.1) || !near(b.W, 0.8) || !near(b.Y, 100-b.H) {
+			if !near(b.X, float64(slotCount-1-i)+0.1) || !near(b.W, 0.8) || !near(b.Y, 100-b.H) { // lo más nuevo a la izquierda
 				t.Errorf("barra %d: X %v, W %v, Y %v, H %v", i, b.X, b.W, b.Y, b.H)
 			}
 		}
@@ -1999,13 +1999,13 @@ func TestParticipationChart(t *testing.T) {
 			}
 		}
 		marks := c["Marks"].([]Mark)
-		if len(marks) != 2 || marks[0].Rank != 1 || !near(marks[0].Left, 100.5/288*100) ||
-			marks[1].Rank != 2 || !near(marks[1].Left, 200.5/288*100) {
+		if len(marks) != 2 || marks[0].Rank != 1 || !near(marks[0].Left, 187.5/288*100) ||
+			marks[1].Rank != 2 || !near(marks[1].Left, 87.5/288*100) {
 			t.Errorf("marcas = %+v", marks)
 		}
 		ticks := c["Ticks"].([]Tick)
-		if len(ticks) != 9 || !near(ticks[0].Left, 0) || !near(ticks[1].Left, 12.5) || !near(ticks[8].Left, 100) ||
-			ticks[0].Label != hm(0) || ticks[1].Label != hm(36) || ticks[8].Label != hm(288) {
+		if len(ticks) != 9 || !near(ticks[0].Left, 0) || !near(ticks[1].Left, 12.5) || !near(ticks[8].Left, 100) || !ticks[0].End ||
+			ticks[0].Label != hm(288) || ticks[1].Label != hm(252) || ticks[8].Label != hm(0) {
 			t.Errorf("ticks = %+v", ticks)
 		}
 		if y, ok := c["TypicalY"].(float64); !ok || !near(y, 80) {
@@ -2120,10 +2120,11 @@ func TestParticipationChartViewers(t *testing.T) {
 			viewers map[int]int64
 			want    string
 		}{
-			{36, map[int]int64{2: 100, 3: 200, 5: 50}, "M2 50.00H3V0.00H4M5 75.00H6"},
-			// Franja aislada al principio y tramo hasta el borde derecho.
-			{36, map[int]int64{0: 10, 34: 20, 35: 20}, "M0 50.00H1M34 0.00H35V0.00H36"},
-			{72, map[int]int64{71: 3}, "M71 0.00H72"},
+			// Lo más nuevo a la izquierda: la franja i va en la posición n-1-i.
+			{36, map[int]int64{2: 100, 3: 200, 5: 50}, "M30 75.00H31M32 0.00H33V50.00H34"},
+			// Tramo desde el borde izquierdo (lo más nuevo) y franja aislada al final (la más vieja).
+			{36, map[int]int64{0: 10, 34: 20, 35: 20}, "M0 0.00H1V0.00H2M35 50.00H36"},
+			{72, map[int]int64{71: 3}, "M0 0.00H1"},
 		}
 		for _, c := range cases {
 			if got := line(t, chart(window(c.n, c.viewers))).Path; got != c.want {
@@ -2165,7 +2166,7 @@ func TestParticipationChartViewers(t *testing.T) {
 		if !strings.Contains(l.Aria, "; máximo de 500 a las "+hm(10)+";") {
 			t.Errorf("aria = %q, quería la primera franja (%s)", l.Aria, hm(10))
 		}
-		if l.Path != "M10 0.00H11V0.00H12M50 0.00H51" {
+		if l.Path != "M21 0.00H22M60 0.00H61V0.00H62" {
 			t.Errorf("Path = %q", l.Path)
 		}
 	})
@@ -2658,8 +2659,8 @@ func TestParticipationChartEdges(t *testing.T) {
 			t.Errorf("altos = %v, %v, %v", bars[0].H, bars[144].H, bars[287].H)
 		}
 		marks := c["Marks"].([]Mark)
-		if len(marks) != 3 || !near(marks[0].Left, 0.5/288*100) || marks[0].Rank != 1 ||
-			!near(marks[2].Left, 287.5/288*100) || marks[2].Rank != 3 {
+		if len(marks) != 3 || !near(marks[0].Left, 287.5/288*100) || marks[0].Rank != 1 ||
+			!near(marks[2].Left, 0.5/288*100) || marks[2].Rank != 3 {
 			t.Errorf("marcas = %+v", marks)
 		}
 		if c["Max"] != "máx. 200,0 %" {
@@ -2935,23 +2936,24 @@ func TestParticipationChartWindow(t *testing.T) {
 		slots[c.n-1].N, slots[c.n-1].Authors, slots[c.n-1].Viewers, slots[c.n-1].Pct = 3, 3, 100, 3
 		ch := participationChart(slots, TopMoments(slots, nil), 1, true, nil)
 		ticks := ch["Ticks"].([]Tick)
-		if len(ticks) != c.n/c.step+1 || len(ticks) > 9 || ticks[1].Label != hm(c.step) || !near(ticks[1].Left, float64(c.step)/float64(c.n)*100) {
+		// Lo más nuevo a la izquierda: los rótulos se cuentan desde el borde de ahora.
+		if len(ticks) != c.n/c.step+1 || len(ticks) > 9 || ticks[1].Label != hm(c.n-c.step) || !near(ticks[1].Left, float64(c.step)/float64(c.n)*100) {
 			t.Errorf("%d franjas: ticks = %+v, quería uno cada %d", c.n, ticks, c.step)
 		}
-		// Solo el rótulo que cae en el borde derecho se alinea a la derecha.
+		// Solo el rótulo del borde izquierdo (ahora) es End.
 		for _, k := range ticks {
-			if k.End != near(k.Left, 100) {
+			if k.End != near(k.Left, 0) {
 				t.Errorf("%d franjas: tick %+v con End mal puesto", c.n, k)
 			}
 		}
-		if last := ticks[len(ticks)-1]; last.End != (c.n%c.step == 0) {
+		if last := ticks[len(ticks)-1]; near(last.Left, 100) != (c.n%c.step == 0) {
 			t.Errorf("%d franjas: último tick %+v", c.n, last)
 		}
 		if ch["W"] != c.n || len(ch["Bars"].([]Bar)) != c.n {
 			t.Errorf("%d franjas: W = %v", c.n, ch["W"])
 		}
 		marks := ch["Marks"].([]Mark)
-		if len(marks) != 1 || !near(marks[0].Left, (float64(c.n)-0.5)/float64(c.n)*100) {
+		if len(marks) != 1 || !near(marks[0].Left, 0.5/float64(c.n)*100) {
 			t.Errorf("%d franjas: marcas = %+v", c.n, marks)
 		}
 		aria := ch["Aria"].(string)
@@ -4523,8 +4525,8 @@ func TestClaudeCardOff(t *testing.T) {
 			last := -1
 			// El orden de En vivo (CA1.7), con la tarjeta de Claude apagada en su lugar.
 			for _, want := range []string{
-				`id="alertas"`, `id="claude-card"`, "Preguntas para producción", "Categorías", "Momentos con más participación",
-				"Super Chats y Super Stickers", "Palabras y autores ",
+				`id="claude-card"`, `id="alertas"`, "Momentos con más participación", "Preguntas para producción", "Categorías",
+				"Palabras y autores ", "Super Chats y Super Stickers",
 			} {
 				i := strings.Index(body, want)
 				if i < 0 {
@@ -6169,8 +6171,8 @@ func TestLiveScreenOrder(t *testing.T) {
 	inOrder("/", getBody(h, "/"), []string{`id="estado"`, `id="canal"`, `id="vivo-analisis"`, `id="chat"`, `id="vivo-abajo"`})
 	for _, ver := range []string{"programa", "dia"} {
 		body := getBody(h, "/parcial/vivo/analisis?canal=UCB&video=b2&ver="+ver)
-		inOrder(ver, body, []string{`id="ver-programa" class="seg"`, `class="atitle"`, `class="tiles"`, `id="alertas"`, `id="claude-card"`,
-			`id="sentimiento"`, `id="preguntas"`, `id="categorias"`, `id="momentos"`, `<div id="vivo-abajo" hx-swap-oob="true">`, `id="supers"`, `id="monitor"`})
+		inOrder(ver, body, []string{`id="ver-programa" class="seg"`, `class="atitle"`, `class="tiles"`, `id="claude-card"`, `id="alertas"`,
+			`id="sentimiento"`, `id="momentos"`, `id="preguntas"`, `id="categorias"`, `id="monitor"`, `<div id="vivo-abajo" hx-swap-oob="true">`, `id="supers"`})
 		if regexp.MustCompile(`<h[23][^>]*>\s*[0-9]+\.\s`).MatchString(body) {
 			t.Errorf("%s: hay títulos numerados", ver)
 		}
@@ -7054,8 +7056,8 @@ func TestProgramSentiment(t *testing.T) {
 				t.Errorf("sobra %q", w)
 			}
 		}
-		// Las filas siguen el orden de las franjas.
-		if strings.Index(body, hm(man(0))+": 100 %") > strings.Index(body, hm(man(5))+": 0 %") {
+		// Las filas van de la más nueva a la más vieja (orden-graficos-alertas-tecnicas).
+		if strings.Index(body, hm(man(0))+": 100 %") < strings.Index(body, hm(man(5))+": 0 %") {
 			t.Errorf("filas fuera de orden")
 		}
 	})
@@ -9232,22 +9234,23 @@ func TestSentimentChart(t *testing.T) {
 		t.Fatalf("W %v, barras %d", c.W, len(c.Bars))
 	}
 	b := c.Bars[0]
-	if b.Low || b.X != 2.1 || b.NegH != 20 || b.NeuY != 20 || b.PosY+b.PosH != 100 ||
+	if b.Low || math.Abs(b.X-10.1) > 1e-9 || b.NegH != 20 || b.NeuY != 20 || b.PosY+b.PosH != 100 ||
 		b.Label != from.Add(10*time.Minute).Format("15:04")+": 40 % positivo, 40 % neutro, 20 % negativo (50 mensajes)" {
 		t.Errorf("barra: %+v", b)
 	}
 	if c.Bars[1].Low || !c.Bars[2].Low || !strings.Contains(c.Bars[2].Label, "4 mensajes, menos de 5: sin color") {
 		t.Errorf("umbral del color: %+v / %+v", c.Bars[1], c.Bars[2])
 	}
-	// El eje empieza en from alineado a 5 min y dura 13 franjas.
-	cut := float64(from.Add(20*time.Minute).Sub(slotOf(from))) / float64(slotStep)
+	// El eje va de from alineado a 5 min a 13 franjas después, con lo más
+	// nuevo a la izquierda: x cuenta desde el final.
+	cut := 13 - float64(from.Add(20*time.Minute).Sub(slotOf(from)))/float64(slotStep)
 	if len(c.Lines) != 1 || math.Abs(c.Lines[0].X-cut) > 1e-9 {
 		t.Errorf("líneas: %+v", c.Lines)
 	}
 	hm := func(t time.Time) string { return t.Local().Format("15:04") }
-	want := []SentProg{
-		{Name: "LA MAÑANA", Hour: hm(from.Add(-2 * time.Hour)), Range: hm(from.Add(-2*time.Hour)) + " a " + hm(from.Add(20*time.Minute)), Left: 0, Width: cut * 100 / 13},
-		{Name: "LA TARDE", Hour: hm(from.Add(20 * time.Minute)), Range: hm(from.Add(20*time.Minute)) + " a ahora", Left: cut * 100 / 13, Width: (13 - cut) * 100 / 13},
+	want := []SentProg{ // el más nuevo primero y a la izquierda
+		{Name: "LA TARDE", Hour: hm(from.Add(20 * time.Minute)), Range: hm(from.Add(20*time.Minute)) + " a ahora", Left: 0, Width: cut * 100 / 13},
+		{Name: "LA MAÑANA", Hour: hm(from.Add(-2 * time.Hour)), Range: hm(from.Add(-2*time.Hour)) + " a " + hm(from.Add(20*time.Minute)), Left: cut * 100 / 13, Width: (13 - cut) * 100 / 13},
 	}
 	if len(c.Strip) != len(want) {
 		t.Fatalf("franja: %+v", c.Strip)
@@ -9258,7 +9261,7 @@ func TestSentimentChart(t *testing.T) {
 			t.Errorf("programa %d: %+v, quería %+v", i, g, w)
 		}
 	}
-	if c.Ticks[1].Label != now.Format("15:04")+" en curso" || !c.Ticks[1].End || !strings.Contains(c.Aria, "3 franjas con datos") {
+	if c.Ticks[0].Label != now.Format("15:04")+" en curso" || !c.Ticks[0].End || c.Ticks[0].Left != 0 || c.Ticks[1].Left != 100 || !strings.Contains(c.Aria, "3 franjas con datos") {
 		t.Errorf("ticks %+v, aria %q", c.Ticks, c.Aria)
 	}
 	// La tarjeta entera: SVG con role, aria-label, <title> por barra y la leyenda.
@@ -9429,25 +9432,15 @@ func TestAlerts(t *testing.T) {
 		note   string
 	}{
 		{"14 técnicas por Claude", run("t", "uh", 14, 15*time.Second), techLabels, nil,
-			"Sin alertas: 14 quejas técnicas en 5 min (umbral 15) · 0 % de insultos en 10 min (umbral 5 %)", "Todos los mensajes"},
+			"Sin alertas: 14 quejas técnicas en 5 min (umbral 15)", "Todos los mensajes"},
 		{"15 técnicas por Claude", run("t", "uh", 15, 15*time.Second), techLabels, []string{"tecnica"}, "", "Todos los mensajes"},
 		// Las quejas técnicas salen solo de Claude (ajustes-en-vivo-programas, CA7).
 		{"15 técnicas sin etiquetas: no alertan", run("t", "no se escucha nada", 15, 15*time.Second), nil, nil,
-			"Sin alertas: quejas técnicas sin análisis de Claude · 0 % de insultos en 10 min (umbral 5 %)", "Ningún mensaje"},
-		{"técnicas viejas no cuentan", run("t", "no se escucha nada", 15, 30*time.Second), nil, nil, "", ""},
-		{"insultos 5 %", append(run("i", "sos un pelotudo", 1, 10*time.Second), run("o", "hola", 19, 20*time.Second)...), nil, []string{"insulto"}, "", ""},
-		{"insultos 4,9 %", append(run("i", "sos un pelotudo", 49, time.Second), run("o", "hola", 951, 500*time.Millisecond)...), nil, nil,
-			"Sin alertas: quejas técnicas sin análisis de Claude · 4,9 % de insultos en 10 min (umbral 5 %)", ""},
-		{"19 mensajes: sin alerta", append(run("i", "sos un pelotudo", 5, 10*time.Second), run("o", "hola", 14, 20*time.Second)...), nil, nil, "", ""},
-		{"Claude dice que no es insulto", append(run("i", "sos un pelotudo", 5, 10*time.Second), run("o", "hola", 15, 20*time.Second)...),
-			func(ms []Message) map[string]MessageLabel {
-				out := map[string]MessageLabel{}
-				for _, m := range ms {
-					out[m.ID] = MessageLabel{ID: m.ID, Sentiment: "neutro", Cat: CatOtro}
-				}
-				out["gone"] = MessageLabel{ID: "gone", Cat: CatInsulto} // un ID que ya no está en el Store
-				return out
-			}, nil, "", ""},
+			"Sin alertas: quejas técnicas sin análisis de Claude", "Ningún mensaje"},
+		{"técnicas viejas no cuentan", run("t", "no se escucha nada", 15, 30*time.Second), techLabels, nil, "", ""},
+		// Los insultos ya no alertan (orden-graficos-alertas-tecnicas, CA4).
+		{"50 % de insultos: sin alerta", append(run("i", "sos un pelotudo", 10, 10*time.Second), run("o", "hola", 10, 20*time.Second)...), nil, nil,
+			"Sin alertas: quejas técnicas sin análisis de Claude", ""},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -9940,5 +9933,161 @@ func TestParticipationProgramsStrip(t *testing.T) {
 	p, l := strings.Index(body, `class="pchart"`), strings.Index(body, `<path class="oyentes"`)
 	if p < 0 || l < p || !strings.Contains(body, `<span class="vmax">máx. `) {
 		t.Errorf("falta la línea dentro del gráfico (pchart %d, línea %d)", p, l)
+	}
+}
+
+// TestProgramSentimentAverage (CA1 de orden-graficos-alertas-tecnicas):
+// "Sentimiento del programa" lleva arriba el promedio de todo el tramo (suma
+// de conteos) y las franjas van de la más nueva a la más vieja.
+func TestProgramSentimentAverage(t *testing.T) {
+	now := noonToday()
+	day := dayStart(now)
+	man := func(i int) time.Time { return day.Add(8*time.Hour + time.Duration(i)*time.Minute) }
+	var ls []MessageLabel
+	for i := range 14 { // 9 positivos, 3 negativos y 2 neutros en tres franjas
+		sent := "positivo"
+		switch {
+		case i >= 5 && i < 8:
+			sent = "negativo"
+		case i >= 8 && i < 10:
+			sent = "neutro"
+		}
+		ls = append(ls, MessageLabel{ID: fmt.Sprintf("man%d", i), VideoID: "v1", At: man(i), Program: "LA MAÑANA", Sentiment: sent})
+	}
+	st, srv := programServer(t, now, true)
+	st.AddBatch(ClaudeBatch{At: man(15), ChannelID: "UC1", From: man(0), To: man(13), Labels: ls})
+	key := segmentKey("UC1", Segment{VideoID: "v1", Program: "LA MAÑANA", Start: day.Add(8 * time.Hour)})
+	body := getBody(srv.Routes(), "/parcial/programas/detalle?tramo="+url.QueryEscape(key))
+	hm := func(t time.Time) string { return t.Local().Format("15:04") }
+	avg := "Promedio del programa: 64 % positivo, 14 % neutro, 21 % negativo (14 mensajes)"
+	if !strings.Contains(body, avg) || !strings.Contains(body, `<span class="h">Promedio</span>`) {
+		t.Fatalf("falta el promedio %q", avg)
+	}
+	iAvg := strings.Index(body, avg)
+	i10 := strings.Index(body, hm(man(10))+": 4 mensajes")
+	i5 := strings.Index(body, hm(man(5))+": 0 % positivo")
+	i0 := strings.Index(body, hm(man(0))+": 100 % positivo")
+	if iAvg < 0 || i10 < 0 || i5 < 0 || i0 < 0 || !(iAvg < i10 && i10 < i5 && i5 < i0) {
+		t.Errorf("orden: promedio %d, 08:10 %d, 08:05 %d, 08:00 %d; quería promedio y después de la más nueva a la más vieja", iAvg, i10, i5, i0)
+	}
+}
+
+// TestParticipationChartNewestLeft (CA2): la franja más nueva va a la
+// izquierda; marcas, horas y línea de oyentes se espejan.
+func TestParticipationChartNewestLeft(t *testing.T) {
+	now := noonLocal(t)
+	t0 := now.Truncate(slotStep).Add(-3 * slotStep)
+	var slots []Slot
+	for i, a := range []int{3, 3, 3, 10} {
+		v := int64(100)
+		if i == 3 {
+			v = 200
+		}
+		slots = append(slots, Slot{Start: t0.Add(time.Duration(i) * slotStep), N: a, Authors: a, Viewers: v, Pct: float64(a) * 100 / float64(v)})
+	}
+	newest := Moment{Slot: slots[3], Rank: 1}
+	c := participationChart(slots, []Moment{newest}, 3, true, nil)
+	hm := func(t time.Time) string { return t.Local().Format("15:04") }
+	for _, b := range c["Bars"].([]Bar) {
+		if strings.HasPrefix(b.Label, hm(slots[3].Start)+" a ") && b.X != 0.1 {
+			t.Errorf("la franja más nueva tiene X %v, quería 0.1", b.X)
+		}
+		if strings.HasPrefix(b.Label, hm(slots[0].Start)+" a ") && b.X != 3.1 {
+			t.Errorf("la franja más vieja tiene X %v, quería 3.1", b.X)
+		}
+	}
+	if m := c["Marks"].([]Mark); len(m) != 1 || m[0].Left != 12.5 {
+		t.Errorf("marcas: %+v, quería la N.º 1 en 12.5 %%", m)
+	}
+	ticks := c["Ticks"].([]Tick)
+	if len(ticks) == 0 || !ticks[0].End || ticks[0].Left != 0 || ticks[0].Label != hm(slots[3].Start.Add(slotStep)) {
+		t.Errorf("ticks: %+v, quería el borde de ahora a la izquierda (0 %%)", ticks)
+	}
+	for i := 1; i < len(ticks); i++ {
+		if ticks[i].Left <= ticks[i-1].Left {
+			t.Errorf("ticks fuera de orden: %+v", ticks)
+		}
+	}
+	if p := c["Viewers"].(ViewersLine).Path; p != "M0 0.00H1V50.00H4" && p != "M0 0.00H1V50.00H2V50.00H3V50.00H4" {
+		t.Errorf("Path = %q, quería la línea arrancando por la franja más nueva", p)
+	}
+}
+
+// TestLiveOrder (CA5): el orden de las tarjetas de En vivo.
+func TestLiveOrder(t *testing.T) {
+	now := noonLocal(t)
+	srv, _ := answersServer(t, now)
+	h := srv.Routes()
+	body := getBody(h, "/parcial/vivo/analisis?canal=UCB&video=b2&ver=programa")
+	ids := []string{`id="claude-card"`, `id="alertas"`, `id="momentos"`, `id="preguntas"`, `id="categorias"`, `id="monitor"`, `<div id="vivo-abajo"`, `id="supers"`}
+	last := -1
+	for _, id := range ids {
+		i := strings.Index(body, id)
+		if i < 0 {
+			t.Fatalf("falta %s", id)
+		}
+		if i < last {
+			t.Errorf("%s está antes de lo que debería (orden: %v)", id, ids)
+		}
+		last = i
+	}
+	page := getBody(h, "/parcial/vivo?canal=UCB")
+	if a, c := strings.Index(page, `id="vivo-analisis"`), strings.Index(page, `id="chat"`); a < 0 || c < a {
+		t.Errorf("el análisis (con Palabras y autores al final) tiene que ir antes del chat")
+	}
+}
+
+// TestLiveQuestionsTile (CA6): con grupos de Claude, el tile "Preguntas"
+// cuenta lo mismo que "Preguntas agrupadas"; sin etiquetas, por reglas.
+func TestLiveQuestionsTile(t *testing.T) {
+	now := noonLocal(t)
+	srv, _ := answersServer(t, now)
+	// Una pregunta por reglas que Claude no agrupó: no tiene que contar.
+	srv.st.Add([]Message{{ID: "q2", Source: "chat", VideoID: "b2", Program: "LA TARDE", Author: "Beto", Text: "¿esto qué es?", At: now.Add(-2 * time.Minute)}})
+	re := regexp.MustCompile(`<div class="l">Preguntas</div>\s*<div class="v">(\d+)</div>\s*(?:<div class="muted">([^<]*)</div>)?`)
+	body := getBody(srv.Routes(), "/parcial/vivo/analisis?canal=UCB&video=b2&ver=programa")
+	m := re.FindStringSubmatch(body)
+	if m == nil || m[1] != "1" || m[2] != "agrupadas por Claude" || !strings.Contains(body, "1 pregunta · 1 grupo") {
+		t.Errorf("tile con Claude: %q, quería 1 · agrupadas por Claude", m)
+	}
+	st := liveStore(t, now)
+	st.Add([]Message{{ID: "q2", Source: "chat", VideoID: "b2", Program: "LA TARDE", Author: "Beto", Text: "¿esto qué es?", At: now.Add(-2 * time.Minute)}})
+	rules := &Server{st: st, budget: 9000, now: func() time.Time { return now }}
+	m = re.FindStringSubmatch(getBody(rules.Routes(), "/parcial/vivo/analisis?canal=UCB&video=b2&ver=programa"))
+	if m == nil || m[1] != "1" || m[2] != "por reglas" {
+		t.Errorf("tile sin Claude: %q, quería 1 · por reglas", m)
+	}
+}
+
+// TestAlertsTechOnly (CA4): sin alerta ni textos de insultos.
+func TestAlertsTechOnly(t *testing.T) {
+	now := noonLocal(t)
+	var msgs []Message
+	labels := map[string]MessageLabel{}
+	for i := range 20 {
+		text, cat := "hola", CatOtro
+		if i < 6 {
+			text, cat = "sos un pelotudo", CatInsulto
+		}
+		id := fmt.Sprint("i", i)
+		msgs = append(msgs, Message{ID: id, Source: "chat", Author: "a", Text: text, At: now.Add(-time.Duration(i+1) * 10 * time.Second)})
+		labels[id] = MessageLabel{ID: id, Cat: cat}
+	}
+	for _, l := range []map[string]MessageLabel{nil, labels} {
+		v := Alerts(msgs, l, now)
+		if len(v.Alerts) != 0 || strings.Contains(v.Calm+v.Note, "insult") {
+			t.Errorf("30 %% de insultos: %+v", v)
+		}
+	}
+	h := (&Server{st: liveStore(t, now), budget: 9000, now: func() time.Time { return now }, analyst: NewAnalyst()})
+	h.st.SetClaudeStatus(ClaudeStatus{On: true, Model: defaultClaudeModel, Tope: 2_000_000})
+	body := getBody(h.Routes(), "/parcial/vivo/analisis?canal=UCB&video=b2&ver=programa")
+	i := strings.Index(body, `id="alertas"`)
+	if i < 0 {
+		t.Fatal("falta la tarjeta de alertas")
+	}
+	card := body[i : i+strings.Index(body[i:], "</section>")]
+	if strings.Contains(card, "insultos") || strings.Contains(card, "Claude y reglas") || !strings.Contains(card, `<span class="chip">Claude</span>`) {
+		t.Errorf("tarjeta de alertas: %s", card)
 	}
 }
