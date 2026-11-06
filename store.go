@@ -42,6 +42,7 @@ type Store struct {
 	viewers   []ViewerSample
 	lives     []LiveSample
 	channels  []ChannelStatus
+	pending   []ChannelStatus // de la configuración, sin resolver todavía
 	seen      map[string]bool
 	channel   string
 	videos    []Video
@@ -79,6 +80,8 @@ type ChannelStatus struct {
 	WaitSince time.Time     // desde cuándo espera el próximo vivo (cero si nunca tuvo uno desde que arrancó)
 	FastUntil time.Time     // hasta cuándo se busca el próximo vivo cada fastEvery
 	Every     time.Duration // cada cuánto se revisa con el resto (la revisión de videos)
+	Paused    bool          // chat en pausa desde Canales (solo el chat: sus vivos se siguen revisando)
+	Err       string        // en Pending: por qué no se pudo resolver
 }
 
 // ClaudeAnalysis es un análisis de Claude de un tramo (un programa de un
@@ -388,6 +391,14 @@ func (s *Store) SetChannels(ch []ChannelStatus) {
 	s.channels = append([]ChannelStatus(nil), ch...)
 }
 
+// SetPending guarda los canales de la configuración que el worker todavía
+// no resolvió (o que YouTube no encontró, con Err), para la pantalla Canales.
+func (s *Store) SetPending(p []ChannelStatus) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.pending = append([]ChannelStatus(nil), p...)
+}
+
 func (s *Store) SetVideos(channel string, v []Video) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -537,6 +548,7 @@ type Snapshot struct {
 	ChatInfo  map[string]ChatInfo
 	Updated   time.Time
 	Claude    ClaudeStatus
+	Pending   []ChannelStatus // canales de la configuración que el worker todavía no resolvió
 }
 
 func (s *Store) Snapshot() Snapshot {
@@ -565,6 +577,7 @@ func (s *Store) status() Snapshot {
 		Channel: s.channel, Channels: append([]ChannelStatus(nil), s.channels...), Videos: append([]Video(nil), s.videos...),
 		Units: s.units, LastErr: s.lastErr, LastErrT: s.lastErrT, ChatNote: s.chatNote,
 		ChatNotes: maps.Clone(s.chatNotes), ChatInfo: maps.Clone(s.chatInfo), Updated: s.updated,
+		Pending: append([]ChannelStatus(nil), s.pending...),
 	}
 }
 

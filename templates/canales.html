@@ -2,11 +2,15 @@
 <section class="card" aria-labelledby="canales-h">
   <h2 id="canales-h">Canales que se siguen</h2>
   <p class="muted">Cada canal se sigue todo el día: cuando termina un programa, el monitor busca solo el vivo siguiente y continúa. {{.ChatNow}}</p>
-  <p class="muted">Por ahora los canales y los intervalos se cambian con -canal, -chat-seg-pico y -chat-seg (ver README).</p>
+  {{if .Editable}}{{template "canales-agregar" .Add}}
+  {{else if .Settings}}<p class="muted">Para cambiar la configuración, abrí el dashboard en la PC del monitor.</p>
+  {{else}}<p class="muted">Por ahora los canales y los intervalos se cambian con -canal, -chat-seg-pico y -chat-seg (ver README).</p>{{end}}
+  {{with .Warn}}<div class="cartel warn" role="status"><strong>{{.}}.</strong></div>{{end}}
 </section>
 <div id="canales-estado" class="vivo" hx-get="/parcial/canales/estado" hx-trigger="every 5s">
 {{template "canales-estado" .}}
 </div>
+{{if .Editable}}{{template "canales-form" .Form}}{{end}}
 
 <section class="card" aria-labelledby="cont-h">
   <h2 id="cont-h">Qué pasa cuando termina un programa</h2>
@@ -46,20 +50,25 @@
 {{range .Rows}}<section class="card ccard" aria-label="{{.Name}}">
   <div class="chead">
     <div><h3>{{.Name}}</h3><div class="muted">{{.Input}} · {{.Role}}</div></div>
-    {{if .Live}}<span class="live">EN VIVO</span>{{else}}<span class="chip">Esperando el próximo vivo</span>{{end}}
+    <div class="chips">{{if .Pending}}{{if .Err}}<span class="chip warn">No se encontró</span>{{else}}<span class="chip">Resolviendo…</span>{{end}}{{else if .Live}}<span class="live">EN VIVO</span>{{else}}<span class="chip">Esperando el próximo vivo</span>{{end}}{{if .Paused}} <span class="chip warn">Chat en pausa</span>{{end}}</div>
   </div>
-  <div class="inner">
+  {{if .Pending}}<div class="inner">{{if .Err}}No se pudo agregar: {{.Err}}. Quitalo y volvé a agregarlo con el link del canal.{{else}}Resolviendo…: el monitor lo busca en YouTube en la próxima revisión de videos (1 unidad).{{end}}</div>
+  {{else}}<div class="inner">
     <div>{{.Status}}</div>
     <div class="muted">Cómo sale: {{.How}}.</div>
   </div>
   <dl>
     <dt>Horas en vivo por día</dt><dd>{{.Hours}}</dd>
     <dt>Chat</dt><dd>{{.Chat}}</dd>
-  </dl>
+  </dl>{{end}}
 </section>{{else}}<section class="card"><p class="muted">Todavía no se resolvieron los canales de -canal: aparecen después de la primera revisión de videos.</p></section>{{end}}
 </div>
+{{if .Editable}}<p class="muted">Cuota usada hoy: {{.Used}} unidades. La estimación de abajo cambia con los intervalos que elijas, antes de guardar.</p>
+{{else}}{{template "canales-cuota" .Cuota}}{{end}}
+{{end}}
 
-<section class="card" aria-labelledby="cuota-h">
+{{define "canales-cuota"}}
+<section id="canales-cuota" class="card" aria-labelledby="cuota-h">
   <div class="chead"><h2 id="cuota-h">Cuota de YouTube con esta configuración</h2>
     <div><strong>{{.Total}}</strong> <span class="muted">unidades por día estimadas · Usadas hoy: {{.Used}}</span></div></div>
   <div class="qbar" role="img" aria-label="{{.Aria}}">
@@ -68,7 +77,57 @@
     <div class="qmark stop" style="left: {{printf "%.2f" .BudgetX}}%"><span>{{.Budget}} · tope</span></div>
   </div>
   <div class="vbtns">{{range .Parts}}<span class="leg"><span class="sw {{.Class}}"></span>{{.Label}} · {{.N}}</span>{{end}}</div>
-  {{with .Quota}}<div class="cartel {{if .Fits}}ok{{else}}warn{{end}}"><strong>{{.Text}}.</strong>{{if not .Fits}}<span>El chat se pausaría antes de terminar el día del Pacífico (de madrugada en Argentina). Para que entre, subí -chat-seg-pico o -chat-seg.</span>{{end}}</div>{{end}}
-  <p class="muted">Horas en vivo: {{.Hours}}. YouTube da 10.000 unidades por día por proyecto y se reinician a medianoche del Pacífico (04:00 o 05:00 en Argentina). El chat se deja de leer al llegar a {{.Limit}} para guardar {{.Reserve}} para videos y comentarios. Si YouTube deja abierto el chat en tiempo real, los mensajes llegan al instante y el intervalo es el mínimo entre dos conexiones, así que nunca gasta más que esto.</p>
+  {{with .Quota}}<div class="cartel {{if .Fits}}ok{{else}}warn{{end}}" role="status"><strong>{{.Text}}.</strong>{{if not .Fits}}<span>El chat se pausaría antes de terminar el día del Pacífico (de madrugada en Argentina). Para que entre, {{if $.Editable}}subí algún intervalo o pausá un canal{{else}}subí -chat-seg-pico o -chat-seg{{end}}.</span>{{end}}</div>{{end}}
+  <p class="muted">Horas en vivo: {{.Hours}}. YouTube da 10.000 unidades por día por proyecto y se reinician a medianoche del Pacífico (04:00 o 05:00 en Argentina). El chat se deja de leer al llegar a {{.Limit}} para guardar {{.Reserve}} para videos y comentarios. {{if .Editable}}Cada canal suma su propio chat; si YouTube deja abierto el chat en tiempo real, los mensajes llegan al instante y el intervalo es el mínimo entre dos conexiones de ese canal, así que nunca gasta más que esto.{{else}}Si YouTube deja abierto el chat en tiempo real, los mensajes llegan al instante y el intervalo es el mínimo entre dos conexiones, así que nunca gasta más que esto.{{end}}</p>
 </section>
+{{end}}
+
+{{define "canales-cuota-oob"}}{{template "canales-cuota" .Cuota}}
+{{range .Rows}}<p class="muted" id="cuota-{{.I}}" hx-swap-oob="true">{{.Estimate}}</p>
+{{end}}{{end}}
+
+{{define "canales-agregar"}}
+<form id="canales-agregar" class="addform" hx-post="/canales/agregar" hx-include="#canales-form" hx-target="this" hx-swap="outerHTML">
+  <div class="field">
+    <label class="lbl" for="nuevo">Agregar canal</label>
+    <div class="addrow">
+      <input class="inp" id="nuevo" name="nuevo" type="text" placeholder="Link, @handle o ID del canal" value="{{.Value}}" maxlength="200" required{{if .Full}} disabled{{end}}>
+      <button type="submit" class="btn btn-p"{{if .Full}} disabled{{end}}>Agregar</button>
+    </div>
+    <span class="muted">{{if .Full}}Ya se siguen {{.Max}} canales, el máximo: quitá uno para agregar otro.{{else}}Cuesta 1 unidad encontrarlo y unas 480 por día revisar sus vivos, más su chat.{{end}}</span>
+  </div>
+  {{with .Notice}}<div class="cartel {{$.NoticeClass}}" role="status">{{.}}</div>{{end}}
+</form>
+{{end}}
+
+{{define "canales-form"}}
+<form id="canales-form" class="card" aria-labelledby="config-h" hx-post="/canales" hx-target="this" hx-swap="outerHTML"{{if .OOB}} hx-swap-oob="true"{{end}}>
+  <h2 id="config-h">Cada cuánto se lee el chat de cada canal</h2>
+  {{with .Notice}}<div class="cartel {{$.NoticeClass}}" role="status"><strong>{{.}}</strong></div>{{end}}
+  {{if .Dirty}}<div class="cartel warn" role="status">Hay intervalos sin guardar: tocá «Guardar cambios».</div>{{end}}
+  <div class="grid2">
+  {{range .Rows}}<fieldset class="inner cfg">
+    <legend><strong>{{.Name}}</strong> <span class="muted">· {{.Role}}{{if .Paused}} · chat en pausa{{end}}</span></legend>
+    <input type="hidden" name="canal" value="{{.Input}}">
+    <div class="cfgrow">
+      <div class="field"><label class="lbl" for="pico-{{.I}}">Actualizar el chat cada</label>
+        <select class="sel" id="pico-{{.I}}" name="pico" hx-get="/parcial/canales/cuota" hx-include="#canales-form" hx-target="#canales-cuota" hx-swap="outerHTML">{{range .Peak}}<option value="{{.Sec}}"{{if .Selected}} selected{{end}}>{{.Label}}</option>{{end}}</select>
+        <span class="muted">en el horario pico ({{$.PeakText}})</span></div>
+      <div class="field"><label class="lbl" for="fuera-{{.I}}">Fuera del pico, cada</label>
+        <select class="sel" id="fuera-{{.I}}" name="fuera" hx-get="/parcial/canales/cuota" hx-include="#canales-form" hx-target="#canales-cuota" hx-swap="outerHTML">{{range .Off}}<option value="{{.Sec}}"{{if .Selected}} selected{{end}}>{{.Label}}</option>{{end}}</select></div>
+    </div>
+    <p class="muted" id="cuota-{{.I}}">{{.Estimate}}</p>
+    <div class="actions">
+      <button type="button" class="btn btn-s" name="objetivo" value="{{.Input}}" hx-post="/canales/pausar" hx-target="#canales-form" hx-swap="outerHTML">{{if .Paused}}Reanudar{{else}}Pausar{{end}}</button>
+      <button type="button" class="btn btn-s" name="objetivo" value="{{.Input}}" hx-post="/canales/quitar" hx-target="#canales-form" hx-swap="outerHTML" hx-confirm="¿Quitar {{.Name}}? Lo guardado queda hasta que venza (30 días).">Quitar</button>
+    </div>
+  </fieldset>{{end}}
+  </div>
+  {{template "canales-cuota" .Cuota}}
+  <div class="actions formfoot">
+    <p class="muted">Los cambios se aplican sin reiniciar el monitor. «Pausar», «Reanudar» y «Quitar» se aplican al tocarlos.</p>
+    <button type="button" class="btn btn-s" hx-get="/parcial/canales/form" hx-target="#canales-form" hx-swap="outerHTML">Descartar</button>
+    <button type="submit" class="btn btn-p">Guardar cambios</button>
+  </div>
+</form>
 {{end}}

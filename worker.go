@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"sort"
@@ -23,6 +24,7 @@ type WorkerConfig struct {
 	PeakTo        int             // iguales = sin horario pico
 	Budget        int             // tope diario de unidades que usa el monitor
 	RealTime      map[string]bool // vivos con tiempo real continuo: se reconectan apenas YouTube corta
+	Settings      *Settings       // canales e intervalos de Canales (ADR 0005); nil: Channels, ChatPeak y ChatEvery, como antes
 }
 
 // YouTube corta cada conexión de tiempo real a los ~10 s. Los vivos de
@@ -82,6 +84,7 @@ type chatState struct {
 	open     bool          // hay una conexión de streaming abierta
 	cancel   context.CancelFunc
 	noStream bool // el streaming no anduvo: se lee con lecturas comunes, como antes
+	held     bool // el streaming se cortó porque se pausó el canal desde Canales
 	note     string
 	opened   time.Time     // cuándo se abrió la última conexión de tiempo real
 	lastDur  time.Duration // cuánto duró la última conexión que se cerró
@@ -99,14 +102,15 @@ type ChatInfo struct {
 	LastDur  time.Duration // cuánto duró la última conexión que se cerró
 	Next     time.Time     // próxima conexión o lectura, aproximada
 	Got      time.Time     // último dato que llegó de YouTube
-	Gap      time.Duration // mínimo entre dos conexiones o lecturas cualesquiera
+	Gap      time.Duration // mínimo entre dos conexiones o lecturas de los vivos de su canal
 	Peak     bool          // Gap es el del horario pico
-	Lives    int           // vivos que se turnan
+	Lives    int           // vivos de su canal que se turnan
 	Avg      time.Duration // promedio entre las últimas conexiones o lecturas de este vivo
 	Count    int           // cuántas entran en Avg
 	RealTime bool          // tiempo real continuo (-tiempo-real): se reconecta apenas YouTube corta
 	Left     int           // unidades que le quedan hoy al chat
 	Rate     int           // unidades por hora que gasta el chat de todos los vivos, estimadas
+	Held     bool          // el canal tiene el chat en pausa desde Canales
 }
 
 // chatEvent es lo que manda la goroutine del streaming de un chat al worker.
@@ -117,28 +121,59 @@ type chatEvent struct {
 	err  error
 }
 
-// nextChat elige el vivo al que le toca abrir el streaming del chat o hacer una
-// lectura común: el que hace más tiempo que no se lee, entre los que no están
-// bloqueados, no tienen ya el streaming abierto y cumplieron la espera que pidió
-// YouTube. También devuelve cuántos vivos no están bloqueados.
-func nextChat(lives []Video, chats map[string]*chatState, now time.Time) (next *Video, active int) {
+// chatGroup son los vivos que se turnan con un mismo intervalo: los de un
+// canal de la configuración (por su ID) o los sueltos de -vivos (""). Sin
+// Settings hay un solo grupo, "", con el intervalo de los flags: como antes.
+type chatGroup struct {
+	last   time.Time     // última conexión o lectura de cualquiera de sus vivos
+	every  time.Duration // intervalo del canal según el horario pico
+	paused bool          // pausado desde Canales: su chat no se lee
+}
+
+// groupKey es el grupo de un vivo: su canal, si es uno de groups, o "".
+func groupKey(v Video, groups map[string]chatGroup) string {
+	if _, ok := groups[v.ChannelID]; ok && v.ChannelID != "" {
+		return v.ChannelID
+	}
+	return ""
+}
+
+// nextChat elige el vivo al que le toca abrir el streaming del chat o hacer
+// una lectura común. Está listo si no está bloqueado, no tiene el streaming
+// abierto, cumplió la espera que pidió YouTube y su canal no está en pausa y
+// cumplió su intervalo. Entre los listos va el del canal más atrasado y,
+// dentro del canal, el que hace más que no se lee. Elige uno solo: el worker
+// hace a lo sumo una acción de chat por vuelta, así nunca hay dos lecturas
+// comunes en paralelo. También devuelve cuántos vivos no están bloqueados.
+func nextChat(lives []Video, chats map[string]*chatState, groups map[string]chatGroup, now time.Time) (next *Video, active int) {
+	var late time.Duration
 	for i := range lives {
 		c := chats[lives[i].ID]
 		if c.blocked {
 			continue
 		}
 		active++
-		if !c.open && now.Sub(c.last) >= c.wait && (next == nil || c.last.Before(chats[next.ID].last)) {
-			next = &lives[i]
+		g := groups[groupKey(lives[i], groups)]
+		if c.open || g.paused || now.Sub(c.last) < c.wait || now.Sub(g.last) < g.every {
+			continue
+		}
+		over := now.Sub(g.last) - g.every
+		if next == nil || over > late || over == late && c.last.Before(chats[next.ID].last) {
+			next, late = &lives[i], over
 		}
 	}
 	return next, active
 }
 
-// channelState es lo que el worker recuerda de cada canal de cfg.Channels.
+// channelState es lo que el worker recuerda de cada canal de la
+// configuración (cfg.Channels o cfg.Settings), en su orden.
 type channelState struct {
 	info                 ChannelInfo
-	input                string // lo que se pasó en -canal
+	input                string // lo que se pasó en -canal o se agregó en Canales
+	resolved             bool   // ya se pidió a YouTube (1 unidad)
+	err                  string // no existe: no se vuelve a pedir mientras siga en la configuración
+	paused               bool   // chat en pausa desde Canales
+	peak, off            time.Duration
 	live                 bool
 	waitSince, fastUntil time.Time
 	nextFast             time.Time
@@ -149,6 +184,9 @@ type channelState struct {
 // rápida; uno que tiene, la corta.
 func trackChannels(channels []*channelState, vids []Video, now time.Time) {
 	for _, c := range channels {
+		if !c.resolved {
+			continue
+		}
 		has := false
 		for _, v := range vids {
 			has = has || v.ChannelID == c.info.ID && v.LiveStatus == "live"
@@ -163,12 +201,34 @@ func trackChannels(channels []*channelState, vids []Video, now time.Time) {
 	}
 }
 
-func channelStatuses(channels []*channelState, every time.Duration) []ChannelStatus {
-	out := make([]ChannelStatus, 0, len(channels))
+// channelStatuses son los canales ya resueltos, para la vista; pending, los
+// que todavía no (o que YouTube no encontró), para la pantalla Canales.
+func channelStatuses(channels []*channelState, every time.Duration) (out, pending []ChannelStatus) {
+	out = make([]ChannelStatus, 0, len(channels))
 	for _, c := range channels {
-		out = append(out, ChannelStatus{ID: c.info.ID, Name: c.info.Title, Input: c.input, Live: c.live, WaitSince: c.waitSince, FastUntil: c.fastUntil, Every: every})
+		if !c.resolved {
+			pending = append(pending, ChannelStatus{Input: c.input, Err: c.err, Paused: c.paused})
+			continue
+		}
+		out = append(out, ChannelStatus{ID: c.info.ID, Name: c.info.Title, Input: c.input, Live: c.live, WaitSince: c.waitSince,
+			FastUntil: c.fastUntil, Every: every, Paused: c.paused})
 	}
-	return out
+	return out, pending
+}
+
+// lookupFailed es una falla al buscar un canal nuevo (no "no se encontró"):
+// la revisión de los demás sigue y ese canal se vuelve a pedir en la próxima.
+type lookupFailed struct{ error }
+
+// principal es el nombre del primer canal resuelto: el que da el título del
+// dashboard y del que se bajan subidas y comentarios.
+func principal(channels []*channelState) string {
+	for _, c := range channels {
+		if c.resolved {
+			return c.info.Title
+		}
+	}
+	return ""
 }
 
 // RunWorker corre en una sola goroutine, así el cliente no se comparte, hasta
@@ -177,10 +237,11 @@ func channelStatuses(channels []*channelState, every time.Duration) []ChannelSta
 // escribiendo en el Store (los tests borran su directorio al terminar).
 func RunWorker(ctx context.Context, yt *YouTube, st *Store, cfg WorkerConfig) {
 	var (
-		channels      []*channelState // cada canal ya resuelto, en el orden de cfg.Channels
+		channels      []*channelState // en el orden de la configuración; el primero resuelto es el principal
+		version       = -1            // de cfg.Settings: si cambia, se aplica en el tick
 		nextVideos    time.Time
 		nextComments  time.Time
-		lastChat      time.Time
+		groupLast     = map[string]time.Time{}          // última acción de chat de cada grupo (chatGroup)
 		lastComments  = time.Now().Add(-48 * time.Hour) // primera pasada: últimas 48 h
 		knownComments = map[string]int64{}
 		lives         []Video
@@ -245,10 +306,96 @@ func RunWorker(ctx context.Context, yt *YouTube, st *Store, cfg WorkerConfig) {
 		}
 		c.open, c.cancel, c.last = false, nil, time.Now()
 		c.lastDur = c.last.Sub(c.opened)
-		if ev.err != nil {
+		switch {
+		case c.held:
+			c.held = false
+			log.Printf("chat de %s: chat en pausa desde Canales", live.ID)
+		case ev.err != nil:
 			chatFailed(c, live.ID, ev.err, true)
-		} else {
+		default:
 			log.Printf("chat de %s: YouTube cerró la conexión de tiempo real a los %s", live.ID, humanDur(c.lastDur))
+		}
+	}
+
+	publish := func() {
+		ok, pending := channelStatuses(channels, cfg.VideosEvery)
+		st.SetChannels(ok)
+		st.SetPending(pending)
+	}
+	for _, ch := range cfg.Channels {
+		if cfg.Settings == nil {
+			channels = append(channels, &channelState{input: ch})
+		}
+	}
+	// apply toma una configuración nueva de Canales sin reiniciar: los canales
+	// quitados cortan sus streaming y salen de la lista de videos, los pausados
+	// cortan el chat (sus vivos se siguen revisando) y los nuevos los resuelve
+	// la revisión siguiente, que se adelanta solo si hay alguno (cuesta cuota).
+	apply := func(list []ChannelSetting, now time.Time) {
+		old := map[string]*channelState{}
+		for _, c := range channels {
+			old[c.input] = c
+		}
+		var next []*channelState
+		added := false
+		for _, set := range list {
+			c := old[set.Input]
+			if c == nil {
+				c, added = &channelState{input: set.Input}, true
+			}
+			delete(old, set.Input)
+			c.paused, c.peak, c.off = set.Paused, set.peak(), set.off()
+			next = append(next, c)
+		}
+		gone, paused := map[string]bool{}, map[string]bool{}
+		for _, c := range channels {
+			if old[c.input] == c && c.resolved {
+				gone[c.info.ID] = true
+				log.Printf("%s se quitó de la configuración: dejo de seguirlo", c.info.Title)
+			}
+		}
+		channels = next
+		for _, c := range channels {
+			if c.resolved {
+				paused[c.info.ID] = c.paused
+			}
+		}
+		var kept []Video
+		for _, v := range lives {
+			c := chats[v.ID]
+			switch {
+			case gone[v.ChannelID]:
+				if c.cancel != nil {
+					c.cancel()
+				}
+				delete(chats, v.ID)
+				continue
+			case paused[v.ChannelID] && c.cancel != nil:
+				c.held = true
+				c.cancel()
+			}
+			kept = append(kept, v)
+		}
+		lives = kept
+		if len(gone) > 0 {
+			var vids []Video
+			for _, v := range st.Status().Videos {
+				if !gone[v.ChannelID] {
+					vids = append(vids, v)
+				}
+			}
+			title := principal(channels)
+			if title == "" {
+				title = st.Status().Channel
+			}
+			st.SetVideos(title, vids)
+			for id := range gone {
+				delete(groupLast, id)
+			}
+		}
+		publish()
+		if added {
+			nextVideos = now
 		}
 	}
 
@@ -269,33 +416,74 @@ func RunWorker(ctx context.Context, yt *YouTube, st *Store, cfg WorkerConfig) {
 
 	for {
 		now := time.Now()
+		if cfg.Settings != nil {
+			if list, v := cfg.Settings.Get(); v != version {
+				version = v
+				apply(list, now)
+			}
+		}
 		used := st.Units()
-		every, peak := cfg.chatInterval(now)
 
 		reviewed := false
 		if now.After(nextVideos) && used < cfg.Budget {
 			nextVideos = now.Add(cfg.VideosEvery)
 			reviewed = true
 			err := spend(func() error {
-				for _, ch := range cfg.Channels[len(channels):] {
-					info, err := yt.LookupChannel(ch)
-					if err != nil {
+				var infos []ChannelInfo
+				var lookupErr error
+				for i, c := range channels {
+					if !c.resolved && c.err == "" {
+						info, err := yt.LookupChannel(c.input)
+						switch {
+						case err != nil && cfg.Settings != nil && strings.HasPrefix(err.Error(), "no se encontró el canal"):
+							// Agregado desde Canales y YouTube no lo conoce: se anota y no se insiste.
+							c.err = err.Error()
+						case err != nil && cfg.Settings != nil:
+							// Falla de YouTube o de la red: los demás se revisan igual y
+							// este se vuelve a pedir en la revisión siguiente.
+							lookupErr = lookupFailed{fmt.Errorf("canal %s: %w", c.input, err)}
+							log.Printf("canal %s: %v (se vuelve a buscar en la próxima revisión)", c.input, err)
+							continue
+						case err != nil:
+							return err
+						}
+						for _, o := range channels {
+							if err == nil && o != c && o.resolved && o.info.ID == info.ID {
+								// Otro link o @handle de un canal que ya está: no se sigue dos veces.
+								c.err = "ya está como " + o.info.Title
+							}
+						}
+						if c.err != "" {
+							log.Printf("canal %s: %s", c.input, c.err)
+							publish()
+							continue
+						}
+						if i == 0 {
+							st.SetVideos(info.Title, nil)
+						}
+						c.info, c.resolved = info, true
+					}
+					if c.resolved {
+						infos = append(infos, c.info)
+					}
+				}
+				if lookupErr != nil && len(infos) == 0 {
+					// Ningún canal resuelto (por ejemplo, arrancó sin red): es una
+					// falla común y se reintenta a los 30 s.
+					return lookupErr.(lookupFailed).error
+				}
+				var vids []Video
+				if len(infos) > 0 {
+					var err error
+					if vids, err = yt.ChannelVideos(infos, cfg.Videos, cfg.Extra); err != nil {
 						return err
 					}
-					if len(channels) == 0 {
-						st.SetVideos(info.Title, nil)
-					}
-					channels = append(channels, &channelState{info: info, input: ch})
 				}
-				infos := make([]ChannelInfo, len(channels))
-				for i, c := range channels {
-					infos[i] = c.info
+				title := principal(channels)
+				if title == "" {
+					title = st.Status().Channel
 				}
-				vids, err := yt.ChannelVideos(infos, cfg.Videos, cfg.Extra)
-				if err != nil {
-					return err
-				}
-				st.SetVideos(st.Status().Channel, vids)
+				st.SetVideos(title, vids)
 				// Los espectadores y los vivos de cada canal vienen en el mismo
 				// pedido de videos: las series no cuestan cuota.
 				st.AddViewers(time.Now(), vids)
@@ -330,11 +518,13 @@ func RunWorker(ctx context.Context, yt *YouTube, st *Store, cfg WorkerConfig) {
 						c.nextFast = now.Add(fastEvery)
 					}
 				}
-				st.SetChannels(channelStatuses(channels, cfg.VideosEvery))
-				return nil
+				publish()
+				return lookupErr
 			})
 			st.SetError(err)
-			if err != nil {
+			// Si solo falló la búsqueda de un canal nuevo, la revisión anduvo: ese
+			// canal se vuelve a pedir en la siguiente, sin repetir todo a los 30 s.
+			if err != nil && !errors.As(err, new(lookupFailed)) {
 				log.Printf("videos: %v", err)
 				nextVideos = now.Add(30 * time.Second) // reintento rápido
 			}
@@ -381,7 +571,7 @@ func RunWorker(ctx context.Context, yt *YouTube, st *Store, cfg WorkerConfig) {
 			merged := mergeChannelLives(st.Status().Videos, c.info.ID, found)
 			st.SetVideos(st.Status().Channel, merged)
 			trackChannels(channels, merged, now)
-			st.SetChannels(channelStatuses(channels, cfg.VideosEvery))
+			publish()
 		}
 
 		if now.After(nextComments) && used < cfg.Budget {
@@ -414,9 +604,23 @@ func RunWorker(ctx context.Context, yt *YouTube, st *Store, cfg WorkerConfig) {
 		// El chat se recibe en tiempo real por streaming: una conexión por vivo que
 		// queda abierta y cuesta 5 unidades al abrirse. Si YouTube no lo permite,
 		// se lee como antes, por turnos. En los dos casos el intervalo es entre dos
-		// conexiones o lecturas cualesquiera: si el streaming se corta seguido, la
-		// cuota no gasta más que con las lecturas comunes.
+		// conexiones o lecturas cualesquiera de los vivos de un canal (cada canal
+		// con el suyo): si el streaming se corta seguido, la cuota no gasta más
+		// que con las lecturas comunes.
 		chatOK := used < cfg.Budget-reserveForComments
+		every, peak := cfg.chatInterval(now)
+		groups := map[string]chatGroup{"": {last: groupLast[""], every: every}}
+		if cfg.Settings != nil {
+			for _, c := range channels {
+				if c.resolved {
+					g := chatGroup{last: groupLast[c.info.ID], every: c.off, paused: c.paused}
+					if peak {
+						g.every = c.peak
+					}
+					groups[c.info.ID] = g
+				}
+			}
+		}
 		var turn []Video // los que se turnan; los de tiempo real continuo van aparte
 		for _, v := range lives {
 			c := chats[v.ID]
@@ -424,14 +628,16 @@ func RunWorker(ctx context.Context, yt *YouTube, st *Store, cfg WorkerConfig) {
 				turn = append(turn, v)
 				continue
 			}
-			if !c.open && chatOK && now.Sub(c.last) >= max(realTimeGap, c.wait) {
+			if !c.open && chatOK && !groups[groupKey(v, groups)].paused && now.Sub(c.last) >= max(realTimeGap, c.wait) {
 				openStream(v, c, now)
 			}
 		}
-		live, active := nextChat(turn, chats, now)
-		streaming, polling, open := 0, 0, 0
+		live, _ := nextChat(turn, chats, groups, now)
+		streaming, polling, open, held := 0, 0, 0, 0
 		for _, v := range lives {
-			if c := chats[v.ID]; !c.blocked && c.noStream {
+			if c := chats[v.ID]; !c.blocked && groups[groupKey(v, groups)].paused {
+				held++
+			} else if !c.blocked && c.noStream {
 				polling++
 			} else if !c.blocked {
 				streaming++
@@ -444,7 +650,7 @@ func RunWorker(ctx context.Context, yt *YouTube, st *Store, cfg WorkerConfig) {
 		switch {
 		case len(lives) == 0:
 			note = "No hay un vivo en este momento."
-		case streaming+polling == 0:
+		case streaming+polling+held == 0:
 		case !chatOK:
 			note = fmt.Sprintf("Chat en pausa: se llegó al tope de cuota del día (%d unidades). Se reanuda cuando se reinicia la cuota.", cfg.Budget-reserveForComments)
 			if streaming > 0 {
@@ -457,7 +663,9 @@ func RunWorker(ctx context.Context, yt *YouTube, st *Store, cfg WorkerConfig) {
 			}
 			if polling > 0 {
 				p := "Leyendo el chat cada " + humanDur(every)
-				if polling > 1 {
+				if len(groups) > 1 {
+					p = fmt.Sprintf("Leyendo el chat con consultas comunes en %d vivo(s), cada canal con su intervalo", polling)
+				} else if polling > 1 {
 					p = fmt.Sprintf("Leyendo el chat por turnos entre %d vivos: cada uno cada %s", polling, humanDur(every*time.Duration(polling)))
 				}
 				if streaming > 0 {
@@ -468,12 +676,15 @@ func RunWorker(ctx context.Context, yt *YouTube, st *Store, cfg WorkerConfig) {
 				}
 				parts = append(parts, p)
 			}
+			if held > 0 {
+				parts = append(parts, fmt.Sprintf("Chat en pausa desde Canales en %d vivo(s)", held))
+			}
 			note = strings.Join(parts, ". ") + "."
-			if live == nil || now.Sub(lastChat) < every {
+			if live == nil {
 				break
 			}
 			c := chats[live.ID]
-			lastChat = now
+			groupLast[groupKey(*live, groups)] = now
 			if !c.noStream {
 				openStream(*live, c, now)
 				break
@@ -501,7 +712,7 @@ func RunWorker(ctx context.Context, yt *YouTube, st *Store, cfg WorkerConfig) {
 				byLive[id] = c.note
 			}
 		}
-		st.SetChatNotes(note, byLive, chatInfos(lives, chats, lastChat, cfg, now, active, cfg.Budget-reserveForComments-used))
+		st.SetChatNotes(note, byLive, chatInfos(lives, chats, groups, cfg, now, cfg.Budget-reserveForComments-used))
 
 		select {
 		case ev := <-events:
@@ -551,45 +762,58 @@ func mergeChannelLives(videos []Video, channelID string, found []Video) []Video 
 }
 
 // chatInfos arma el cartel de cada vivo. La próxima conexión o lectura se
-// estima con la cola de nextChat: primero el que hace más que no se lee, y
-// entre una y otra, el intervalo.
-func chatInfos(lives []Video, chats map[string]*chatState, lastChat time.Time, cfg WorkerConfig, now time.Time, active, left int) map[string]ChatInfo {
-	every, peak := cfg.chatInterval(now)
-	realTime := func(id string) bool { c := chats[id]; return cfg.RealTime[id] && !c.noStream && !c.blocked }
-	var waiting []*chatState
+// estima con la cola de nextChat dentro de su canal: primero el que hace más
+// que no se lee, y entre uno y otro, el intervalo del canal.
+func chatInfos(lives []Video, chats map[string]*chatState, groups map[string]chatGroup, cfg WorkerConfig, now time.Time, left int) map[string]ChatInfo {
+	_, peak := cfg.chatInterval(now)
+	realTime := func(v Video) bool {
+		c := chats[v.ID]
+		return cfg.RealTime[v.ID] && !c.noStream && !c.blocked
+	}
+	waiting := map[string][]*chatState{}
+	active := map[string]int{} // vivos que se turnan en cada canal
+	rate := 0
 	for _, v := range lives {
-		if c := chats[v.ID]; !c.blocked && !c.open && !realTime(v.ID) {
-			waiting = append(waiting, c)
+		c, k := chats[v.ID], groupKey(v, groups)
+		switch {
+		case c.blocked:
+		case realTime(v):
+			if !groups[k].paused {
+				rate += realTimeUnitsPerHour
+			}
+		default:
+			active[k]++
+			if !c.open {
+				waiting[k] = append(waiting[k], c)
+			}
 		}
 	}
-	sort.SliceStable(waiting, func(i, j int) bool { return waiting[i].last.Before(waiting[j].last) })
-	// Cada vivo en tiempo real continuo gasta lo suyo; los demás, una conexión o
-	// lectura de 5 unidades por intervalo entre todos.
-	rate, turns := 0, false
-	for _, v := range lives {
-		if realTime(v.ID) {
-			rate += realTimeUnitsPerHour
-		} else if !chats[v.ID].blocked {
-			turns = true
+	// Cada vivo en tiempo real continuo gasta lo suyo; cada canal, una conexión
+	// o lectura de 5 unidades por intervalo entre todos sus vivos.
+	for k, n := range active {
+		if g := groups[k]; n > 0 && !g.paused && g.every > 0 {
+			rate += int(5 * time.Hour / g.every)
 		}
 	}
-	if turns && every > 0 {
-		rate += int(5 * time.Hour / every)
+	for _, w := range waiting {
+		sort.SliceStable(w, func(i, j int) bool { return w[i].last.Before(w[j].last) })
 	}
 	out := map[string]ChatInfo{}
 	for _, v := range lives {
-		c := chats[v.ID]
+		c, k := chats[v.ID], groupKey(v, groups)
+		g := groups[k]
 		ci := ChatInfo{Stream: !c.noStream, Open: c.open, Blocked: c.blocked, Paused: left <= 0, Opened: c.opened,
-			LastDur: c.lastDur, Got: c.got, Gap: every, Peak: peak, Lives: active, RealTime: realTime(v.ID), Left: max(left, 0), Rate: rate}
+			LastDur: c.lastDur, Got: c.got, Gap: g.every, Peak: peak, Lives: active[k], RealTime: realTime(v), Left: max(left, 0), Rate: rate,
+			Held: g.paused && !c.blocked}
 		if ci.RealTime {
 			ci.Next = c.last.Add(max(realTimeGap, c.wait))
 		}
 		if n := len(c.recent); n > 1 {
 			ci.Avg, ci.Count = c.recent[n-1].Sub(c.recent[0])/time.Duration(n-1), n
 		}
-		for k, w := range waiting {
-			if w == c {
-				ci.Next = lastChat.Add(every * time.Duration(k+1))
+		for i, w := range waiting[k] {
+			if w == c && !g.paused {
+				ci.Next = g.last.Add(g.every * time.Duration(i+1))
 				if t := c.last.Add(c.wait); t.After(ci.Next) {
 					ci.Next = t
 				}

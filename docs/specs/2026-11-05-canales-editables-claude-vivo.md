@@ -1,6 +1,6 @@
 # Spec: canales editables, Claude en tandas y En vivo con sentimiento, alertas y preguntas agrupadas
 
-- **Estado:** aprobada (F1 implementada, falta la revisión en el navegador CA1.9; F2 a F4 pendientes)
+- **Estado:** aprobada (F1 implementada, falta la revisión en el navegador CA1.9; F2 implementada en `feat/canales-editables`, revisada (reviewer: aprobado con cambios menores), falta la revisión en el navegador CA2.14; F3 y F4 pendientes)
 - **Tipo:** mejora (feat)
 - **Rama:** la spec, en `feat/canales-editables-claude-vivo`. Implementación en cuatro
   fases con un PR cada una, cada rama desde `main` actualizado después de que entre la
@@ -301,38 +301,38 @@ Mismo contenido que la etapa 2 de la 010 (que adoptaba CA2.1-CA2.9 y CA2.11 de
 canales-continuos con sus decisiones: pausar solo el chat, editar solo desde la PC del monitor,
 gana el archivo con aviso, valores iniciales `-chat-seg* × N`), escrito acá completo:
 
-- [ ] CA2.1 (falla hoy): `nextChat` por canal: cada canal tiene su intervalo (pico / fuera)
+- [x] CA2.1 (falla hoy): `nextChat` por canal: cada canal tiene su intervalo (pico / fuera)
   entre dos conexiones o lecturas **de sus vivos** (por turnos entre ellos); entre canales, a lo
   sumo una acción por tick; se respeta el `wait` de `pollingIntervalMillis`; un canal en pausa
   no se elige; los vivos sueltos de `-vivos` usan `-chat-seg-pico` / `-chat-seg` — se verifica
   con `TestNextChatByChannel` (tabla con `now` fijo; el primer caso usa dos vivos de canales
   distintos que con un solo `lastChat` no pueden estar listos a la vez).
-- [ ] CA2.2: con el worker andando, el canal A con 50 ms abre al menos 3 conexiones en 3,5 s y
+- [x] CA2.2: con el worker andando, el canal A con 50 ms abre al menos 3 conexiones en 3,5 s y
   el B con 1 h abre 1; el falso nunca ve dos `liveChat/messages` comunes en curso a la vez — se
   verifica con `TestWorkerChatPerChannel`, también con `-race`.
-- [ ] CA2.3: `LoadSettings`: sin `datos.canales.json` arranca con `-canal` e intervalos
+- [x] CA2.3: `LoadSettings`: sin `datos.canales.json` arranca con `-canal` e intervalos
   `-chat-seg-pico × N` / `-chat-seg × N`; con el archivo, manda el archivo y si se pasó
   `-canal` o `-chat-seg*` a mano (se detecta con `flag.Visit`) loguea un `aviso:`; un archivo
   ilegible frena el arranque con un error en español que dice qué hacer y no se pisa — se
   verifica con `TestLoadSettings`.
-- [ ] CA2.4: `Settings.Update` valida (1 a `maxChannels` = 5 canales, `ParseChannel` no vacío,
+- [x] CA2.4: `Settings.Update` valida (1 a `maxChannels` = 5 canales, `ParseChannel` no vacío,
   sin repetidos, intervalos múltiplos de 30 s entre 30 s y 10 min) y guarda con tmp +
   `os.Rename`; si no puede guardar, devuelve el error y queda la configuración anterior — se
   verifica con `TestSettingsUpdate`.
-- [ ] CA2.5: el worker toma los cambios sin reiniciar (compara `version` en cada tick): un canal
+- [x] CA2.5: el worker toma los cambios sin reiniciar (compara `version` en cada tick): un canal
   agregado lo resuelve el worker con `spend` (1 unidad, sumada a `st.Units()`); uno quitado
   corta los streaming de sus vivos y deja de revisarse; uno en pausa no lee chat pero sigue la
   revisión de sus vivos; si se quita el principal, pasa a serlo el siguiente; no se puede quitar
   el último — se verifica con `TestWorkerAppliesSettings`.
-- [ ] CA2.6: los handlers nunca llaman a YouTube: `POST /canales/agregar` con un `@handle`
+- [x] CA2.6: los handlers nunca llaman a YouTube: `POST /canales/agregar` con un `@handle`
   responde sin que el falso reciba pedidos; el canal queda "resolviendo…" hasta que el worker lo
   resuelve o anota "no se encontró el canal @x" — se verifica con
   `TestChannelsAddDoesNotCallAPI`.
-- [ ] CA2.7: `EstimateQuota` con un grupo por canal: el ejemplo (2 canales, `-pico 7-20`,
+- [x] CA2.7: `EstimateQuota` con un grupo por canal: el ejemplo (2 canales, `-pico 7-20`,
   Rivadavia 2 / 5 min y 24 h en vivo, Rock & Pop 3 / 5 min y 18 h, cuota 9.000) da videos 1.920,
   comentarios 1.000, Rivadavia 2.610, Rock & Pop 1.600, total 7.130 y "Entra en el día, quedan
   370"; un canal en pausa suma 0 de chat — se verifica con `TestEstimateQuota` extendido.
-- [ ] CA2.8: `GET /canales` editable desde loopback: formulario "Agregar canal" (`<label>`,
+- [x] CA2.8: `GET /canales` editable desde loopback: formulario "Agregar canal" (`<label>`,
   placeholder "Link, @handle o ID del canal", `hx-post="/canales/agregar"`); por canal, selects
   "Actualizar el chat cada" (pico: 30 s, 1, 1:30, 2, 3, 5 min) y "Fuera del pico, cada" (1, 2, 3,
   5, 10 min) con el valor actual elegido (y agregado si no está en la lista), "Cuota estimada de
@@ -345,19 +345,19 @@ gana el archivo con aviso, valores iniciales `-chat-seg* × N`), escrito acá co
   estado de cada tarjeta sí se refresca. Desde un pedido que no es de loopback: "Para cambiar la
   configuración, abrí el dashboard en la PC del monitor" y ningún control — se verifica con
   `TestChannelsPage` (tabla; reemplaza a `TestChannelsPageReadOnly`).
-- [ ] CA2.9: guardas: `POST /canales`, `/canales/agregar`, `/canales/pausar` y
+- [x] CA2.9: guardas: `POST /canales`, `/canales/agregar`, `/canales/pausar` y
   `/canales/quitar` responden 403 sin tocar `datos.canales.json` si falla `sameOrigin` o
   `localRequest` (`guard.go`, sin copiar otra versión); cuerpo de 16 KB como mucho; el mismo
   pedido válido da 200 — se verifica con `TestChannelsPostGuards` (tabla).
-- [ ] CA2.10: En vivo y Programas toman los canales nuevos o quitados sin reiniciar (los botones
+- [x] CA2.10: En vivo y Programas toman los canales nuevos o quitados sin reiniciar (los botones
   salen de `Status().Channels`); un canal quitado deja de tener botón y sus programas siguen en
   Programas hasta que vence la retención — se verifica con un caso de `TestWorkerAppliesSettings`
   más `GET /parcial/vivo/canal` y `/parcial/programas`.
-- [ ] CA2.11: `go run . -h` (no toca ninguna API) describe `-canal`, `-chat-seg-pico` y
+- [x] CA2.11: `go run . -h` (no toca ninguna API) describe `-canal`, `-chat-seg-pico` y
   `-chat-seg` como valores iniciales cuando no existe `datos.canales.json`.
-- [ ] CA2.12: con `Settings` en `nil` (modo informe, tests de hoy) todo sigue igual:
+- [x] CA2.12: con `Settings` en `nil` (modo informe, tests de hoy) todo sigue igual:
   `TestFlowAgainstFakeAPI` con el mismo `yt.Units`; `git diff main -- youtube.go` vacío.
-- [ ] CA2.13: README (Canales editable, intervalos por canal, cifras de cuota por canal,
+- [x] CA2.13: README (Canales editable, intervalos por canal, cifras de cuota por canal,
   `datos.canales.json`), AGENTS.md y CLAUDE.md ("Reglas que cambian", F2) y ADR 0005 — se
   verifica con `git diff --stat main` y `ls docs/decisions/0005-*.md`.
 - [ ] CA2.14: navegador con la vista previa (claro, oscuro, celular): agregar (queda

@@ -4,6 +4,7 @@ import (
 	"embed"
 	"encoding/csv"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html/template"
 	"log"
@@ -48,6 +49,7 @@ type Server struct {
 	// Claude, para la tarjeta de Canales cuando el análisis está apagado.
 	claudeWarn, claudeModel string
 	claudeUSD               float64
+	settings                *Settings // canales e intervalos editables (ADR 0005); nil: Canales en solo lectura
 }
 
 // ChatSettings son los intervalos del chat que usa el worker (WorkerConfig).
@@ -85,6 +87,12 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /parcial/programas", s.programsPartial)
 	mux.HandleFunc("GET /parcial/programas/detalle", s.programDetailPartial)
 	mux.HandleFunc("GET /parcial/canales/estado", s.channelsState)
+	mux.HandleFunc("GET /parcial/canales/form", s.channelsForm)
+	mux.HandleFunc("GET /parcial/canales/cuota", s.channelsQuota)
+	mux.HandleFunc("POST /canales", s.channelsSave)
+	mux.HandleFunc("POST /canales/agregar", s.channelsAdd)
+	mux.HandleFunc("POST /canales/pausar", s.channelsPause)
+	mux.HandleFunc("POST /canales/quitar", s.channelsRemove)
 	mux.HandleFunc("POST /claude/analizar", s.claudeAnalyze)
 	mux.HandleFunc("GET /export.csv", s.export)
 	mux.Handle("GET /static/", http.FileServerFS(staticFS))
@@ -463,6 +471,8 @@ func chatEvery(infos map[string]ChatInfo, id string) string {
 	switch {
 	case !ok || ci.Blocked:
 		return ""
+	case ci.Held:
+		return "en pausa desde Canales"
 	case ci.RealTime:
 		return "llega en tiempo real continuo"
 	case ci.Stream:
@@ -618,6 +628,8 @@ func chatBanner(infos map[string]ChatInfo, id string, now time.Time) *Banner {
 	switch {
 	case ci.Blocked:
 		return &Banner{Class: "crit", Title: "YouTube no deja leer este chat con la API key: no se le consulta más mientras siga este vivo."}
+	case ci.Held:
+		return &Banner{Class: "warn", Title: "Chat en pausa desde Canales: no se lee ni gasta cuota hasta que lo reanudes. Los mensajes de este rato no se guardan."}
 	case ci.Open:
 		b = Banner{Class: "ok", Title: "Conectado en tiempo real desde hace " + humanDur(now.Sub(ci.Opened)) + ": los mensajes llegan apenas se publican."}
 	case ci.Paused:
@@ -1642,13 +1654,18 @@ func plural(n int, one, many string) string {
 	return miles(n) + " " + many
 }
 
-// Pantalla Canales, en solo lectura: los canales se cambian con -canal y los
-// intervalos con -chat-seg-pico y -chat-seg. Nada acá escribe ni llama a la API.
+// Pantalla Canales. Con Settings (el modo dashboard) se edita desde la PC
+// del monitor: agregar, pausar, quitar y los intervalos de cada canal. Los
+// handlers solo cambian Settings (con su mutex, detrás de sameOrigin y
+// localRequest) y leen el Store; nunca llaman a YouTube: los canales nuevos
+// los resuelve el worker. Sin Settings (los tests de antes), solo lectura.
 
-// ChannelRow es la tarjeta de un canal en Canales.
+// ChannelRow es la tarjeta de estado de un canal en Canales.
 type ChannelRow struct {
 	Name, Input, Role string
-	Live              bool
+	Live, Paused      bool
+	Pending           bool   // todavía no lo resolvió el worker
+	Err               string // YouTube no lo encontró
 	Status, How       string
 	Hours, Chat       string
 }
@@ -1659,6 +1676,38 @@ type QuotaPart struct {
 	W               float64 // % de quotaScale
 }
 
+// ChannelForm es un canal en el formulario de Canales.
+type ChannelForm struct {
+	I                 int
+	Input, Name, Role string
+	Paused            bool
+	Peak, Off         []IntervalOpt
+	Estimate          string
+	PeakSec, OffSec   int
+}
+
+// IntervalOpt es una opción de los selects de intervalo.
+type IntervalOpt struct {
+	Sec      int
+	Label    string
+	Selected bool
+}
+
+// intervalOpts son las opciones de un select, con la actual elegida y
+// agregada si no está en la lista (puede venir de los flags).
+func intervalOpts(choices []int, cur int) []IntervalOpt {
+	secs := append([]int(nil), choices...)
+	if !slices.Contains(secs, cur) {
+		secs = append(secs, cur)
+		slices.Sort(secs)
+	}
+	out := make([]IntervalOpt, len(secs))
+	for i, n := range secs {
+		out[i] = IntervalOpt{n, humanDur(time.Duration(n) * time.Second), n == cur}
+	}
+	return out
+}
+
 // chatText describe los intervalos del chat, que valen para todos los vivos.
 func chatText(cs ChatSettings) string {
 	if cs.PeakFrom == cs.PeakTo {
@@ -1666,6 +1715,18 @@ func chatText(cs ChatSettings) string {
 	}
 	return fmt.Sprintf("cada %s en el pico (%02d a %02d h) y cada %s fuera, por turnos entre todos los vivos",
 		humanDur(cs.Peak), cs.PeakFrom, cs.PeakTo, humanDur(cs.Off))
+}
+
+// channelChat describe los intervalos de un canal de la configuración.
+func channelChat(cs ChatSettings, c ChannelSetting) string {
+	t := fmt.Sprintf("cada %s en el pico (%02d a %02d h) y cada %s fuera", humanDur(c.peak()), cs.PeakFrom, cs.PeakTo, humanDur(c.off()))
+	if cs.PeakFrom == cs.PeakTo {
+		t = "cada " + humanDur(c.off()) + " todo el día (sin horario pico)"
+	}
+	if c.Paused {
+		t += " · en pausa: no se lee hasta que lo reanudes"
+	}
+	return t
 }
 
 var weekdayShort = [...]string{"dom", "lun", "mar", "mié", "jue", "vie", "sáb"}
@@ -1682,10 +1743,15 @@ func hoursText(lh HoursOnAir) string {
 	return strings.Join(parts, " · ")
 }
 
+// editable dice si este pedido puede cambiar la configuración: hay Settings
+// y viene de la PC del monitor (el dashboard no tiene usuarios).
+func (s *Server) editable(r *http.Request) bool { return s.settings != nil && localRequest(r) }
+
 func (s *Server) channelsPage(w http.ResponseWriter, r *http.Request) {
 	now := s.clock()
 	snap := s.st.Status()
-	data := s.channelsData(snap, now)
+	edit := s.editable(r)
+	data := s.channelsData(snap, now, edit)
 	data["Tab"], data["Channel"] = "canales", snap.Channel
 	data["Claude"] = s.claudeSetup(snap, now)
 	data["FastEvery"], data["FastFor"], data["FastMax"] = humanDur(fastEvery), humanDur(fastFor), fastUnitsPerCut()
@@ -1696,23 +1762,53 @@ func (s *Server) channelsPage(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	data["Every"] = humanDur(every)
+	if s.settings != nil {
+		data["Warn"] = s.settings.Warning()
+	}
+	if edit {
+		data["Add"] = s.addData("", "", "")
+		data["Form"] = s.formData(snap, now, nil, "", "", false)
+	}
 	s.render(w, "canales.html", data)
 }
 
-// channelsState es el estado de los canales y la cuota (cada 5 s).
+// channelsState es el estado de los canales (cada 5 s). No trae el
+// formulario: así no pisa lo que se está editando.
 func (s *Server) channelsState(w http.ResponseWriter, r *http.Request) {
-	s.render(w, "canales-estado", s.channelsData(s.st.Status(), s.clock()))
+	s.render(w, "canales-estado", s.channelsData(s.st.Status(), s.clock(), s.editable(r)))
 }
 
-// channelsData arma las tarjetas de los canales y la cuota estimada.
-func (s *Server) channelsData(snap Snapshot, now time.Time) map[string]any {
+// settingsList es la configuración vigente, o la de -canal armada con el
+// estado de los canales (sin Settings, los tests de antes).
+func (s *Server) settingsList(snap Snapshot) []ChannelSetting {
+	if s.settings != nil {
+		list, _ := s.settings.Get()
+		return list
+	}
+	cs := s.chatSettings()
+	var list []ChannelSetting
+	for _, c := range snap.Channels {
+		list = append(list, ChannelSetting{Input: c.Input, ChatPeakSec: int(cs.Peak / time.Second), ChatOffSec: int(cs.Off / time.Second)})
+	}
+	return list
+}
+
+// channelsData arma las tarjetas de estado de los canales y, salvo que se
+// pueda editar (ahí va en el formulario), la cuota estimada.
+func (s *Server) channelsData(snap Snapshot, now time.Time, edit bool) map[string]any {
 	cs := s.chatSettings()
 	week := s.st.Lives(now.Add(-7 * 24 * time.Hour))
 	paused := s.quotaPaused(snap)
-	ids := map[string]bool{}
+	byInput := map[string]ChannelStatus{}
+	for _, ch := range snap.Channels {
+		byInput[ch.Input] = ch
+	}
+	errs := map[string]string{}
+	for _, p := range snap.Pending {
+		errs[p.Input] = p.Err
+	}
 	var rows []ChannelRow
-	for i, ch := range snap.Channels {
-		ids[ch.ID] = true
+	addRow := func(ch ChannelStatus, i int) ChannelRow {
 		row := ChannelRow{Name: channelName(ch), Input: ch.Input, Role: "canal extra", Chat: chatText(cs)}
 		if row.Input == "" {
 			row.Input = ch.ID
@@ -1740,43 +1836,373 @@ func (s *Server) channelsData(snap Snapshot, now time.Time) map[string]any {
 		}
 		row.How = howItAirs(ProgramSegments(week, ch.ID, live, now.Add(-7*24*time.Hour), now))
 		row.Hours = hoursText(LiveHours(week, map[string]bool{ch.ID: true}, cs.PeakFrom, cs.PeakTo, now))
-		rows = append(rows, row)
+		return row
 	}
+	if s.settings == nil {
+		for i, ch := range snap.Channels {
+			rows = append(rows, addRow(ch, i))
+		}
+	} else {
+		resolved := 0
+		for _, set := range s.settingsList(snap) {
+			ch, ok := byInput[set.Input]
+			if !ok {
+				rows = append(rows, ChannelRow{Name: set.Input, Input: set.Input, Role: "canal nuevo", Pending: true, Err: errs[set.Input], Paused: set.Paused})
+				continue
+			}
+			row := addRow(ch, resolved)
+			resolved++
+			row.Chat, row.Paused = channelChat(cs, set), set.Paused
+			rows = append(rows, row)
+		}
+	}
+	data := map[string]any{"Rows": rows, "Editable": edit, "Settings": s.settings != nil, "Used": miles(snap.Units),
+		"ChatNow": chatNow(cs, now, s.settings != nil)}
+	if !edit {
+		_, data["Cuota"] = s.quotaData(snap, now, nil)
+	}
+	return data
+}
+
+// draftOf lee los intervalos de un formulario (canal, pico y fuera, uno por
+// canal y en el mismo orden). Lo que no es un número se descarta.
+func draftOf(v url.Values) map[string][2]int {
+	out := map[string][2]int{}
+	ins, peaks, offs := v["canal"], v["pico"], v["fuera"]
+	for i, in := range ins {
+		if i >= len(peaks) || i >= len(offs) {
+			break
+		}
+		p, err1 := strconv.Atoi(peaks[i])
+		o, err2 := strconv.Atoi(offs[i])
+		if err1 == nil && err2 == nil {
+			out[in] = [2]int{p, o}
+		}
+	}
+	return out
+}
+
+// withDraft aplica a la configuración los intervalos del formulario que se
+// pueden guardar (o que son los de ahora), para mostrarlos y estimar la cuota.
+func withDraft(list []ChannelSetting, draft map[string][2]int) []ChannelSetting {
+	out := append([]ChannelSetting(nil), list...)
+	for i, c := range out {
+		d, ok := draft[c.Input]
+		if !ok {
+			continue
+		}
+		if validChatSec(d[0]) || d[0] == c.ChatPeakSec {
+			out[i].ChatPeakSec = d[0]
+		}
+		if validChatSec(d[1]) || d[1] == c.ChatOffSec {
+			out[i].ChatOffSec = d[1]
+		}
+	}
+	return out
+}
+
+// quotaData estima la cuota del día con la configuración (y los intervalos
+// del formulario, si hay): un grupo de chat por canal. Devuelve también las
+// filas del formulario, con la cuota de cada chat.
+func (s *Server) quotaData(snap Snapshot, now time.Time, draft map[string][2]int) ([]ChannelForm, map[string]any) {
+	cs := s.chatSettings()
+	week := s.st.Lives(now.Add(-7 * 24 * time.Hour))
 	budget := s.budget
 	if budget <= 0 {
 		budget = 9000
 	}
-	// En esta etapa todos los vivos se leen por turnos: un solo grupo con las
-	// horas en vivo de la unión de los canales.
+	ids := map[string]bool{}
+	for _, c := range snap.Channels {
+		ids[c.ID] = true
+	}
 	lh := LiveHours(week, ids, cs.PeakFrom, cs.PeakTo, now)
-	q := EstimateQuota(len(snap.Channels), lh.Cuts, []ChatGroup{{PeakEvery: cs.Peak, OffEvery: cs.Off, PeakHours: lh.Peak, OffHours: lh.Off}}, budget)
-	parts := []QuotaPart{
-		{"q-vid", "Revisar videos y vivos", miles(q.Videos + q.Fast), 0},
-		{"q-com", "Comentarios", "~" + miles(q.Comments), 0},
-		{"q-chat", "Chat de todos los vivos (por turnos)", miles(q.Chat[0]), 0},
-	}
-	left := 100.0
-	for i, n := range []int{q.Videos + q.Fast, q.Comments, q.Chat[0]} {
-		parts[i].W = min(float64(n)*100/quotaScale, left)
-		left -= parts[i].W
-	}
 	hours := "sin historial: se suponen 24 h en vivo"
 	if !lh.NoHistory {
 		hours = fmt.Sprintf("%s h en vivo por día en el pico y %s h fuera, según los últimos 7 días", decimal(lh.Peak), decimal(lh.Off))
 	}
-	return map[string]any{
-		"Rows": rows, "Quota": q, "Parts": parts, "Hours": hours, "Used": miles(snap.Units),
+	var groups []ChatGroup
+	var rows []ChannelForm
+	chatLabel := "Chat de todos los vivos (por turnos)"
+	if s.settings == nil {
+		// Sin Settings todos los vivos se turnan con un solo intervalo: un
+		// grupo con las horas en vivo de la unión de los canales.
+		groups = []ChatGroup{{PeakEvery: cs.Peak, OffEvery: cs.Off, PeakHours: lh.Peak, OffHours: lh.Off}}
+	} else {
+		chatLabel = "Chat de los canales"
+		byInput := map[string]ChannelStatus{}
+		for _, ch := range snap.Channels {
+			byInput[ch.Input] = ch
+		}
+		resolved := 0
+		for i, c := range withDraft(s.settingsList(snap), draft) {
+			ch, ok := byInput[c.Input]
+			one := LiveHours(nil, nil, cs.PeakFrom, cs.PeakTo, now) // sin resolver: 24 h, el peor caso
+			row := ChannelForm{I: i, Input: c.Input, Name: c.Input, Role: "canal nuevo", Paused: c.Paused, PeakSec: c.ChatPeakSec, OffSec: c.ChatOffSec}
+			if ok {
+				one = LiveHours(week, map[string]bool{ch.ID: true}, cs.PeakFrom, cs.PeakTo, now)
+				row.Name, row.Role = channelName(ch), "canal extra"
+				if resolved == 0 {
+					row.Role = "canal principal"
+				}
+				resolved++
+			}
+			row.Peak, row.Off = intervalOpts(peakChoices, c.ChatPeakSec), intervalOpts(offChoices, c.ChatOffSec)
+			row.Estimate = decimal(one.Peak+one.Off) + " h en vivo"
+			if one.NoHistory {
+				row.Estimate = "sin historial"
+			}
+			groups = append(groups, ChatGroup{PeakEvery: c.peak(), OffEvery: c.off(), PeakHours: one.Peak, OffHours: one.Off, Paused: c.Paused})
+			rows = append(rows, row)
+		}
+	}
+	n := len(groups) // con Settings, un grupo por canal de la configuración
+	if s.settings == nil {
+		n = len(snap.Channels)
+	}
+	// Los vivos sueltos de -vivos que no son de un canal configurado leen su
+	// chat aparte, con -chat-seg-pico / -chat-seg: suman su propio grupo.
+	loose := map[string]bool{}
+	for _, v := range snap.Videos {
+		if s.settings != nil && v.LiveStatus == "live" && v.LiveChatID != "" && !ids[v.ChannelID] {
+			loose[v.ChannelID] = true
+		}
+	}
+	if len(loose) > 0 {
+		lo := LiveHours(week, loose, cs.PeakFrom, cs.PeakTo, now)
+		groups = append(groups, ChatGroup{PeakEvery: cs.Peak, OffEvery: cs.Off, PeakHours: lo.Peak, OffHours: lo.Off})
+	}
+	q := EstimateQuota(n, lh.Cuts, groups, budget)
+	chat, looseChat := 0, 0
+	for i, n := range q.Chat {
+		if i >= len(rows) && len(loose) > 0 && s.settings != nil {
+			looseChat += n
+			continue
+		}
+		chat += n
+		if i < len(rows) {
+			why := rows[i].Estimate
+			if rows[i].Paused {
+				why = "en pausa"
+			}
+			rows[i].Estimate = fmt.Sprintf("Cuota estimada de este chat: %s unidades por día (%s)", miles(n), why)
+		}
+	}
+	parts := []QuotaPart{
+		{"q-vid", "Revisar videos y vivos", miles(q.Videos + q.Fast), 0},
+		{"q-com", "Comentarios", "~" + miles(q.Comments), 0},
+		{"q-chat", chatLabel, miles(chat), 0},
+	}
+	sizes := []int{q.Videos + q.Fast, q.Comments, chat}
+	if len(loose) > 0 {
+		parts = append(parts, QuotaPart{"q-loose", "Vivos sueltos de -vivos", miles(looseChat), 0})
+		sizes = append(sizes, looseChat)
+	}
+	left := 100.0
+	for i, n := range sizes {
+		parts[i].W = min(float64(n)*100/quotaScale, left)
+		left -= parts[i].W
+	}
+	return rows, map[string]any{
+		"Quota": q, "Parts": parts, "Hours": hours, "Used": miles(snap.Units), "Editable": s.settings != nil,
 		"Total": miles(q.Total), "Limit": miles(q.Limit), "Budget": miles(budget),
 		"LimitX": float64(q.Limit) * 100 / quotaScale, "BudgetX": float64(budget) * 100 / quotaScale,
 		"Aria": fmt.Sprintf("Cuota estimada por día: %s unidades de %s (videos y vivos %s, comentarios %s, chat %s); el chat se pausa en %s y todo se frena en %s",
-			miles(q.Total), miles(quotaScale), miles(q.Videos+q.Fast), miles(q.Comments), miles(q.Chat[0]), miles(q.Limit), miles(budget)),
-		"ChatNow": chatNow(cs, now), "Reserve": miles(reserveForComments),
+			miles(q.Total), miles(quotaScale), miles(q.Videos+q.Fast), miles(q.Comments), miles(chat+looseChat), miles(q.Limit), miles(budget)),
+		"Reserve": miles(reserveForComments),
 	}
 }
 
-// chatNow es el intervalo que vale en este momento.
-func chatNow(cs ChatSettings, now time.Time) string {
-	if peakHour(now.Local().Hour(), cs.PeakFrom, cs.PeakTo) {
+// formData es el formulario de los canales: lo guardado con los intervalos
+// del borrador (draft) y un aviso.
+func (s *Server) formData(snap Snapshot, now time.Time, draft map[string][2]int, notice, class string, oob bool) map[string]any {
+	rows, quota := s.quotaData(snap, now, draft)
+	cs := s.chatSettings()
+	peak := fmt.Sprintf("%02d a %02d h", cs.PeakFrom, cs.PeakTo)
+	if cs.PeakFrom == cs.PeakTo {
+		peak = "no hay horario pico"
+	}
+	list, _ := s.settings.Get()
+	dirty := false
+	for i, c := range list {
+		if i < len(rows) && (rows[i].PeakSec != c.ChatPeakSec || rows[i].OffSec != c.ChatOffSec) {
+			dirty = true
+		}
+	}
+	return map[string]any{"Rows": rows, "Cuota": quota, "Notice": notice, "NoticeClass": class, "OOB": oob, "PeakText": peak, "Dirty": dirty}
+}
+
+// addData es el formulario "Agregar canal".
+func (s *Server) addData(value, notice, class string) map[string]any {
+	list, _ := s.settings.Get()
+	return map[string]any{"Value": value, "Notice": notice, "NoticeClass": class, "Full": len(list) >= maxChannels, "Max": maxChannels}
+}
+
+// channelsForm es "Descartar": el formulario con lo guardado.
+func (s *Server) channelsForm(w http.ResponseWriter, r *http.Request) {
+	if !s.editable(r) {
+		http.Error(w, "Para cambiar la configuración, abrí el dashboard en la PC del monitor.", http.StatusForbidden)
+		return
+	}
+	s.render(w, "canales-form", s.formData(s.st.Status(), s.clock(), nil, "", "", false))
+}
+
+// channelsQuota recalcula la barra con lo elegido en el formulario, sin
+// guardar nada; las cuotas de cada canal van con hx-swap-oob.
+func (s *Server) channelsQuota(w http.ResponseWriter, r *http.Request) {
+	if !s.editable(r) {
+		http.Error(w, "Para cambiar la configuración, abrí el dashboard en la PC del monitor.", http.StatusForbidden)
+		return
+	}
+	rows, quota := s.quotaData(s.st.Status(), s.clock(), draftOf(r.URL.Query()))
+	s.render(w, "canales-cuota-oob", map[string]any{"Cuota": quota, "Rows": rows})
+}
+
+// settingsPost son las guardas de los POST de Canales: mismo origen, desde
+// la PC del monitor y un cuerpo chico. Si devuelve false ya respondió.
+func (s *Server) settingsPost(w http.ResponseWriter, r *http.Request) bool {
+	if s.settings == nil {
+		http.NotFound(w, r)
+		return false
+	}
+	if !sameOrigin(r) || !localRequest(r) {
+		http.Error(w, "Para cambiar la configuración, abrí el dashboard en la PC del monitor.", http.StatusForbidden)
+		return false
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 16<<10)
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "Pedido inválido.", http.StatusBadRequest)
+		return false
+	}
+	return true
+}
+
+// renderForm responde el formulario con un aviso. Si no se guardó, el aviso
+// lo dice y quedan los intervalos que se estaban editando.
+func (s *Server) renderForm(w http.ResponseWriter, r *http.Request, ok, failed string, err error) {
+	notice, class := ok, "ok"
+	if err != nil {
+		notice, class = failed+err.Error(), "warn"
+	}
+	s.render(w, "canales-form", s.formData(s.st.Status(), s.clock(), draftOf(r.PostForm), notice, class, false))
+}
+
+// channelsSave es "Guardar cambios": los intervalos de todos los canales.
+func (s *Server) channelsSave(w http.ResponseWriter, r *http.Request) {
+	if !s.settingsPost(w, r) {
+		return
+	}
+	ins, peaks, offs := r.PostForm["canal"], r.PostForm["pico"], r.PostForm["fuera"]
+	err := s.settings.Update(func(cs []ChannelSetting) ([]ChannelSetting, error) {
+		for i, in := range ins {
+			if i >= len(peaks) || i >= len(offs) {
+				return nil, errors.New("faltan intervalos en el formulario")
+			}
+			p, err1 := strconv.Atoi(peaks[i])
+			o, err2 := strconv.Atoi(offs[i])
+			if err1 != nil || err2 != nil {
+				return nil, fmt.Errorf("intervalo inválido para %s", in)
+			}
+			for j := range cs {
+				if cs[j].Input == in {
+					cs[j].ChatPeakSec, cs[j].ChatOffSec = p, o
+				}
+			}
+		}
+		return cs, nil
+	})
+	s.renderForm(w, r, "Listo: se guardó. Los cambios se aplican sin reiniciar el monitor.", "No se guardó: ", err)
+}
+
+// findSetting busca un canal de la configuración por lo que escribió la persona.
+func findSetting(cs []ChannelSetting, in string) int {
+	return slices.IndexFunc(cs, func(c ChannelSetting) bool { return c.Input == in })
+}
+
+var errNoChannel = errors.New("ese canal ya no está en la configuración (recargá la página)")
+
+// channelsPause es "Pausar" / "Reanudar": inmediato, solo el chat.
+func (s *Server) channelsPause(w http.ResponseWriter, r *http.Request) {
+	if !s.settingsPost(w, r) {
+		return
+	}
+	in := r.PostForm.Get("objetivo")
+	paused := false
+	err := s.settings.Update(func(cs []ChannelSetting) ([]ChannelSetting, error) {
+		i := findSetting(cs, in)
+		if i < 0 {
+			return nil, errNoChannel
+		}
+		cs[i].Paused = !cs[i].Paused
+		paused = cs[i].Paused
+		return cs, nil
+	})
+	ok := "Se reanudó el chat de " + in + "."
+	if paused {
+		ok = "Se pausó el chat de " + in + ": no se lee ni gasta cuota, y sus vivos se siguen revisando."
+	}
+	s.renderForm(w, r, ok, "No se guardó: ", err)
+}
+
+// channelsRemove es "Quitar": inmediato. Lo guardado queda hasta que venza.
+func (s *Server) channelsRemove(w http.ResponseWriter, r *http.Request) {
+	if !s.settingsPost(w, r) {
+		return
+	}
+	in := r.PostForm.Get("objetivo")
+	if list, _ := s.settings.Get(); len(list) == 1 && list[0].Input == in {
+		s.render(w, "canales-form", s.formData(s.st.Status(), s.clock(), draftOf(r.PostForm),
+			"No se puede quitar el único canal: el monitor necesita al menos uno.", "warn", false))
+		return
+	}
+	err := s.settings.Update(func(cs []ChannelSetting) ([]ChannelSetting, error) {
+		i := findSetting(cs, in)
+		if i < 0 {
+			return nil, errNoChannel
+		}
+		return slices.Delete(cs, i, i+1), nil
+	})
+	s.renderForm(w, r, "Se quitó "+in+". Lo guardado queda hasta que venza (30 días).", "No se guardó: ", err)
+}
+
+// channelsAdd es "Agregar canal": valida con ParseChannel y lo suma al
+// final; lo resuelve el worker (el handler no llama a YouTube). Arranca con
+// los intervalos más espaciados para no pasarse de la cuota sin querer.
+func (s *Server) channelsAdd(w http.ResponseWriter, r *http.Request) {
+	if !s.settingsPost(w, r) {
+		return
+	}
+	raw := strings.TrimSpace(r.PostForm.Get("nuevo"))
+	in := ParseChannel(raw)
+	var add map[string]any
+	var err error
+	if in == "" || !reChannelInput.MatchString(in) {
+		add = s.addData(raw, "No reconozco el canal «"+raw+"»: pegá el link del canal, el @handle o el ID que empieza con UC.", "warn")
+	} else {
+		peak, off := peakChoices[len(peakChoices)-1], offChoices[len(offChoices)-1]
+		err = s.settings.Update(func(cs []ChannelSetting) ([]ChannelSetting, error) {
+			return append(cs, ChannelSetting{Input: in, ChatPeakSec: peak, ChatOffSec: off}), nil
+		})
+		if err != nil {
+			add = s.addData(raw, "No se agregó: "+err.Error()+".", "warn")
+		} else {
+			add = s.addData("", fmt.Sprintf("Se agregó %s: el monitor lo busca en YouTube en la próxima revisión (1 unidad). El chat arranca cada %s en el pico y cada %s fuera: cambialo abajo si hace falta.",
+				in, humanDur(time.Duration(peak)*time.Second), humanDur(time.Duration(off)*time.Second)), "ok")
+		}
+	}
+	s.render(w, "canales-agregar", add)
+	s.render(w, "canales-form", s.formData(s.st.Status(), s.clock(), draftOf(r.PostForm), "", "", true))
+}
+
+// chatNow es el intervalo que vale en este momento (sin Settings) o si
+// ahora es horario pico (con Settings, cada canal tiene los suyos).
+func chatNow(cs ChatSettings, now time.Time, perChannel bool) string {
+	in := peakHour(now.Local().Hour(), cs.PeakFrom, cs.PeakTo)
+	switch {
+	case perChannel && in:
+		return fmt.Sprintf("Ahora es horario pico (%02d a %02d h).", cs.PeakFrom, cs.PeakTo)
+	case perChannel:
+		return "Ahora es fuera del horario pico."
+	case in:
 		return "Ahora: cada " + humanDur(cs.Peak) + " (horario pico)."
 	}
 	return "Ahora: cada " + humanDur(cs.Off) + " (fuera del horario pico)."
