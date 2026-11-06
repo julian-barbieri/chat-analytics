@@ -1,10 +1,10 @@
 # Spec: gráficos con lo último a la izquierda, alertas técnicas y nuevo orden de En vivo
 
-- **Estado:** borrador
+- **Estado:** aprobada
 - **Tipo:** mejora
 - **Rama:** `feat/orden-graficos-alertas-tecnicas`
 - **Origen:** mensaje del usuario con tres capturas (Sentimiento del programa, Participación, Alertas)
-- **Aprobada por / fecha:** —
+- **Aprobada por / fecha:** Julian Barbieri, 2026-11-06
 
 ## Contexto
 
