@@ -421,7 +421,8 @@ type ProgramDetail struct {
 	// Sentimiento de las tandas de Claude: una fila por franja de 5 min y los
 	// motivos de todo el programa. Sin Claude, Sent va en false.
 	Sent, Motives bool
-	SentRows      []SentRow
+	SentRows      []SentRow // de la más nueva a la más vieja
+	SentAvg       *SentRow  // todo el tramo, arriba de las franjas
 	Neg, Pos      []MotiveRow
 	NegN, PosN    int
 	// Participación de todo el tramo (el gráfico de "Momentos con más
@@ -527,6 +528,7 @@ func (s *Server) programSentiment(d *ProgramDetail, ps ProgramSeg, msgs []Messag
 		end = now
 	}
 	d.Sent = true
+	var all SentSlot
 	for _, sl := range s.st.SentSlots(ps.Channel.ID, sg.Start) {
 		if sl.Program != sg.Program || sl.Start.After(end) || sl.Total() == 0 {
 			continue
@@ -534,6 +536,15 @@ func (s *Server) programSentiment(d *ProgramDetail, ps ProgramSeg, msgs []Messag
 		b := sentStack(sl)
 		p := sentPct(sl)
 		d.SentRows = append(d.SentRows, SentRow{Hour: sl.Start.Local().Format("15:04"), Label: b.Label, Low: b.Low, Pos: p.Pos, Neu: p.Neu, Neg: p.Neg})
+		all.Pos, all.Neu, all.Neg = all.Pos+sl.Pos, all.Neu+sl.Neu, all.Neg+sl.Neg
+	}
+	// Lo más nuevo arriba, como los gráficos; el promedio suma los conteos de
+	// todas las franjas (una franja de pocos mensajes no pesa como una llena).
+	slices.Reverse(d.SentRows)
+	if all.Total() > 0 {
+		p := sentPct(all)
+		d.SentAvg = &SentRow{Hour: "Promedio", Pos: p.Pos, Neu: p.Neu, Neg: p.Neg, Low: all.Total() < minChartMsgs,
+			Label: fmt.Sprintf("Promedio del programa: %.0f %% positivo, %.0f %% neutro, %.0f %% negativo (%s)", p.Pos, p.Neu, p.Neg, plural(all.Total(), "mensaje", "mensajes"))}
 	}
 	byID := messagesByID(msgs)
 	labels := s.st.Labels(messageIDs(msgs))

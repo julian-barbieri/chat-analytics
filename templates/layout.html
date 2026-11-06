@@ -191,8 +191,8 @@ tr.sel td { background: var(--ia-bg); }
 .pmax, .pmarks, .pticks { position: relative; height: 16px; font-size: 12px; line-height: 16px; color: var(--text-muted); }
 .pmax .vmax { position: absolute; right: 0; color: var(--text-secondary); }
 .pmarks span, .pticks span { position: absolute; transform: translateX(-50%); white-space: nowrap; }
-.pticks span:first-child { transform: none; }
-.pticks span.end { transform: translateX(-100%); }
+.pticks span.end { transform: none; }
+.pticks span:last-child { transform: translateX(-100%); }
 .pmarks span { color: var(--warn-text); font-weight: 600; }
 .bar.top { fill: var(--warn-text); }
 .pwin { margin: 4px 0 8px; }
@@ -230,7 +230,9 @@ tr.sel td { background: var(--ia-bg); }
 /* Programas de hoy: una fila por franja de 5 min con la barra apilada. */
 .sfilas { list-style: none; margin: 4px 0; padding: 0; max-height: 420px; overflow-y: auto; }
 .sfilas li { display: flex; align-items: center; gap: 8px; padding: 1px 0; font-size: 12px; }
-.sfilas .h { width: 40px; flex: none; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.sfilas li.prom { font-weight: 600; padding-bottom: 6px; margin-bottom: 4px; border-bottom: 1px solid var(--border); }
+.sfilas li.prom .h { color: var(--text-primary); }
+.sfilas .h { width: 60px; flex: none; color: var(--text-muted); font-variant-numeric: tabular-nums; }
 .hbar { display: flex; flex: 1; height: 12px; border-radius: 3px; overflow: hidden; }
 .hbar .pos { background: var(--sent-pos); }
 .hbar .neu { background: var(--sent-neu); }

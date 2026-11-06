@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -288,14 +289,12 @@ func claudeProjection(spent int64, spentModel string, first, now time.Time, mode
 // motivos. Los mensajes que se muestran salen siempre del Store.
 
 const (
-	minSentMsgs     = 20              // una franja con menos no cuenta para lo típico ni para la alerta de insultos
+	minSentMsgs     = 20              // una franja con menos no cuenta para lo típico
 	minChartMsgs    = 5               // una barra del gráfico con menos no tiene color
 	minChartSeg     = 5 * time.Minute // un tramo más corto se junta con el de al lado en el gráfico
 	minTypicalSlots = 6               // franjas que hacen falta para decir qué es lo típico
 	sentRisePts     = 5               // puntos de negativo sobre lo típico para el cartel
 	techAlertMin    = 15              // quejas técnicas en 5 min
-	insultAlertPct  = 5               // % de insultos en 10 min
-	insultWindow    = 10 * time.Minute
 	alertMsgsMax    = 10
 	motivesShown    = 3
 	motiveQuotes    = 2
@@ -489,11 +488,11 @@ func sentimentChart(slots []SentSlot, segs []Segment, from, now time.Time) SentC
 		}
 		withData++
 		b := sentStack(s)
-		b.X, b.W = float64(i)+0.1, 0.8
+		b.X, b.W = float64(n-1-i)+0.1, 0.8 // lo más nuevo a la izquierda
 		c.Bars = append(c.Bars, b)
 	}
 	c.Strip, c.Lines = programStrip(segs, from, n, now)
-	c.Ticks = []Tick{{Left: 0, Label: from.Local().Format("15:04")}, {Left: 100, Label: now.Local().Format("15:04") + " en curso", End: true}}
+	c.Ticks = []Tick{{Left: 0, Label: now.Local().Format("15:04") + " en curso", End: true}, {Left: 100, Label: from.Local().Format("15:04")}}
 	c.Aria = fmt.Sprintf("Sentimiento del chat cada 5 min desde las %s: %s", from.Local().Format("15:04"), plural(withData, "franja con datos", "franjas con datos"))
 	return c
 }
@@ -521,7 +520,8 @@ func sentStack(s SentSlot) SentStack {
 func programStrip(segs []Segment, from time.Time, n int, now time.Time) (strip []SentProg, lines []SentLine) {
 	w := float64(max(n, 1))
 	end := from.Add(time.Duration(n) * slotStep)
-	x := func(t time.Time) float64 { return float64(t.Sub(from)) / float64(slotStep) }
+	// Espejado: lo más nuevo a la izquierda, así que x cuenta desde end.
+	x := func(t time.Time) float64 { return float64(end.Sub(t)) / float64(slotStep) }
 	for _, p := range chartPrograms(segs, from, end, now) {
 		if p.start.After(from) {
 			lines = append(lines, SentLine{X: x(p.start)})
@@ -530,9 +530,11 @@ func programStrip(segs []Segment, from time.Time, n int, now time.Time) (strip [
 		if p.live {
 			r = p.real.Local().Format("15:04") + " a ahora"
 		}
-		strip = append(strip, SentProg{Left: x(p.start) * 100 / w, Width: x(p.end)*100/w - x(p.start)*100/w,
+		strip = append(strip, SentProg{Left: x(p.end) * 100 / w, Width: x(p.start)*100/w - x(p.end)*100/w,
 			Name: p.name, Hour: p.real.Local().Format("15:04"), Range: r})
 	}
+	// El más nuevo primero, también en la lista de texto.
+	slices.Reverse(strip)
 	return strip, lines
 }
 
@@ -670,79 +672,55 @@ type Alert struct {
 }
 
 // AlertsView es la tarjeta de alertas: las que saltaron o la línea de calma,
-// y qué parte salió de Claude y qué de las reglas.
+// y cuántos mensajes tienen etiqueta de Claude.
 type AlertsView struct {
 	Alerts     []Alert
 	Calm, Note string
 }
 
-// Alerts mira los umbrales fijos: quejas técnicas ≥ techAlertMin en 5 min y
-// insultos ≥ insultAlertPct % de los mensajes de 10 min con al menos
-// minSentMsgs mensajes. Las quejas técnicas salen solo de Claude (las reglas
-// confundían temas de la radio con fallas); los insultos usan la etiqueta y,
-// sin etiqueta, Classify.
+// Alerts mira un solo umbral fijo: quejas técnicas de sonido o transmisión
+// ≥ techAlertMin en 5 min. Salen solo de Claude (las reglas confundían temas
+// de la radio con fallas). Los insultos ya no alertan: lo pidió la persona
+// (siguen en Categorías y en las etiquetas).
 func Alerts(msgs []Message, labels map[string]MessageLabel, now time.Time) AlertsView {
-	var tech, insults []Message
-	n10, byClaude, n5, labeled5 := 0, 0, 0, 0
+	var tech []Message
+	n5, labeled5 := 0, 0
 	for _, m := range msgs {
-		if m.Source != "chat" || !m.At.After(now.Add(-insultWindow)) || m.At.After(now) {
+		if m.Source != "chat" || !m.At.After(now.Add(-slotStep)) || m.At.After(now) {
 			continue
 		}
-		n10++
+		n5++
 		l, ok := labels[m.ID]
 		if ok {
-			byClaude++
+			labeled5++
 		}
-		if (ok && l.Cat == CatInsulto) || (!ok && Classify(m.Text) == CatInsulto) {
-			insults = append(insults, m)
+		if ok && l.Tech {
+			tech = append(tech, m)
 		}
-		if m.At.After(now.Add(-slotStep)) {
-			n5++
-			if ok {
-				labeled5++
-			}
-			if ok && l.Tech {
-				tech = append(tech, m)
-			}
-		}
-	}
-	show := func(ms []Message) []AlertMsg {
-		sort.SliceStable(ms, func(i, j int) bool { return ms[i].At.After(ms[j].At) })
-		var out []AlertMsg
-		for _, m := range ms[:min(len(ms), alertMsgsMax)] {
-			out = append(out, AlertMsg{m.Author, m.At.Local().Format("15:04"), m.Text})
-		}
-		return out
 	}
 	var v AlertsView
-	insPct := 0.0
-	if n10 > 0 {
-		insPct = float64(len(insults)) * 100 / float64(n10)
-	}
 	if len(tech) >= techAlertMin {
-		v.Alerts = append(v.Alerts, Alert{Kind: "tecnica", Msgs: show(tech),
-			Title: fmt.Sprintf("Quejas técnicas: %d en los últimos 5 min (umbral %d)", len(tech), techAlertMin)})
-	}
-	if n10 >= minSentMsgs && len(insults)*100 >= insultAlertPct*n10 {
-		v.Alerts = append(v.Alerts, Alert{Kind: "insulto", Msgs: show(insults),
-			Title: fmt.Sprintf("Insultos: %s de los mensajes de los últimos 10 min (umbral %d %%)", shortPct(insPct), insultAlertPct)})
-	}
-	if len(v.Alerts) == 0 {
-		techText := fmt.Sprintf("%s en 5 min (umbral %d)", plural(len(tech), "queja técnica", "quejas técnicas"), techAlertMin)
-		if n5 > 0 && labeled5 == 0 {
-			techText = "quejas técnicas sin análisis de Claude"
+		sort.SliceStable(tech, func(i, j int) bool { return tech[i].At.After(tech[j].At) })
+		var shown []AlertMsg
+		for _, m := range tech[:min(len(tech), alertMsgsMax)] {
+			shown = append(shown, AlertMsg{m.Author, m.At.Local().Format("15:04"), m.Text})
 		}
-		v.Calm = fmt.Sprintf("Sin alertas: %s · %s de insultos en 10 min (umbral %d %%)", techText, shortPct(insPct), insultAlertPct)
+		v.Alerts = append(v.Alerts, Alert{Kind: "tecnica", Msgs: shown,
+			Title: fmt.Sprintf("Quejas técnicas: %d en los últimos 5 min (umbral %d)", len(tech), techAlertMin)})
+	} else if n5 > 0 && labeled5 == 0 {
+		v.Calm = "Sin alertas: quejas técnicas sin análisis de Claude"
+	} else {
+		v.Calm = fmt.Sprintf("Sin alertas: %s en 5 min (umbral %d)", plural(len(tech), "queja técnica", "quejas técnicas"), techAlertMin)
 	}
 	switch {
-	case n10 == 0:
-		v.Note = "Sin mensajes de chat en los últimos 10 min."
-	case byClaude == n10:
-		v.Note = "Todos los mensajes de los últimos 10 min tienen etiqueta de Claude."
-	case byClaude == 0:
-		v.Note = "Ningún mensaje de los últimos 10 min tiene etiqueta de Claude: las quejas técnicas necesitan las tandas (ver Canales) y los insultos van por reglas."
+	case n5 == 0:
+		v.Note = "Sin mensajes de chat en los últimos 5 min."
+	case labeled5 == n5:
+		v.Note = "Todos los mensajes de los últimos 5 min tienen etiqueta de Claude."
+	case labeled5 == 0:
+		v.Note = "Ningún mensaje de los últimos 5 min tiene etiqueta de Claude: las quejas técnicas necesitan las tandas (ver Canales)."
 	default:
-		v.Note = fmt.Sprintf("%s de %s con etiqueta de Claude; para insultos, el resto va por reglas.", miles(byClaude), plural(n10, "mensaje", "mensajes"))
+		v.Note = fmt.Sprintf("%s de %s con etiqueta de Claude.", miles(labeled5), plural(n5, "mensaje", "mensajes"))
 	}
 	return v
 }
@@ -805,12 +783,4 @@ func questionGroups(msgs []Message, labels map[string]MessageLabel, groups map[s
 func slotOf(t time.Time) time.Time {
 	d := dayStart(t)
 	return d.Add(t.Sub(d).Truncate(slotStep))
-}
-
-// shortPct es un % con un decimal solo si hace falta: "5 %", "4,9 %".
-func shortPct(f float64) string {
-	if r := math.Round(f*10) / 10; r == math.Trunc(r) {
-		return strconv.Itoa(int(r)) + " %"
-	}
-	return pct(f)
 }

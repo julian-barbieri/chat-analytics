@@ -1,6 +1,6 @@
 # Spec: gráficos con lo último a la izquierda, alertas técnicas y nuevo orden de En vivo
 
-- **Estado:** aprobada
+- **Estado:** implementada
 - **Tipo:** mejora
 - **Rama:** `feat/orden-graficos-alertas-tecnicas`
 - **Origen:** mensaje del usuario con tres capturas (Sentimiento del programa, Participación, Alertas)
@@ -33,28 +33,28 @@ son solo técnicas, En vivo queda en el orden pedido y "Preguntas" dice lo mismo
 
 ## Criterios de aceptación
 
-- [ ] CA1: "Sentimiento del programa" muestra arriba de las franjas una fila "Promedio" con
+- [x] CA1: "Sentimiento del programa" muestra arriba de las franjas una fila "Promedio" con
   el % positivo / neutro / negativo de todos los mensajes etiquetados del tramo (suma de
   conteos, no promedio de %), y las franjas van de la más nueva arriba a la más vieja abajo
   — `TestProgramSentimentAverage`.
-- [ ] CA2: en el gráfico de participación (En vivo y Programas) la franja más nueva está en
+- [x] CA2: en el gráfico de participación (En vivo y Programas) la franja más nueva está en
   `x` más chico; las marcas de ranking, la línea de oyentes, los cortes de programa, la tira
   de programas y las horas también se espejan (la hora de "ahora" queda a la izquierda) —
   `TestParticipationChartNewestLeft`.
-- [ ] CA3: lo mismo para "Cómo fue cambiando · cada 5 min" de En vivo (`sentimentChart`) —
+- [x] CA3: lo mismo para "Cómo fue cambiando · cada 5 min" de En vivo (`sentimentChart`) —
   `TestSentimentChart` ajustado.
-- [ ] CA4: `Alerts` no tiene alerta de insultos ni los menciona en la calma ni en la nota;
+- [x] CA4: `Alerts` no tiene alerta de insultos ni los menciona en la calma ni en la nota;
   con 30 % de insultos y 0 quejas técnicas no hay alerta; con 15 quejas técnicas en 5 min
   sí. La tarjeta dice "Claude" (no "Claude y reglas") y el umbral solo de técnicas —
   `TestAlerts` ajustado.
-- [ ] CA5: en En vivo el orden es: tiles → Resumen de Claude → Alertas → Sentimiento →
+- [x] CA5: en En vivo el orden es: tiles → Resumen de Claude → Alertas → Sentimiento →
   Momentos → Preguntas agrupadas + Categorías → Palabras y autores → Chat en vivo → Super
   Chats — test de plantilla que busca los `id` en ese orden en la respuesta de
   `/parcial/vivo/analisis` + la página.
-- [ ] CA6: con Claude activo y etiquetas en el alcance, el tile "Preguntas" vale la misma
+- [x] CA6: con Claude activo y etiquetas en el alcance, el tile "Preguntas" vale la misma
   suma que el encabezado de "Preguntas agrupadas" y dice "agrupadas por Claude"; sin
   etiquetas sigue por reglas y dice "por reglas" — `TestLiveTiles` / test del handler.
-- [ ] CA7: gates (`scripts/gates.sh`) y vista previa en claro/oscuro y celular.
+- [ ] CA7: gates (`scripts/gates.sh completo`) en verde; la vista previa se levantó en localhost:8081 para que la persona la revise en claro/oscuro y celular (no la verificó el agente).
 
 ## Diseño
 

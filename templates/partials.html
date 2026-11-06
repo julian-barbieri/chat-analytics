@@ -91,8 +91,10 @@
   {{if .Note}}<div class="muted">{{.Note}}</div>{{end}}
 </div>{{end}}</div>
 
+{{template "claude-card" .Claude}}
+
 {{with .Alertas}}<section id="alertas" class="card" aria-labelledby="alertas-h">
-  <div class="chead"><h2 id="alertas-h">Alertas</h2><span class="chip">Claude y reglas</span></div>
+  <div class="chead"><h2 id="alertas-h">Alertas</h2><span class="chip">Claude</span></div>
   {{range .Alerts}}<div class="cartel crit"><strong>{{.Title}}</strong></div>{{end}}
   {{if .Calm}}<p class="muted">{{.Calm}}</p>{{end}}
   {{/* Plegado como el resumen: la flecha pide el análisis con "alertas" cambiada en "abrir". */}}
@@ -103,10 +105,8 @@
       <div class="meta"><strong>{{.Author}}</strong> · {{.Hour}}</div><div>{{.Text}}</div>
     </li>{{end}}</ul>{{end}}
   </details>{{end}}
-  <p class="muted">Umbrales fijos: 15 quejas técnicas en 5 min o 5 % de insultos en 10 min (con al menos 20 mensajes). {{.Note}}</p>
+  <p class="muted">Umbral fijo: 15 quejas técnicas de sonido o transmisión en 5 min, según Claude. {{.Note}}</p>
 </section>{{end}}
-
-{{template "claude-card" .Claude}}
 
 {{if .Canal}}{{with .Sent}}<section id="sentimiento" class="card" aria-labelledby="sentimiento-h">
   <div class="chead"><h2 id="sentimiento-h">Sentimiento del chat <span class="ia">Claude</span></h2>{{if not (or .Off .Empty)}}<span class="muted">{{.View.Header}}</span>{{end}}</div>
@@ -152,20 +152,6 @@
   {{end}}
 </section>{{end}}{{end}}
 
-<div class="grid2">
-  {{template "vivo-preguntas" .}}
-
-  <section id="categorias" class="card" aria-labelledby="categorias-h">
-    <div class="chead"><h2 id="categorias-h">Categorías</h2><span class="muted">{{plural .A.Total "mensaje" "mensajes"}}</span></div>
-    {{range .Cats}}<div class="catrow" title="{{.Label}}: {{.N}}">
-      <span>{{.Label}}</span>
-      <div class="track"><div class="fill" style="width: {{printf "%.1f" .Pct}}%"></div></div>
-      <span class="num">{{miles .N}}</span>
-    </div>{{end}}
-    <p class="muted">Por reglas simples, de {{.Super.Of}}; el detalle fino hacelo con Claude sobre el CSV.</p>
-  </section>
-</div>
-
 {{with .Part}}<section id="momentos" class="card" aria-labelledby="momentos-h">
   <h2 id="momentos-h">Momentos con más participación (para reels)</h2>
   {{if .ByPct}}<p class="muted">Los 5 momentos de 5 minutos en que escribió el mayor % de los que miraban (con al menos 3 personas). Participación típica del vivo: {{.Typical}} (línea punteada){{if .Concurrent}} · {{miles .Concurrent}} mirando ahora{{end}}{{if .Chart.Viewers}}. La línea: cuántos miraban cada 5 minutos, con su escala a la derecha (se corta donde no hay dato).{{end}}</p>
@@ -191,6 +177,34 @@
   {{if .Why}}<p class="muted">{{.Why}}</p>{{end}}
   <p class="muted">Franjas de 5 minutos: el ranking y la participación típica usan {{.Window}}; el gráfico, las horas elegidas (sin el tramo del principio que no tiene datos). Personas = nombres distintos que escribieron; mirando = lo que informa YouTube en ese momento (promedio de las lecturas de la franja). Es una aproximación: sirve para elegir qué mirar, no como medición exacta.</p>
 </section>{{end}}
+
+<div class="grid2">
+  {{template "vivo-preguntas" .}}
+
+  <section id="categorias" class="card" aria-labelledby="categorias-h">
+    <div class="chead"><h2 id="categorias-h">Categorías</h2><span class="muted">{{plural .A.Total "mensaje" "mensajes"}}</span></div>
+    {{range .Cats}}<div class="catrow" title="{{.Label}}: {{.N}}">
+      <span>{{.Label}}</span>
+      <div class="track"><div class="fill" style="width: {{printf "%.1f" .Pct}}%"></div></div>
+      <span class="num">{{miles .N}}</span>
+    </div>{{end}}
+    <p class="muted">Por reglas simples, de {{.Super.Of}}; el detalle fino hacelo con Claude sobre el CSV.</p>
+  </section>
+</div>
+
+{{with .Monitor}}<section id="monitor" class="card" aria-labelledby="monitor-h">
+  <div class="chead"><h2 id="monitor-h">Palabras y autores {{.Of}}</h2><span class="muted">{{plural .Total "mensaje" "mensajes"}}</span></div>
+  <div class="vgrid">
+    <div class="inner">
+      <h3>Palabras más repetidas</h3>
+      <div class="words">{{range .Words}}<span>{{.Key}} · {{.N}}</span>{{else}}<span class="muted">Sin datos todavía</span>{{end}}</div>
+    </div>
+    <div class="inner">
+      <h3>Quiénes más escriben</h3>
+      <table>{{range .Authors}}<tr><td>{{.Key}}</td><td class="n">{{.N}}</td></tr>{{else}}<tr><td class="muted">Sin datos todavía</td></tr>{{end}}</table>
+    </div>
+  </div>
+</section>{{end}}
 {{else}}<p class="muted">Este vivo ya no está en la lista de videos.</p>{{end}}
 </div>
 <div id="vivo-abajo" hx-swap-oob="true">{{if .Label}}
@@ -214,19 +228,6 @@
   <p class="muted">{{.Note}} Se cuentan desde que se actualizó el monitor para guardarlos.</p>
 </section>{{end}}
 
-{{with .Monitor}}<section id="monitor" class="card" aria-labelledby="monitor-h">
-  <div class="chead"><h2 id="monitor-h">Palabras y autores {{.Of}}</h2><span class="muted">{{plural .Total "mensaje" "mensajes"}}</span></div>
-  <div class="vgrid">
-    <div class="inner">
-      <h3>Palabras más repetidas</h3>
-      <div class="words">{{range .Words}}<span>{{.Key}} · {{.N}}</span>{{else}}<span class="muted">Sin datos todavía</span>{{end}}</div>
-    </div>
-    <div class="inner">
-      <h3>Quiénes más escriben</h3>
-      <table>{{range .Authors}}<tr><td>{{.Key}}</td><td class="n">{{.N}}</td></tr>{{else}}<tr><td class="muted">Sin datos todavía</td></tr>{{end}}</table>
-    </div>
-  </div>
-</section>{{end}}
 {{end}}</div>
 {{end}}
 
