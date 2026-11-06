@@ -424,6 +424,9 @@ type ProgramDetail struct {
 	SentRows      []SentRow
 	Neg, Pos      []MotiveRow
 	NegN, PosN    int
+	// Participación de todo el tramo (el gráfico de "Momentos con más
+	// participación"); nil en un tramo sin vivo.
+	Part map[string]any
 }
 
 // SentRow es una fila de "Sentimiento del programa": una franja de 5 min con
@@ -482,10 +485,36 @@ func (s *Server) programDetail(ps ProgramSeg, msgs []Message, a *ClaudeAnalysis,
 		d.Supers = append(d.Supers, SuperRow{Currency: currencyLabel(c.Currency), Total: money(c.Micros), N: c.N})
 	}
 	d.SupersNote = superNote
+	d.Part = s.programParticipation(sg, msgs, snap.Videos, now)
 	if s.analyst != nil {
 		s.programSentiment(&d, ps, msgs, now)
 	}
 	return d
+}
+
+// programParticipation arma el gráfico de participación del tramo entero,
+// franjas de 5 min de su inicio a su fin (o a ahora si sigue al aire), con
+// los espectadores del vivo (Store.Viewers desde el inicio, no Snapshot).
+func (s *Server) programParticipation(sg Segment, msgs []Message, videos []Video, now time.Time) map[string]any {
+	if sg.VideoID == "" {
+		return nil
+	}
+	end := sg.End
+	if sg.State == SegLive || end.After(now) {
+		end = now
+	}
+	var viewers []ViewerSample
+	for _, v := range s.st.Viewers(sg.VideoID, sg.Start) {
+		if !v.At.After(end) {
+			viewers = append(viewers, v)
+		}
+	}
+	slots, typical, ok := ParticipationRange(msgs, viewers, []string{sg.VideoID}, sg.Start, end)
+	if len(slots) == 0 {
+		return nil
+	}
+	titles := videoTitles(videos)
+	return map[string]any{"Chart": participationChart(slots, TopMoments(slots, titles), typical, ok, titles), "ByPct": ok, "Typical": pct(typical)}
 }
 
 // programSentiment suma al detalle las franjas de sentimiento del tramo

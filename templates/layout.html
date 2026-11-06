@@ -4,7 +4,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{{if eq .Tab "programas"}}Programas de hoy{{else if eq .Tab "canales"}}Canales{{else}}En vivo{{end}} · Monitor de YouTube{{if .Channel}} · {{.Channel}}{{end}}</title>
+<title>{{if eq .Tab "programas"}}Programas{{else if eq .Tab "canales"}}Canales{{else}}En vivo{{end}} · Monitor de YouTube{{if .Channel}} · {{.Channel}}{{end}}</title>
 <script src="/static/htmx.min.js"></script>
 <style>
 :root {
@@ -185,13 +185,11 @@ tr.sel td { background: var(--ia-bg); }
 /* Gráfico de participación: el SVG se estira a un alto fijo (no depende del
    ancho) y los textos van en HTML para que midan siempre 12 px. */
 .pchart svg { display: block; width: 100%; height: 240px; overflow: visible; }
-/* Panel de oyentes: mismo ancho y viewBox que las barras para que cada escalón
-   caiga sobre su columna. overflow visible para no cortar medio trazo en y = 0;
-   la línea no toma el mouse para que el tooltip lo dé la zona de la franja. */
-.poyentes svg { display: block; width: 100%; height: 72px; overflow: visible; margin-bottom: 8px; }
-.poyentes .hit:hover { fill: var(--grid); }
-.oyentes { fill: none; stroke: var(--text-secondary); stroke-width: 2; stroke-linejoin: round; pointer-events: none; }
+/* Línea de oyentes dentro del SVG de las barras, con su propia escala (el
+   máximo va a la derecha de .pmax). No toma el mouse: el tooltip lo da la franja. */
+.oyentes { fill: none; stroke: var(--text-primary); stroke-width: 2; stroke-linejoin: round; pointer-events: none; }
 .pmax, .pmarks, .pticks { position: relative; height: 16px; font-size: 12px; line-height: 16px; color: var(--text-muted); }
+.pmax .vmax { position: absolute; right: 0; color: var(--text-secondary); }
 .pmarks span, .pticks span { position: absolute; transform: translateX(-50%); white-space: nowrap; }
 .pticks span:first-child { transform: none; }
 .pticks span.end { transform: translateX(-100%); }
@@ -222,6 +220,7 @@ tr.sel td { background: var(--ia-bg); }
 .schart .neg { fill: var(--sent-neg); }
 .schart .low { fill: var(--sent-low); }
 .schart .corte { stroke: var(--text-muted); stroke-dasharray: 4 3; }
+.pchart .corte { stroke: var(--text-muted); stroke-width: 1; opacity: .5; }
 /* Franja de programas debajo del gráfico: el nombre se corta con … y el
    completo va en el title y en la lista de abajo. */
 .sprogs { position: relative; height: 22px; margin-top: 2px; }
@@ -249,7 +248,6 @@ tr.sel td { background: var(--ia-bg); }
 .tops td.n, .tops th.n { white-space: nowrap; }
 @media (max-width: 600px) {
   .pchart svg { height: 180px; }
-  .poyentes svg { height: 56px; }
   .pticks span:nth-child(even) { display: none; }
 }
 /* Tira "Hoy en el canal": un bloque por tramo, ancho proporcional a los
@@ -322,7 +320,7 @@ details summary { cursor: pointer; min-height: 32px; font-weight: 600; }
   </div>
   <nav class="tabs" aria-label="Secciones">
     <a href="/"{{if eq .Tab "vivo"}} aria-current="page"{{end}}>En vivo</a>
-    <a href="/programas"{{if eq .Tab "programas"}} aria-current="page"{{end}}>Programas de hoy</a>
+    <a href="/programas"{{if eq .Tab "programas"}} aria-current="page"{{end}}>Programas</a>
     <a href="/canales"{{if eq .Tab "canales"}} aria-current="page"{{end}}>Canales</a>
   </nav>
 </header>

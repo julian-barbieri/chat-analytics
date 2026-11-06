@@ -1,6 +1,6 @@
 # Spec: ajustes de En vivo y Programas
 
-- **Estado:** aprobada
+- **Estado:** implementada
 - **Tipo:** mejora
 - **Rama:** `feat/ajustes-en-vivo-programas`
 - **Origen:** pedido del usuario (capturas de la tira "Hoy en el canal" y del gráfico de participación), 2026-11-06
@@ -22,17 +22,17 @@ Que En vivo muestre primero lo que está pasando (programa en curso a la izquier
 
 ## Criterios de aceptación
 
-- [ ] CA1: en "Hoy en el canal" el primer bloque es el tramo actual (en vivo o "sin vivo" final) y los anteriores siguen hacia la derecha, del más nuevo al más viejo — `TestDayStrip` (orden de `Blocks`).
-- [ ] CA2: con Claude, la tarjeta se titula "Preguntas agrupadas" y no tiene botones "Marcar respondida" ni "Deshacer" (sí sigue diciendo "Respondida" si había una marca guardada) — test de render de `vivo-preguntas`.
-- [ ] CA3: con más de 5 grupos se ven los 5 primeros y el resto va dentro de un `<details>` ("Ver N más"); con 5 o menos no hay `<details>` — mismo test, casos 5 y 7 grupos.
-- [ ] CA4: la pestaña y el `<title>` dicen "Programas" — test sobre `GET /programas`.
-- [ ] CA5: el detalle de un programa (también de ayer o 7 días) muestra el gráfico de barras de participación de todo el tramo, franjas de 5 min entre el inicio y el fin del programa, con el top marcado — `TestProgramDetailParticipation`.
-- [ ] CA6: el bloque "Todo el monitor · últimas 24 h" pasa a "Palabras y autores del programa": solo mensajes del programa en curso del canal elegido (el mismo filtro que "Programa en curso", `segmentMessages`); con "Todo el día del canal", los del día del canal — test de `channelAnalysis`.
-- [ ] CA7: una queja técnica cuenta solo si el mensaje tiene etiqueta de Claude con `Tech`; un mensaje sin etiqueta no suma aunque `TechIssue` lo detecte. Si ningún mensaje de los últimos 5 min tiene etiqueta, la tarjeta lo dice ("Quejas técnicas: sin análisis de Claude") en vez de "0 quejas" — `TestAlerts` actualizado. Los insultos no cambian (Claude con caída a reglas).
-- [ ] CA8: debajo de las barras de "Momentos con más participación" hay una franja con el programa de cada tramo, como `Strip` de "Sentimiento del chat" (incluida la lista accesible) — test de `participationChart`.
-- [ ] CA9: la línea de espectadores va dentro del mismo SVG de las barras, con su escala propia (máximo a la derecha, "máx. N mirando"), y desaparece el panel `.poyentes` aparte; sin dato de espectadores no se dibuja — test de render.
+- [x] CA1: en "Hoy en el canal" el primer bloque es el tramo actual (en vivo o "sin vivo" final) y los anteriores siguen hacia la derecha, del más nuevo al más viejo — `TestDayStrip` (orden de `Blocks`).
+- [x] CA2: con Claude, la tarjeta se titula "Preguntas agrupadas" y no tiene botones "Marcar respondida" ni "Deshacer" (sí sigue diciendo "Respondida" si había una marca guardada) — test de render de `vivo-preguntas`.
+- [x] CA3: con más de 5 grupos se ven los 5 primeros y el resto va dentro de un `<details>` ("Ver N más"); con 5 o menos no hay `<details>` — mismo test, casos 5 y 7 grupos.
+- [x] CA4: la pestaña y el `<title>` dicen "Programas" — test sobre `GET /programas`.
+- [x] CA5: el detalle de un programa (también de ayer o 7 días) muestra el gráfico de barras de participación de todo el tramo, franjas de 5 min entre el inicio y el fin del programa, con el top marcado — `TestProgramDetailParticipation`.
+- [x] CA6: el bloque "Todo el monitor · últimas 24 h" pasa a "Palabras y autores del programa": solo mensajes del programa en curso del canal elegido (el mismo filtro que "Programa en curso", `segmentMessages`); con "Todo el día del canal", los del día del canal — test de `channelAnalysis`.
+- [x] CA7: una queja técnica cuenta solo si el mensaje tiene etiqueta de Claude con `Tech`; un mensaje sin etiqueta no suma aunque `TechIssue` lo detecte. Si ningún mensaje de los últimos 5 min tiene etiqueta, la tarjeta lo dice ("Quejas técnicas: sin análisis de Claude") en vez de "0 quejas" — `TestAlerts` actualizado. Los insultos no cambian (Claude con caída a reglas).
+- [x] CA8: debajo de las barras de "Momentos con más participación" hay una franja con el programa de cada tramo, como `Strip` de "Sentimiento del chat" (incluida la lista accesible) — test de `participationChart`.
+- [x] CA9: la línea de espectadores va dentro del mismo SVG de las barras, con su escala propia (máximo a la derecha, "máx. N mirando"), y desaparece el panel `.poyentes` aparte; sin dato de espectadores no se dibuja — test de render.
 - [ ] CA10: verificación en el navegador (vista previa) de En vivo y Programas en claro, oscuro y ancho de celular.
-- [ ] Gates de `CLAUDE.md` → "Definición de terminado" en verde.
+- [x] Gates de `CLAUDE.md` → "Definición de terminado" en verde.
 
 ## Diseño propuesto
 

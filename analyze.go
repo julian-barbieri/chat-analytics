@@ -199,20 +199,28 @@ type Slot struct {
 // franjas con espectadores). Las personas se cuentan por nombre visible y los
 // espectadores son los que YouTube informa "mirando ahora": es una aproximación.
 func Participation(msgs []Message, viewers []ViewerSample, videoIDs []string, now time.Time) (slots []Slot, typical float64, ok bool) {
+	end := now.Truncate(slotStep).Add(slotStep)
+	return ParticipationRange(msgs, viewers, videoIDs, end.Add(-slotCount*slotStep), now)
+}
+
+// ParticipationRange es Participation con las franjas de 5 min que van de
+// from a to (las dos incluidas): el detalle de un programa usa su tramo.
+func ParticipationRange(msgs []Message, viewers []ViewerSample, videoIDs []string, from, to time.Time) (slots []Slot, typical float64, ok bool) {
 	want := map[string]bool{}
 	for _, id := range videoIDs {
 		want[id] = true
 	}
-	end := now.Truncate(slotStep).Add(slotStep)
-	start := end.Add(-slotCount * slotStep)
+	start := from.Truncate(slotStep)
+	end := to.Truncate(slotStep).Add(slotStep)
+	count := max(int(end.Sub(start)/slotStep), 0)
 	index := func(t time.Time) int {
 		if t.Before(start) || !t.Before(end) {
 			return -1
 		}
 		return int(t.Sub(start) / slotStep)
 	}
-	slots = make([]Slot, slotCount)
-	authors := make([]map[string]bool, slotCount)
+	slots = make([]Slot, count)
+	authors := make([]map[string]bool, count)
 	for i := range slots {
 		slots[i].Start = start.Add(time.Duration(i) * slotStep)
 		authors[i] = map[string]bool{}
@@ -242,7 +250,7 @@ func Participation(msgs []Message, viewers []ViewerSample, videoIDs []string, no
 			cnt[key{i, v.VideoID}]++
 		}
 	}
-	total := make([]int64, slotCount)
+	total := make([]int64, count)
 	for k, n := range cnt {
 		total[k.slot] += (sum[k] + n/2) / n // promedio redondeado
 	}

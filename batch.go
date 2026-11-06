@@ -492,19 +492,7 @@ func sentimentChart(slots []SentSlot, segs []Segment, from, now time.Time) SentC
 		b.X, b.W = float64(i)+0.1, 0.8
 		c.Bars = append(c.Bars, b)
 	}
-	end := from.Add(time.Duration(n) * slotStep)
-	x := func(t time.Time) float64 { return float64(t.Sub(from)) / float64(slotStep) }
-	for _, p := range chartPrograms(segs, from, end, now) {
-		if p.start.After(from) {
-			c.Lines = append(c.Lines, SentLine{X: x(p.start)})
-		}
-		r := p.real.Local().Format("15:04") + " a " + p.end.Local().Format("15:04")
-		if p.live {
-			r = p.real.Local().Format("15:04") + " a ahora"
-		}
-		c.Strip = append(c.Strip, SentProg{Left: x(p.start) * 100 / c.W, Width: x(p.end)*100/c.W - x(p.start)*100/c.W,
-			Name: p.name, Hour: p.real.Local().Format("15:04"), Range: r})
-	}
+	c.Strip, c.Lines = programStrip(segs, from, n, now)
 	c.Ticks = []Tick{{Left: 0, Label: from.Local().Format("15:04")}, {Left: 100, Label: now.Local().Format("15:04") + " en curso", End: true}}
 	c.Aria = fmt.Sprintf("Sentimiento del chat cada 5 min desde las %s: %s", from.Local().Format("15:04"), plural(withData, "franja con datos", "franjas con datos"))
 	return c
@@ -525,6 +513,27 @@ func sentStack(s SentSlot) SentStack {
 	b.PosY, b.PosH = p.Neg+p.Neu, p.Pos
 	b.Label = fmt.Sprintf("%s: %.0f %% positivo, %.0f %% neutro, %.0f %% negativo (%s)", hm, p.Pos, p.Neu, p.Neg, plural(s.Total(), "mensaje", "mensajes"))
 	return b
+}
+
+// programStrip es la franja de programas de abajo de un gráfico de n
+// franjas de 5 min desde from, y una línea en cada programa que empieza.
+// La usan "Sentimiento del chat" y "Momentos con más participación".
+func programStrip(segs []Segment, from time.Time, n int, now time.Time) (strip []SentProg, lines []SentLine) {
+	w := float64(max(n, 1))
+	end := from.Add(time.Duration(n) * slotStep)
+	x := func(t time.Time) float64 { return float64(t.Sub(from)) / float64(slotStep) }
+	for _, p := range chartPrograms(segs, from, end, now) {
+		if p.start.After(from) {
+			lines = append(lines, SentLine{X: x(p.start)})
+		}
+		r := p.real.Local().Format("15:04") + " a " + p.end.Local().Format("15:04")
+		if p.live {
+			r = p.real.Local().Format("15:04") + " a ahora"
+		}
+		strip = append(strip, SentProg{Left: x(p.start) * 100 / w, Width: x(p.end)*100/w - x(p.start)*100/w,
+			Name: p.name, Hour: p.real.Local().Format("15:04"), Range: r})
+	}
+	return strip, lines
 }
 
 // chartProg es un programa del gráfico recortado a la ventana: real es su
@@ -669,11 +678,12 @@ type AlertsView struct {
 
 // Alerts mira los umbrales fijos: quejas técnicas ≥ techAlertMin en 5 min y
 // insultos ≥ insultAlertPct % de los mensajes de 10 min con al menos
-// minSentMsgs mensajes. Un mensaje con etiqueta de Claude usa la etiqueta;
-// sin etiqueta, las reglas (TechIssue, Classify).
+// minSentMsgs mensajes. Las quejas técnicas salen solo de Claude (las reglas
+// confundían temas de la radio con fallas); los insultos usan la etiqueta y,
+// sin etiqueta, Classify.
 func Alerts(msgs []Message, labels map[string]MessageLabel, now time.Time) AlertsView {
 	var tech, insults []Message
-	n10, byClaude := 0, 0
+	n10, byClaude, n5, labeled5 := 0, 0, 0, 0
 	for _, m := range msgs {
 		if m.Source != "chat" || !m.At.After(now.Add(-insultWindow)) || m.At.After(now) {
 			continue
@@ -686,8 +696,14 @@ func Alerts(msgs []Message, labels map[string]MessageLabel, now time.Time) Alert
 		if (ok && l.Cat == CatInsulto) || (!ok && Classify(m.Text) == CatInsulto) {
 			insults = append(insults, m)
 		}
-		if m.At.After(now.Add(-slotStep)) && ((ok && l.Tech) || (!ok && TechIssue(m.Text) != "")) {
-			tech = append(tech, m)
+		if m.At.After(now.Add(-slotStep)) {
+			n5++
+			if ok {
+				labeled5++
+			}
+			if ok && l.Tech {
+				tech = append(tech, m)
+			}
 		}
 	}
 	show := func(ms []Message) []AlertMsg {
@@ -712,8 +728,11 @@ func Alerts(msgs []Message, labels map[string]MessageLabel, now time.Time) Alert
 			Title: fmt.Sprintf("Insultos: %s de los mensajes de los últimos 10 min (umbral %d %%)", shortPct(insPct), insultAlertPct)})
 	}
 	if len(v.Alerts) == 0 {
-		v.Calm = fmt.Sprintf("Sin alertas: %s en 5 min (umbral %d) · %s de insultos en 10 min (umbral %d %%)",
-			plural(len(tech), "queja técnica", "quejas técnicas"), techAlertMin, shortPct(insPct), insultAlertPct)
+		techText := fmt.Sprintf("%s en 5 min (umbral %d)", plural(len(tech), "queja técnica", "quejas técnicas"), techAlertMin)
+		if n5 > 0 && labeled5 == 0 {
+			techText = "quejas técnicas sin análisis de Claude"
+		}
+		v.Calm = fmt.Sprintf("Sin alertas: %s · %s de insultos en 10 min (umbral %d %%)", techText, shortPct(insPct), insultAlertPct)
 	}
 	switch {
 	case n10 == 0:
@@ -721,9 +740,9 @@ func Alerts(msgs []Message, labels map[string]MessageLabel, now time.Time) Alert
 	case byClaude == n10:
 		v.Note = "Todos los mensajes de los últimos 10 min tienen etiqueta de Claude."
 	case byClaude == 0:
-		v.Note = "Por reglas: ningún mensaje de los últimos 10 min tiene etiqueta de Claude."
+		v.Note = "Ningún mensaje de los últimos 10 min tiene etiqueta de Claude: las quejas técnicas necesitan las tandas (ver Canales) y los insultos van por reglas."
 	default:
-		v.Note = fmt.Sprintf("%s de %s con etiqueta de Claude; el resto, por reglas.", miles(byClaude), plural(n10, "mensaje", "mensajes"))
+		v.Note = fmt.Sprintf("%s de %s con etiqueta de Claude; para insultos, el resto va por reglas.", miles(byClaude), plural(n10, "mensaje", "mensajes"))
 	}
 	return v
 }
