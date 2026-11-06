@@ -9,6 +9,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"math"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -54,8 +55,10 @@ func main() {
 	peakHours := flag.String("pico", "7-20", "modo continuo: horario pico en hora local, desde-hasta (\"\" = sin horario pico)")
 	comMin := flag.Int("comentarios-min", 10, "modo continuo: minutos entre lecturas de comentarios")
 	realTime := flag.String("tiempo-real", "", "modo continuo: links o IDs de vivos con tiempo real continuo, separados por coma: se reconectan apenas YouTube corta la conexión (~1.800 unidades por hora cada uno)")
-	claudeUSD := flag.Float64("claude-usd", 0, "modo continuo: tope de gasto diario en dólares del análisis con Claude de cada programa (0 = apagado; necesita CLAUDE_API_KEY, ver README)")
-	claudeModel := flag.String("claude-modelo", defaultClaudeModel, "modo continuo: modelo de Claude para el análisis de cada programa")
+	claudeUSD := flag.Float64("claude-usd", 0, "modo continuo: tope de gasto diario en dólares del análisis con Claude, tandas y resúmenes de cada programa (0 = apagado; necesita CLAUDE_API_KEY, ver README). Valor inicial: si datos.canales.json tiene la sección Claude, vale el tope guardado en Canales")
+	claudeModel := flag.String("claude-modelo", defaultClaudeModel, "modo continuo: modelo de Claude para los resúmenes de cada programa")
+	claudeLive := flag.String("claude-modelo-vivo", defaultRealtimeModel, "modo continuo: modelo de Claude para las tandas en tiempo real. Valor inicial, como -claude-usd: se cambia en Canales")
+	claudeBatch := flag.Int("claude-tanda-seg", 30, "modo continuo: segundos entre dos tandas de Claude de un canal (30, 60, 120 o 300). Valor inicial, como -claude-usd: se cambia en Canales")
 	zone := zoneFlag(flag.CommandLine)
 	vivos := flag.String("vivos", "", "links o IDs de videos a revisar siempre, separados por coma (los vivos del canal se detectan solos)")
 	flag.Parse()
@@ -148,6 +151,23 @@ func main() {
 		if err != nil {
 			log.Fatal(err)
 		}
+		// Lo mismo con Claude: los flags son valores iniciales y gana lo
+		// guardado en la tarjeta de Canales.
+		var claudeManual []string
+		flag.Visit(func(f *flag.Flag) {
+			if f.Name == "claude-usd" || f.Name == "claude-modelo-vivo" || f.Name == "claude-tanda-seg" {
+				claudeManual = append(claudeManual, f.Name)
+			}
+		})
+		cdef := ClaudeSettings{RealtimeModel: *claudeLive, BatchSec: *claudeBatch, BudgetMicros: int64(math.Round(max(*claudeUSD, 0) * 1e6))}
+		if err := validClaudeSettings(cdef); err != nil {
+			log.Printf("aviso: flags de Claude: %v; uso %s cada %d s con tope US$ %s", err, defaultRealtimeModel, defaultClaude.BatchSec, usd(min(cdef.BudgetMicros, maxClaudeUSD*1_000_000)))
+			cdef = ClaudeSettings{RealtimeModel: defaultRealtimeModel, BatchSec: defaultClaude.BatchSec, BudgetMicros: min(cdef.BudgetMicros, maxClaudeUSD*1_000_000)}
+		}
+		settings.SetClaudeDefaults(cdef, claudeManual)
+		if w := settings.ClaudeWarning(); w != "" {
+			log.Printf("aviso: %s", w)
+		}
 		if w := settings.Warning(); w != "" {
 			log.Printf("aviso: %s", w)
 		}
@@ -158,7 +178,9 @@ func main() {
 			PeakFrom: peakFrom, PeakTo: peakTo, Budget: *budget, RealTime: rt, Settings: settings,
 		})
 		// El análisis con Claude va en su propia goroutine (ADR 0006): sin
-		// clave, con -claude-usd 0 o con un modelo sin precio, todo sigue como siempre.
+		// clave o con un modelo sin precio, todo sigue como siempre. Con la
+		// clave arranca siempre (ADR 0009): con tope 0 no manda nada, y el
+		// tope se puede subir desde Canales.
 		var analyst *Analyst
 		ccfg, warn := claudeConfig(os.Getenv, *claudeUSD, *claudeModel)
 		if warn != "" {
@@ -167,8 +189,10 @@ func main() {
 		if ccfg.On {
 			analyst = NewAnalyst()
 			st.SetClaudeStatus(ClaudeStatus{On: true, Model: ccfg.Model, Tope: ccfg.Budget})
-			go RunAnalyst(context.Background(), NewClaude(ccfg), st, analyst, AnalystConfig{Budget: ccfg.Budget})
-			log.Printf("Análisis con Claude activado: %s, tope de US$ %s por día", ccfg.Model, usd(ccfg.Budget))
+			go RunAnalyst(context.Background(), NewClaude(ccfg), st, analyst, AnalystConfig{Settings: settings})
+			c, _ := settings.Claude()
+			log.Printf("Clave de Claude cargada: tiempo real con %s cada %d s, resúmenes con %s, tope de US$ %s por día (0 = apagado)",
+				c.RealtimeModel, c.BatchSec, ccfg.Model, usd(c.BudgetMicros))
 		}
 		addr := *dash
 		if strings.HasPrefix(addr, ":") {

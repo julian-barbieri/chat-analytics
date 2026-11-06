@@ -161,8 +161,8 @@ func prepare(cfg config) (*prepared, error) {
 	}
 
 	// Mismos nombres que deriva OpenStore, así el dashboard los encuentra en su carpeta.
-	// Los vivos y los análisis de Claude hacen que Programas y la tira tengan algo
-	// que mostrar (ADR 0007); el gasto de Claude no se copia para que el tope de
+	// Los vivos, los análisis y las etiquetas de Claude hacen que Programas, la tira
+	// y Canales tengan algo que mostrar (ADR 0007, 0009); el gasto de Claude no se copia para que el tope de
 	// la vista previa arranque en 0, ni datos.canales.json (sigue con su -canal).
 	base := strings.TrimSuffix(cfg.Datos, ".jsonl")
 	for src, dst := range map[string]string{
@@ -171,6 +171,7 @@ func prepare(cfg config) (*prepared, error) {
 		base + ".espectadores.jsonl": "datos.espectadores.jsonl",
 		base + ".vivos.jsonl":        "datos.vivos.jsonl",
 		base + ".analisis.jsonl":     "datos.analisis.jsonl",
+		base + ".etiquetas.jsonl":    "datos.etiquetas.jsonl",
 	} {
 		copied, err := copyFile(src, filepath.Join(dir, dst))
 		if err != nil {

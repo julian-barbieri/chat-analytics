@@ -3,9 +3,11 @@ package main
 import (
 	"bufio"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -183,14 +185,47 @@ func (f *fakeAPI) claude(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		Model string `json:"model"`
+		Model    string                     `json:"model"`
+		Messages []struct{ Content string } `json:"messages"`
+		Output   struct {
+			Format struct{ Schema json.RawMessage }
+		} `json:"output_config"`
 	}
 	json.NewDecoder(io.LimitReader(r.Body, 8<<20)).Decode(&req)
+	text := fakeAnalysis
+	// Las tandas (ADR 0009) se distinguen por el esquema: se responde una
+	// etiqueta por número de mensaje, sin mirar los textos.
+	if strings.Contains(string(req.Output.Format.Schema), "grupos_nuevos") && len(req.Messages) > 0 {
+		text = fakeBatch(req.Messages[0].Content)
+	}
 	writeJSON(w, map[string]any{
 		"id": "msg_vista_previa", "type": "message", "role": "assistant", "model": req.Model,
-		"content":     []any{map[string]any{"type": "text", "text": fakeAnalysis}},
+		"content":     []any{map[string]any{"type": "text", "text": text}},
 		"stop_reason": "end_turn", "usage": map[string]any{"input_tokens": 1200, "output_tokens": 300},
 	})
+}
+
+var reBatchLine = regexp.MustCompile(`(?m)^\[(\d+)\] `)
+
+// fakeBatch arma etiquetas simuladas para los números de mensaje de una tanda:
+// sentimientos y categorías que rotan, una pregunta simulada y un motivo de
+// cada tipo, para que la vista previa tenga algo que mostrar.
+func fakeBatch(user string) string {
+	sents := []string{"positivo", "neutro", "negativo"}
+	cats := []string{"otro", "pregunta", "elogio", "queja"}
+	var items []string
+	for i, m := range reBatchLine.FindAllStringSubmatch(user, -1) {
+		group := ""
+		if cats[i%len(cats)] == "pregunta" {
+			group = "nuevo1"
+		}
+		items = append(items, fmt.Sprintf(`{"n":%s,"sentimiento":%q,"categoria":%q,"tecnica":%v,"grupo":%q}`,
+			m[1], sents[i%len(sents)], cats[i%len(cats)], i%7 == 3, group))
+	}
+	return `{"mensajes":[` + strings.Join(items, ",") + `],` +
+		`"grupos_nuevos":[{"clave":"nuevo1","pregunta":"Pregunta simulada de la vista previa"}],` +
+		`"motivos":[{"tipo":"positivo","motivo":"Motivo positivo simulado","mensajes":[1]},` +
+		`{"tipo":"negativo","motivo":"Motivo negativo simulado","mensajes":[1]}]}`
 }
 
 // item arma el video como lo devuelve videos.list. Sin activeLiveChatId (el worker no

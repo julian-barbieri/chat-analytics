@@ -35,8 +35,11 @@ type Store struct {
 	lpath     string // muestras de los vivos en curso por canal (datos.vivos.jsonl), también aparte
 	apath     string // análisis de Claude (datos.analisis.jsonl), aparte de los mensajes
 	cpath     string // gasto del día en Claude (datos.claude.json)
+	bpath     string // tandas de Claude con las etiquetas por mensaje (datos.etiquetas.jsonl)
 	msgs      []Message
 	analyses  []ClaudeAnalysis
+	batches   []ClaudeBatch
+	labels    map[string]MessageLabel // por Message.ID
 	spend     claudeDay
 	claude    ClaudeStatus
 	viewers   []ViewerSample
@@ -111,6 +114,13 @@ type ClaudeStatus struct {
 	LastErr     string
 	Capped      bool  // el último pedido no entraba en el tope del día
 	Tope, Spent int64 // micro-dólares
+	// Tandas (tiempo real).
+	RealtimeModel  string
+	BatchEvery     time.Duration
+	RealtimeCapped bool      // la última tanda no entraba en la parte del tope para tiempo real
+	LastBatch      time.Time // cuándo salió la última tanda
+	LastBatchErr   string
+	Pending        int // mensajes para la próxima tanda (a lo sumo claudeBatchMax)
 }
 
 // claudeDay es lo que se guarda en <datos>.claude.json: el día local (no del
@@ -129,7 +139,8 @@ type quotaDay struct {
 func OpenStore(path string) (*Store, error) {
 	base := strings.TrimSuffix(path, ".jsonl")
 	s := &Store{path: path, quota: base + ".cuota.json", vpath: base + ".espectadores.jsonl", lpath: base + ".vivos.jsonl",
-		apath: base + ".analisis.jsonl", cpath: base + ".claude.json", seen: map[string]bool{}}
+		apath: base + ".analisis.jsonl", cpath: base + ".claude.json", bpath: base + ".etiquetas.jsonl",
+		seen: map[string]bool{}, labels: map[string]MessageLabel{}}
 	if b, err := os.ReadFile(s.quota); err == nil {
 		var q quotaDay
 		if json.Unmarshal(b, &q) == nil {
@@ -176,6 +187,15 @@ func OpenStore(path string) (*Store, error) {
 		return nil, err
 	}
 	s.analyses = analyses
+	// Las etiquetas vencen con la tanda: desde su último mensaje (To).
+	batches, err := loadJSONLMax(s.bpath, func(b ClaudeBatch) bool { return !b.To.Before(cutoff) }, maxBatchLine)
+	if err != nil {
+		return nil, err
+	}
+	s.batches = batches
+	for _, b := range batches {
+		s.indexLabels(b)
+	}
 	return s, nil
 }
 
@@ -183,6 +203,11 @@ func OpenStore(path string) (*Store, error) {
 // datos de la API) y lo reescribe sin lo vencido ni lo ilegible. Si no existe,
 // arranca vacío y no lo crea.
 func loadJSONL[T any](path string, keep func(T) bool) ([]T, error) {
+	return loadJSONLMax(path, keep, maxViewerLine)
+}
+
+// loadJSONLMax es loadJSONL con otro largo máximo de línea.
+func loadJSONLMax[T any](path string, keep func(T) bool, maxLine int) ([]T, error) {
 	f, err := os.Open(path)
 	if os.IsNotExist(err) {
 		return nil, nil
@@ -190,7 +215,7 @@ func loadJSONL[T any](path string, keep func(T) bool) ([]T, error) {
 	if err != nil {
 		return nil, err
 	}
-	items, err := readJSONL(f, keep)
+	items, err := readJSONLMax(f, keep, maxLine)
 	f.Close()
 	if err != nil {
 		// Reescribir con lo leído a medias perdería para siempre el resto.
@@ -221,7 +246,12 @@ func readViewers(r io.Reader, cutoff time.Time) ([]ViewerSample, error) {
 // demasiado largas. A diferencia de bufio.Scanner, una línea larga no corta
 // la lectura: se pierden solo los datos de esa línea.
 func readJSONL[T any](r io.Reader, keep func(T) bool) ([]T, error) {
-	br := bufio.NewReaderSize(r, maxViewerLine)
+	return readJSONLMax(r, keep, maxViewerLine)
+}
+
+// readJSONLMax es readJSONL con otro largo máximo de línea.
+func readJSONLMax[T any](r io.Reader, keep func(T) bool, maxLine int) ([]T, error) {
+	br := bufio.NewReaderSize(r, maxLine)
 	var out []T
 	long := false
 	for {
@@ -493,6 +523,69 @@ func (s *Store) Analyses(channelID string, since time.Time) []ClaudeAnalysis {
 		}
 	}
 	return out
+}
+
+// AddBatch guarda una tanda de Claude al final de datos.etiquetas.jsonl y
+// suma sus etiquetas al índice. Nunca toca datos.jsonl.
+func (s *Store) AddBatch(b ClaudeBatch) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.batches = append(s.batches, b)
+	s.indexLabels(b)
+	f, err := os.OpenFile(s.bpath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	json.NewEncoder(f).Encode(b)
+}
+
+func (s *Store) indexLabels(b ClaudeBatch) {
+	for _, l := range b.Labels {
+		s.labels[l.ID] = l
+	}
+}
+
+// Batches devuelve las tandas de un canal ("" = todos) que terminan desde
+// since, en orden. Como con Analyses, las tandas no se modifican después de
+// guardarlas: compartir sus listas internas es seguro.
+func (s *Store) Batches(channelID string, since time.Time) []ClaudeBatch {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var out []ClaudeBatch
+	for _, b := range s.batches {
+		if (channelID == "" || b.ChannelID == channelID) && !b.To.Before(since) {
+			out = append(out, b)
+		}
+	}
+	return out
+}
+
+// Labels devuelve las etiquetas de esos mensajes (los que no tienen, no están).
+func (s *Store) Labels(ids []string) map[string]MessageLabel {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	out := map[string]MessageLabel{}
+	for _, id := range ids {
+		if l, ok := s.labels[id]; ok {
+			out[id] = l
+		}
+	}
+	return out
+}
+
+// RealtimeSpend es lo gastado en tandas desde since (micro-dólares): la parte
+// del tope para tiempo real se cuenta aparte del gasto total.
+func (s *Store) RealtimeSpend(since time.Time) int64 {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var n int64
+	for _, b := range s.batches {
+		if !b.At.Before(since) {
+			n += b.CostMicros
+		}
+	}
+	return n
 }
 
 // SetClaudeStatus guarda el estado del análisis con Claude (lo llama RunAnalyst).

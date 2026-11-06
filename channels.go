@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -40,13 +41,35 @@ type ChannelSetting struct {
 	Input                   string
 	ChatPeakSec, ChatOffSec int
 	Paused                  bool // pausa solo el chat: sus vivos se siguen revisando
+	// NoClaude apaga las tandas de Claude de este canal. Va al revés (el
+	// check "Analizar el chat con Claude" viene prendido) para que un
+	// archivo de antes, sin el campo, quede con el check activado.
+	NoClaude bool `json:",omitempty"`
 }
 
 func (c ChannelSetting) peak() time.Duration { return time.Duration(c.ChatPeakSec) * time.Second }
 func (c ChannelSetting) off() time.Duration  { return time.Duration(c.ChatOffSec) * time.Second }
 
+// ClaudeSettings es la tarjeta "Análisis con Claude" de Canales: el modelo de
+// las tandas (tiempo real), cada cuánto se manda una y el tope diario. El tope
+// va en micro-dólares (int64), como el contador de gasto, nunca en float.
+type ClaudeSettings struct {
+	RealtimeModel string
+	BatchSec      int
+	BudgetMicros  int64
+}
+
+func (c ClaudeSettings) every() time.Duration { return time.Duration(c.BatchSec) * time.Second }
+
+// batchChoices son las tandas que ofrece Canales, en segundos; maxClaudeUSD
+// es el tope más alto que se acepta desde la pantalla.
+var batchChoices = []int{30, 60, 120, 300}
+
+const maxClaudeUSD = 50
+
 type settingsFile struct {
 	Channels []ChannelSetting
+	Claude   *ClaudeSettings `json:",omitempty"` // sin la sección valen los flags
 }
 
 // Settings es la configuración vigente. Get devuelve copias.
@@ -57,7 +80,14 @@ type Settings struct {
 	version  int
 	fromFile bool
 	warn     string
+	claude   *ClaudeSettings // lo guardado desde Canales; nil: valen los flags
+	claudeDf ClaudeSettings  // los flags (-claude-modelo-vivo, -claude-tanda-seg, -claude-usd)
+	cwarn    string          // flags de Claude pasados a mano que no se usan
 }
+
+// defaultClaude es lo que vale sin flags ni archivo: Haiku, tandas cada 30 s
+// y tope 0 (apagado).
+var defaultClaude = ClaudeSettings{RealtimeModel: defaultRealtimeModel, BatchSec: 30}
 
 // settingsPath es datos.canales.json al lado de datos.jsonl (y de los demás).
 func settingsPath(dataPath string) string {
@@ -81,7 +111,7 @@ func flagSettings(channels []string, peakSec, offSec int) []ChannelSetting {
 // son los flags de canales pasados a mano (flag.Visit), que se avisan. Un
 // archivo que no se entiende frena el arranque y no se pisa.
 func LoadSettings(path string, fromFlags []ChannelSetting, manual []string) (*Settings, error) {
-	s := &Settings{path: path}
+	s := &Settings{path: path, claudeDf: defaultClaude}
 	b, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
 		s.channels = append([]ChannelSetting(nil), fromFlags...)
@@ -105,6 +135,13 @@ func LoadSettings(path string, fromFlags []ChannelSetting, manual []string) (*Se
 		return fail(err)
 	}
 	s.channels, s.fromFile = f.Channels, true
+	if f.Claude != nil {
+		c := *f.Claude
+		if err := validClaudeSettings(c); err != nil {
+			return fail(err)
+		}
+		s.claude = &c
+	}
 	if len(manual) > 0 {
 		flags := make([]string, len(manual))
 		for i, m := range manual {
@@ -113,6 +150,72 @@ func LoadSettings(path string, fromFlags []ChannelSetting, manual []string) (*Se
 		s.warn = fmt.Sprintf("%s no se usa: valen los canales guardados desde Canales en %s", strings.Join(flags, ", "), name)
 	}
 	return s, nil
+}
+
+// SetClaudeDefaults fija los valores de los flags de Claude, que valen
+// mientras el archivo no tenga la sección Claude. manual son los flags de
+// Claude pasados a mano: si manda el archivo, se avisan.
+func (s *Settings) SetClaudeDefaults(c ClaudeSettings, manual []string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.claudeDf = c
+	if s.claude != nil && len(manual) > 0 {
+		flags := make([]string, len(manual))
+		for i, m := range manual {
+			flags[i] = "-" + m
+		}
+		s.cwarn = fmt.Sprintf("%s no se usa: vale lo guardado acá (%s)", strings.Join(flags, ", "), filepath.Base(s.path))
+	}
+}
+
+// Claude devuelve la configuración de Claude vigente y si salió del archivo.
+func (s *Settings) Claude() (ClaudeSettings, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.claude != nil {
+		return *s.claude, true
+	}
+	return s.claudeDf, false
+}
+
+// ClaudeWarning es el aviso de flags de Claude que no se usan.
+func (s *Settings) ClaudeWarning() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.cwarn
+}
+
+// UpdateClaude guarda la tarjeta de Claude: la configuración y qué canales
+// se analizan (analyze, por Input). Como Update, valida, guarda y recién
+// ahí lo deja vigente.
+func (s *Settings) UpdateClaude(c ClaudeSettings, analyze map[string]bool) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := validClaudeSettings(c); err != nil {
+		return err
+	}
+	next := append([]ChannelSetting(nil), s.channels...)
+	for i := range next {
+		next[i].NoClaude = !analyze[next[i].Input]
+	}
+	if err := s.save(next, &c); err != nil {
+		return err
+	}
+	s.claude, s.cwarn = &c, ""
+	return nil
+}
+
+func validClaudeSettings(c ClaudeSettings) error {
+	if _, ok := claudePrices[c.RealtimeModel]; !ok {
+		return fmt.Errorf("no conozco el modelo %q", c.RealtimeModel)
+	}
+	if !slices.Contains(batchChoices, c.BatchSec) {
+		return errors.New("elegí cada cuánto se manda una tanda de la lista")
+	}
+	if c.BudgetMicros < 0 || c.BudgetMicros > maxClaudeUSD*1_000_000 {
+		return fmt.Errorf("el tope tiene que estar entre US$ 0 y US$ %d", maxClaudeUSD)
+	}
+	return nil
 }
 
 // Get devuelve una copia de la configuración y su versión.
@@ -148,7 +251,13 @@ func (s *Settings) Update(f func([]ChannelSetting) ([]ChannelSetting, error)) er
 	if next, err = validSettings(next, s.channels); err != nil {
 		return err
 	}
-	b, _ := json.MarshalIndent(settingsFile{Channels: next}, "", "  ")
+	return s.save(next, s.claude)
+}
+
+// save escribe el archivo (tmp + os.Rename) y deja vigentes los canales.
+// Con s.mu tomado.
+func (s *Settings) save(channels []ChannelSetting, claude *ClaudeSettings) error {
+	b, _ := json.MarshalIndent(settingsFile{Channels: channels, Claude: claude}, "", "  ")
 	tmp := s.path + ".tmp"
 	if err := os.WriteFile(tmp, append(b, '\n'), 0o644); err != nil {
 		return fmt.Errorf("no se pudo guardar la configuración: %v", err)
@@ -157,7 +266,7 @@ func (s *Settings) Update(f func([]ChannelSetting) ([]ChannelSetting, error)) er
 		os.Remove(tmp)
 		return fmt.Errorf("no se pudo guardar la configuración: %v", err)
 	}
-	s.channels, s.fromFile = next, true
+	s.channels, s.fromFile = channels, true
 	s.version++
 	return nil
 }

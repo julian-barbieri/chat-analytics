@@ -25,23 +25,29 @@
 {{with .Claude}}<section class="card" aria-labelledby="ia-h">
   <div class="chead"><h2 id="ia-h">Análisis con Claude <span class="ia">Claude</span></h2><span class="chip {{.ChipClass}}">{{.Chip}}</span></div>
   <p class="muted">La clave se lee de CLAUDE_API_KEY (en el archivo de la clave o en el entorno) y nunca se muestra acá ni en los registros. Si falta o se llega al tope de gasto, el monitor sigue con las reglas de siempre.</p>
+  {{if .Realtime}}
+  {{with .Form}}{{template "canales-claude-form" .}}{{else}}<p>{{.Text}}</p>{{end}}
+  <div id="claude-estado" hx-get="/parcial/canales/claude" hx-trigger="every 10s">{{template "canales-claude-estado" .State}}</div>
+  {{else}}
   <dl class="tiles">
     <div class="inner"><dt class="lbl">Modelo</dt><dd>{{.Model}}</dd></div>
     <div class="inner"><dt class="lbl">Tope</dt><dd>{{.Tope}}</dd></div>
     <div class="inner"><dt class="lbl">Gastado hoy</dt><dd>{{.Spent}}</dd></div>
   </dl>
+  {{end}}
   <p>{{.Last}}</p>
   {{if .Warn}}<p class="muted">Último aviso: {{.Warn}}</p>{{end}}
   <details>
     <summary>Qué se le manda a Claude y qué se guarda</summary>
     <ul class="steps">
+      {{if .Realtime}}<li>Tiempo real: cada tanda manda los mensajes de chat nuevos de cada canal con el check (si no hay nuevos, no se manda nada) y Claude etiqueta cada uno con sentimiento, categoría, si es una queja técnica y a qué pregunta se parece. Las tandas usan como mucho 3/4 del tope; el resto queda para los resúmenes.</li>{{end}}
       <li>Un pedido por programa, cuando termina (y otro si se toca «Analizar ahora» en En vivo, como mucho cada 10 min por canal).</li>
       <li>Solo el texto y la hora de los mensajes de chat del programa, sin nombres de usuario ni spam.</li>
-      <li>El resumen se guarda en datos.analisis.jsonl, aparte de los mensajes, con la misma retención de 30 días.</li>
-      <li>Claude no responde ni modera: el monitor sigue siendo de solo lectura.</li>
+      <li>El resumen se guarda en datos.analisis.jsonl{{if .Realtime}} y las etiquetas en datos.etiquetas.jsonl{{end}}, aparte de los mensajes, con la misma retención de 30 días.</li>
+      <li>Claude no responde ni modera: el monitor no escribe en YouTube.</li>
     </ul>
   </details>
-  <p class="muted">El modelo y el tope se cambian con -claude-modelo y -claude-usd (ver README).</p>
+  {{if not .Realtime}}<p class="muted">El modelo y el tope se cambian con -claude-modelo y -claude-usd (ver README).</p>{{end}}
 </section>{{end}}
 {{template "foot" .}}
 
@@ -130,4 +136,42 @@
     <button type="submit" class="btn btn-p">Guardar cambios</button>
   </div>
 </form>
+{{end}}
+
+{{define "canales-claude-form"}}
+<form id="claude-form" class="inner cfg" hx-post="/canales/claude" hx-target="this" hx-swap="outerHTML">
+  {{with .Notice}}<div class="cartel {{$.NoticeClass}}" role="status"><strong>{{.}}</strong></div>{{end}}
+  {{with .Warn}}<div class="cartel warn" role="status"><strong>{{.}}.</strong></div>{{end}}
+  <div class="cfgrow">
+    <div class="field"><label class="lbl" for="claude-modelo">Modelo para tiempo real</label>
+      <select class="sel" id="claude-modelo" name="modelo" hx-get="/parcial/canales/claude/proyeccion" hx-include="#claude-form" hx-target="#claude-proy" hx-swap="outerHTML">{{range .Models}}<option value="{{.Value}}"{{if .Selected}} selected{{end}}>{{.Label}}</option>{{end}}</select></div>
+    <div class="field"><label class="lbl" for="claude-tanda">Analizar en tandas cada</label>
+      <select class="sel" id="claude-tanda" name="tanda" hx-get="/parcial/canales/claude/proyeccion" hx-include="#claude-form" hx-target="#claude-proy" hx-swap="outerHTML">{{range .Batches}}<option value="{{.Value}}"{{if .Selected}} selected{{end}}>{{.Label}}</option>{{end}}</select>
+      <span class="muted">el dato llega con esa demora</span></div>
+    <div class="field"><label class="lbl" for="claude-tope">Tope de gasto por día (US$)</label>
+      <input class="inp" id="claude-tope" name="tope" type="number" min="0" max="50" step="0.01" value="{{.Tope}}" hx-get="/parcial/canales/claude/proyeccion" hx-include="#claude-form" hx-target="#claude-proy" hx-swap="outerHTML" hx-trigger="change">
+      <span class="muted">al llegar, se vuelve a las reglas</span></div>
+  </div>
+  {{template "canales-claude-proy" .Projection}}
+  <fieldset class="checks">
+    <legend class="lbl">Analizar el chat con Claude</legend>
+    {{range .Channels}}<label class="check"><input type="checkbox" name="analizar" value="{{.Input}}"{{if .On}} checked{{end}} hx-get="/parcial/canales/claude/proyeccion" hx-include="#claude-form" hx-target="#claude-proy" hx-swap="outerHTML"> {{.Name}}</label>{{end}}
+  </fieldset>
+  <p class="muted">{{.Summary}}</p>
+  <div class="actions formfoot">
+    <p class="muted">Se aplica sin reiniciar el monitor. Lo arma Claude: puede equivocarse.</p>
+    <button type="submit" class="btn btn-p">Guardar</button>
+  </div>
+</form>
+{{end}}
+
+{{define "canales-claude-proy"}}<p id="claude-proy" class="{{if .Fits}}muted{{else}}cartel warn{{end}}" role="status">{{.Text}}</p>{{end}}
+
+{{define "canales-claude-estado"}}
+{{with .Note}}<div class="cartel {{$.NoteClass}}" role="status"><strong>{{.}}</strong></div>{{end}}
+<dl class="tiles">
+  <div class="inner"><dt class="lbl">Mensajes analizados hoy</dt><dd>{{.Analyzed}}</dd><dd class="muted">{{.AnalyzedSub}}</dd></div>
+  <div class="inner"><dt class="lbl">Gasto estimado de hoy</dt><dd>{{.Spend}}</dd><dd class="muted">{{.SpendSub}}</dd></div>
+  <div class="inner"><dt class="lbl">Última tanda</dt><dd>{{.Last}}</dd>{{with .LastSub}}<dd class="muted">{{.}}</dd>{{end}}</div>
+</dl>
 {{end}}
