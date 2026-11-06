@@ -1,6 +1,6 @@
 # Spec: En vivo con Claude: sentimiento, alertas y preguntas agrupadas (F4)
 
-- **Estado:** borrador
+- **Estado:** aprobada
 - **Tipo:** mejora (feat)
 - **Rama:** `feat/claude-en-vivo`
 - **Origen:** pedido de Julian Barbieri (2026-11-06): "Arrancá la fase 4 (tandas de Claude) sin
@@ -8,7 +8,7 @@
   (aprobada el 2026-11-05 con las 12 recomendaciones), en el flujo manual (ADR 0008). Esta es la
   versión corta para implementar; el detalle (imágenes de referencia, decisiones 5 a 8) está en la
   madre, "F4" y "Diseño de referencia".
-- **Aprobada por / fecha:** —
+- **Aprobada por / fecha:** Julian Barbieri, 2026-11-06
 
 ## Contexto
 
