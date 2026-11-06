@@ -1,6 +1,6 @@
 ---
 name: implementar
-description: Segundo paso del flujo manual de yt-monitor. Implementa la spec de la rama actual con TDD (test en rojo, código, verde) en esta sesión y corre los gates rápidos. Correrlo aprueba la spec.
+description: Segundo paso del flujo manual de yt-monitor. Implementa la spec de la rama actual con TDD (test en rojo, código, verde) en esta sesión, corre los gates rápidos y levanta la vista previa en localhost:8081 para validar a mano. Correrlo aprueba la spec.
 argument-hint: "[ruta de la spec] [nota o hallazgos a corregir]"
 ---
 
@@ -41,14 +41,54 @@ $ARGUMENTS
    comportamiento visible.
 9. Si es la segunda pasada (vienen hallazgos de `/revisar` o una nota), corregí solo eso
    y repetí 6 a 8.
+10. **Vista previa para validar a mano**, sin preguntar: correr `/implementar` ya es el
+    pedido de la persona (ADR 0008). Ver abajo.
 
 **No commitees** el código: la persona lo valida en el diff y `/push` hace el commit.
 
+## Vista previa
+
+Se levanta siempre que el diff toque Go del paquete `main` o `templates/` (todo lo que
+termina en el binario). Si solo tocó docs, `tools/` o tests, salteala y decí por qué.
+
+1. La vista previa compila la rama **una vez al arrancar**: si ya había una de una
+   pasada anterior, cortala primero para que muestre el código nuevo:
+
+   ```bash
+   go run ./tools/preview -cortar
+   ```
+
+2. Levantala en segundo plano (con `run_in_background`), desde la rama de la tarea. La
+   primera entrada de `git worktree list` es el checkout principal, donde está
+   `datos.jsonl` aunque la sesión corra en un worktree:
+
+   ```bash
+   go run ./tools/preview -datos "$(git worktree list --porcelain | sed -n '1s/^worktree //p')/datos.jsonl"
+   ```
+
+   Esperá la línea "Vista previa en http://…". Si sale "ya hay algo escuchando", no la
+   fuerces: decíselo a la persona (puede ser su dashboard real en ese puerto).
+3. Usa una copia temporal de los datos y una API de YouTube y de Claude simulada: no
+   gasta cuota, no manda nada a Claude y no toca `datos.jsonl`. Tampoco llegan mensajes
+   nuevos, así que lo que dependa del chat en vivo (worker, streaming) se ve solo con lo
+   que ya estaba guardado: decilo si es el caso.
+4. Queda corriendo mientras la persona prueba y se corta en `/push` (o antes, si cambia
+   de rama, pasa a otra tarea o lo pide). Si al cortar `-cortar` dice "No hay ninguna
+   vista previa corriendo" pero el comando de fondo sigue vivo, esperá unos segundos y
+   repetilo hasta que termine. No borres nada a mano.
+
 ## Al terminar
 
-Mostrá en pocas líneas: qué archivos cambiaste y por qué, el rojo y el verde (una línea
-de cada uno) y la tabla de gates rápidos. Si el diff toca el dashboard o lo que muestra
-(`main.go`, `server.go`, `programs.go`, `templates/`, `analyze.go`, `classify.go`,
-`store.go`, `worker.go`, `youtube.go`), ofrecé la vista previa tal como dice el paso 7b
-de `.claude/skills/factory/SKILL.md` (con la misma regla de cortarla siempre). Cerrá
-diciendo que siga con `/revisar` o directo con `/push`.
+Mostrá en pocas líneas:
+
+- Qué archivos cambiaste y por qué, el rojo y el verde (una línea de cada uno) y la
+  tabla de gates rápidos.
+- El link de la vista previa y **una lista corta de qué probar ahí**, concreta para esta
+  tarea: pantalla (`/`, `/programas`, `/canales`), qué tocar y qué debería verse. Por
+  ejemplo: "Abrí /canales, agregá @rockandpop y fijate que la barra de cuota suba antes
+  de guardar". Recordale mirar modo claro y oscuro y el ancho de celular si cambió algo
+  visible.
+
+Cerrá diciendo que, si algo no es lo que buscaba, lo diga en el chat o corra
+`/implementar <nota>` (la vista previa se reinicia con el cambio), y si está bien, siga
+con `/revisar` o directo con `/push`.

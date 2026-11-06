@@ -16,7 +16,9 @@ $ARGUMENTS
 ## Pasos
 
 1. La rama no puede ser `main`. Ubicá la spec y `factory/manual/<slug>/` como en
-   `/implementar`.
+   `/implementar`. Cortá la vista previa si quedó corriendo (`go run ./tools/preview
+   -cortar`, y confirmá que el comando de fondo terminó): los gates compilan y corren
+   tests, y la persona ya validó.
 2. Revisá `git status --porcelain` y el diff contra `origin/main`: que no entren `.env`,
    `datos.jsonl`, `datos.*`, `informes/`, `factory/` ni binarios (`yt-monitor`,
    `yt-monitor.exe`). Si hay algo raro, pará y preguntá.
@@ -51,8 +53,7 @@ $ARGUMENTS
    gh pr create --base main --head <tipo>/<slug> --title "<tipo>: <qué cambia>" --body-file <archivo>
    ```
 
-7. Si se levantó la vista previa en esta sesión, cortala antes de cerrar
-   (`go run ./tools/preview -cortar`).
+7. Antes de cerrar, confirmá que no quedó ninguna vista previa corriendo.
 
 Respondé con el link al PR, los gates en una línea y los hallazgos abiertos. No
 mergees: lo decide la persona. Para ver el cambio en su dashboard real tiene que

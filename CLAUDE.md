@@ -41,8 +41,8 @@ solo por eso, el arreglo es actualizar Go, no el código. Decilo en el PR.
 Prohibido sin pedido explícito del usuario: `go run .` contra la API real (gasta cuota
 compartida, escribe `informes/` y `datos.jsonl`), cualquier corrida con `-claude-usd` > 0
 contra la API real de Anthropic (gasta plata y manda mensajes de usuarios) y cualquier
-`-dashboard` que quede corriendo, salvo la vista previa del paso 7b de `/factory` (o de `/implementar`)
-(`go run ./tools/preview`), que la persona pide, usa una copia temporal y una API de
+`-dashboard` que quede corriendo, salvo la vista previa del paso 7b de `/factory` o la de
+`/implementar` (`go run ./tools/preview`), que la persona pide (correr `/implementar` ya es el pedido), usa una copia temporal y una API de
 YouTube y de Claude simulada (saca las dos claves del entorno) y se corta con `-cortar`
 antes de terminar. Para probar a mano: `YT_BASE_URL=http://localhost:9999 YT_API_KEY=x go run . ...`
 (con Claude, también `CLAUDE_BASE_URL=http://localhost:9998 CLAUDE_API_KEY=x`; las dos
@@ -137,10 +137,12 @@ Para validar rápido, la persona corre cada paso y mira el resultado antes del s
 - `/idea <tarea>`: rama desde `origin/main` y spec corta en `docs/specs/` (borrador
   commiteado). No escribe código.
 - `/implementar [nota]`: correrlo aprueba la spec. TDD (rojo, código, verde) y
-  `scripts/gates.sh`. No commitea el código. Con una nota o hallazgos, corrige solo eso.
+  `scripts/gates.sh`. No commitea el código. Levanta sola la vista previa en
+  `http://localhost:8081` (si el cambio llega al binario) con una lista de qué probar,
+  y la reinicia en cada pasada. Con una nota o hallazgos, corrige solo eso.
 - `/revisar [foco]` (opcional): el agente `reviewer` lee el diff; la persona elige qué
   se arregla y se arregla en la misma sesión.
-- `/push`: `scripts/gates.sh completo` una sola vez, commit, push y PR.
+- `/push`: corta la vista previa, `scripts/gates.sh completo` una sola vez, commit, push y PR.
 
 La evidencia (rojo, verde, revisión, gates) queda en `factory/manual/<slug>/`, en
 `.gitignore`; estas tareas no aparecen en el tablero. Para algo largo que pueda correr

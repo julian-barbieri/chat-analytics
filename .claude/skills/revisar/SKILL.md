@@ -35,6 +35,9 @@ $ARGUMENTS
    corrijas nada todavía.
 5. Cuando la persona elija cuáles arreglar, corregilos acá mismo (no relances el
    reviewer ni `/implementar` entero), corré `scripts/gates.sh` y mostrá qué cambió.
+   Si hay una vista previa corriendo y el arreglo cambia algo visible, reiniciala como
+   dice la sección "Vista previa" de `/implementar` (compila la rama al arrancar) y
+   decí qué volver a mirar.
    Lo que quede abierto va en el PR (lo toma `/push` de `revision-<n>.md`).
 
 Cerrá diciendo que siga con `/push`.

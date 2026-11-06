@@ -22,7 +22,11 @@ agente `reviewer`, porque ahí el valor es una lectura que no viene de quien esc
 código, y los hallazgos se arreglan en la misma sesión sin otra vuelta completa. El
 tester deja de ser un paso: `/implementar` escribe y corre los tests (TDD). Los gates
 viven en `scripts/gates.sh`: rápido mientras se trabaja y completo una sola vez en
-`/push`. La evidencia queda en `factory/manual/<slug>/`, en `.gitignore`.
+`/push`. Al final de `/implementar` se levanta sola la vista previa (`tools/preview`,
+ADR 0003) en `localhost:8081` con una lista de qué probar, para que la persona valide
+que el cambio es lo que buscaba antes de seguir: correr `/implementar` cuenta como el
+pedido que exige `CLAUDE.md`. Se reinicia en cada pasada (compila la rama al arrancar)
+y `/push` la corta. La evidencia queda en `factory/manual/<slug>/`, en `.gitignore`.
 
 `/factory` sigue igual, para tareas que puedan correr solas.
 
