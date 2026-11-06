@@ -32,6 +32,8 @@ YouTube ni necesita API key.
 | Detectar tests intermitentes | `go test -count=5 ./...` |
 | Un test | `go test -count=1 -run '^TestNombre$' ./...` |
 | Vulnerabilidades | `go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...` |
+| Gates rápidos (formato, vet, tests) | `scripts/gates.sh` |
+| Todos los gates, con tabla para el PR | `scripts/gates.sh completo` |
 
 `govulncheck` reporta vulnerabilidades de la **stdlib del Go instalado**: si falla
 solo por eso, el arreglo es actualizar Go, no el código. Decilo en el PR.
@@ -39,7 +41,7 @@ solo por eso, el arreglo es actualizar Go, no el código. Decilo en el PR.
 Prohibido sin pedido explícito del usuario: `go run .` contra la API real (gasta cuota
 compartida, escribe `informes/` y `datos.jsonl`), cualquier corrida con `-claude-usd` > 0
 contra la API real de Anthropic (gasta plata y manda mensajes de usuarios) y cualquier
-`-dashboard` que quede corriendo, salvo la vista previa del paso 7b de `/factory`
+`-dashboard` que quede corriendo, salvo la vista previa del paso 7b de `/factory` (o de `/implementar`)
 (`go run ./tools/preview`), que la persona pide, usa una copia temporal y una API de
 YouTube y de Claude simulada (saca las dos claves del entorno) y se corta con `-cortar`
 antes de terminar. Para probar a mano: `YT_BASE_URL=http://localhost:9999 YT_API_KEY=x go run . ...`
@@ -55,11 +57,12 @@ templates/, static/  embebidos con //go:embed (htmx vendorizado: no editarlo)
 docs/specs/          una spec por tarea (plantilla: SPEC_TEMPLATE.md)
 docs/decisions/      ADRs numerados (plantilla: ADR_TEMPLATE.md)
 .claude/agents/      agentes especializados: triage, implementer, tester, reviewer
-.claude/skills/      procedimientos repetibles (/factory, /fix-bug)
+.claude/skills/      procedimientos repetibles (/factory, /fix-bug; flujo manual: /idea, /implementar, /revisar, /push)
+scripts/gates.sh     gates locales: rápido o completo (tabla en Markdown para el PR)
 .github/workflows/   CI (desactivado en GitHub; los gates se corren en local)
 tools/factory-board/ tablero de la factory (package main aparte, no va en el binario)
 tools/preview/       vista previa del dashboard de una rama con datos copiados y APIs simuladas (ADR 0003, 0006)
-factory/             estado (jobs/) y actividad (events/) de la factory; en .gitignore; el tablero puede borrar con el tacho las tareas en `pr-abierto`
+factory/             estado (jobs/), actividad (events/) y evidencia del flujo manual (manual/); en .gitignore; el tablero puede borrar con el tacho las tareas en `pr-abierto`
 ```
 
 ## Convenciones
@@ -105,7 +108,9 @@ Una tarea está terminada solo si se cumple **todo**:
 4. `go test -race -count=1 ./...` y `go test -count=5 ./...` en verde.
 5. Lo pedido en "Antes de dar algo por terminado" de `AGENTS.md` (README si cambian
    flags/cuota, navegador si cambió el dashboard, `TestClassify` si cambió el clasificador).
-6. Revisión del agente `reviewer` sin hallazgos bloqueantes pendientes.
+6. Con `/factory`: revisión del agente `reviewer` sin hallazgos bloqueantes pendientes.
+   Con el flujo manual, `/revisar` es recomendado y no obligatorio: si no se corrió, el
+   PR lo dice (ADR 0008).
 7. PR abierto contra `main` con resumen, link a la spec y evidencia de tests (salida de
    los gates locales de los puntos 3 y 4: el CI de GitHub está desactivado).
 
@@ -113,7 +118,7 @@ Una tarea está terminada solo si se cumple **todo**:
 
 - El CI de GitHub (`.github/workflows/ci.yml`) está **desactivado** a pedido del usuario,
   para mergear a `main` sin esperar checks. Los gates de la tabla de comandos se corren
-  en local (paso 6 de `/factory`) y su salida va en el PR. Para volver a prenderlo:
+  en local (`scripts/gates.sh completo`: paso 6 de `/factory` o `/push`) y su salida va en el PR. Para volver a prenderlo:
   `gh workflow enable CI`.
 - Hooks de `.claude/settings.json`: después de editar un `.go`, `gofmt -w` y `go vet`
   (si vet falla, el error vuelve al agente). Antes de cada comando se bloquean `rm -rf`,
@@ -123,6 +128,23 @@ Una tarea está terminada solo si se cumple **todo**:
 - `log-activity.sh` (async, no bloquea) registra cada herramienta y cada subagente en
   `factory/events/AAAA-MM-DD.jsonl`, solo con resúmenes cortos; borra lo de más de 30
   días.
+
+## Flujo manual (el de todos los días)
+
+Para validar rápido, la persona corre cada paso y mira el resultado antes del siguiente
+(ADR 0008). Todo pasa en la sesión principal, sin subagentes salvo `/revisar`:
+
+- `/idea <tarea>`: rama desde `origin/main` y spec corta en `docs/specs/` (borrador
+  commiteado). No escribe código.
+- `/implementar [nota]`: correrlo aprueba la spec. TDD (rojo, código, verde) y
+  `scripts/gates.sh`. No commitea el código. Con una nota o hallazgos, corrige solo eso.
+- `/revisar [foco]` (opcional): el agente `reviewer` lee el diff; la persona elige qué
+  se arregla y se arregla en la misma sesión.
+- `/push`: `scripts/gates.sh completo` una sola vez, commit, push y PR.
+
+La evidencia (rojo, verde, revisión, gates) queda en `factory/manual/<slug>/`, en
+`.gitignore`; estas tareas no aparecen en el tablero. Para algo largo que pueda correr
+solo, `/factory`.
 
 ## Flujo de la software factory
 

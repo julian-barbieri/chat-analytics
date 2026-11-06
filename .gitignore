@@ -17,3 +17,4 @@ yt-monitor.exe
 # Estado y actividad de la software factory (los lee tools/factory-board; ADR 0002)
 factory/jobs/
 factory/events/
+factory/manual/
