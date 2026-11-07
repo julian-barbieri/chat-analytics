@@ -112,7 +112,7 @@ func TestFlowAgainstFakeAPI(t *testing.T) {
 			super := ""
 			if q.Get("liveChatId") == "chat1" {
 				super = `,{"id":"sc-chat1","snippet":{"type":"superChatEvent","displayMessage":"Vamos","publishedAt":"` + now +
-					`","superChatDetails":{"amountMicros":"5000000","currency":"ARS","amountDisplayString":"ARS 5,00","userComment":"Vamos","tier":2}},"authorDetails":{"displayName":"Caro"}}`
+					`","superChatDetails":{"amountMicros":"5000000","currency":"ARS","amountDisplayString":"ARS 5,00","userComment":"Vamos","tier":2}},"authorDetails":{"displayName":"Caro","isChatModerator":true}}`
 			}
 			w.Write([]byte(`{"pollingIntervalMillis":1,"items":[{"id":"m-` + q.Get("liveChatId") + `","snippet":{"displayMessage":"` + text + `","publishedAt":"` + now + `"},"authorDetails":{"displayName":"Beto"}}` + super + `]}`))
 		default:
@@ -160,7 +160,7 @@ func TestFlowAgainstFakeAPI(t *testing.T) {
 		t.Errorf("programas del chat = %q, %q", chat[0].Program, chat[2].Program)
 	}
 	if sc := chat[1]; sc.ID != "sc-chat1" || sc.Super != SuperChat || sc.AmountMicros != 5000000 || sc.Currency != "ARS" ||
-		sc.AmountText != "ARS 5,00" || sc.Tier != 2 || sc.Program != "LA MAÑANA" || sc.Text != "Vamos" {
+		sc.AmountText != "ARS 5,00" || sc.Tier != 2 || sc.Program != "LA MAÑANA" || sc.Text != "Vamos" || sc.Role != "moderador" || chat[0].Role != "" {
 		t.Errorf("Super Chat = %+v", sc)
 	}
 	md := report(title+", "+title2, vids, append(cs, chat...), time.Now(), yt.Units, nil, 1)
@@ -10090,4 +10090,419 @@ func TestAlertsTechOnly(t *testing.T) {
 	if strings.Contains(card, "insultos") || strings.Contains(card, "Claude y reglas") || !strings.Contains(card, `<span class="chip">Claude</span>`) {
 		t.Errorf("tarjeta de alertas: %s", card)
 	}
+}
+
+// --- fidelizacion-programas ---
+
+// TestStreamCloseNoLog (CA1): el cierre normal del streaming no se loguea.
+func TestStreamCloseNoLog(t *testing.T) {
+	var logs lockedLog
+	log.SetOutput(&logs)
+	defer log.SetOutput(os.Stderr)
+	now := time.Now().UTC().Format(time.RFC3339)
+	var mu sync.Mutex
+	opened := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/channels":
+			w.Write([]byte(`{"items":[{"snippet":{"title":"Radio Test"},"contentDetails":{"relatedPlaylists":{"uploads":"UU1"}}}]}`))
+		case "/playlistItems":
+			if r.URL.Query().Get("playlistId") == "UULV1" {
+				w.Write([]byte(`{"items":[{"contentDetails":{"videoId":"s1"}}]}`))
+				return
+			}
+			w.Write([]byte(`{"items":[]}`))
+		case "/videos":
+			w.Write([]byte(`{"items":[{"id":"s1","snippet":{"title":"LA MAÑANA | EN VIVO","channelTitle":"Radio Test","publishedAt":"` + now +
+				`","liveBroadcastContent":"live"},"statistics":{},"liveStreamingDetails":{"activeLiveChatId":"cs"}}]}`))
+		case "/liveChat/messages/stream":
+			mu.Lock()
+			opened++
+			mu.Unlock()
+			// Responde y cierra: es el corte normal de YouTube.
+			w.Write([]byte("[" + streamItem("t1", "s-1", "hola") + "]"))
+		default:
+			w.WriteHeader(404)
+		}
+	}))
+	defer srv.Close()
+	st, err := OpenStore(t.TempDir() + "/datos.jsonl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	yt := NewYouTube("k")
+	yt.BaseURL = srv.URL
+	stop := startWorker(t, yt, st, WorkerConfig{
+		Channels: []string{"C"}, Videos: 5, VideosEvery: time.Hour, CommentsEvery: time.Hour,
+		ChatEvery: time.Millisecond, ChatPeak: time.Millisecond, Budget: 9000,
+	})
+	defer stop()
+	waitFor(t, 5*time.Second, "dos conexiones de tiempo real", func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return opened >= 2
+	})
+	if l := logs.String(); strings.Contains(l, "cerró la conexión") {
+		t.Errorf("se logueó el cierre normal del streaming:\n%s", l)
+	}
+}
+
+// TestMessageRole (CA2): moderador y dueño se toman de authorDetails, y una
+// línea vieja de datos.jsonl (sin Role) carga igual.
+func TestMessageRole(t *testing.T) {
+	var r chatPage
+	page := `{"items":[
+ {"id":"a","snippet":{"displayMessage":"hola","publishedAt":"2026-11-02T12:00:00Z"},"authorDetails":{"displayName":"Ana"}},
+ {"id":"b","snippet":{"displayMessage":"orden","publishedAt":"2026-11-02T12:00:00Z"},"authorDetails":{"displayName":"Mod","isChatModerator":true}},
+ {"id":"c","snippet":{"displayMessage":"bienvenidos","publishedAt":"2026-11-02T12:00:00Z"},"authorDetails":{"displayName":"Radio","isChatOwner":true,"isChatModerator":true}}]}`
+	if err := json.Unmarshal([]byte(page), &r); err != nil {
+		t.Fatal(err)
+	}
+	var roles []string
+	for _, m := range r.messages("v1") {
+		roles = append(roles, m.Role)
+	}
+	if got := strings.Join(roles, ","); got != ",moderador,dueño" {
+		t.Errorf("roles = %q", got)
+	}
+	var m Message
+	if err := json.Unmarshal([]byte(`{"ID":"x","Source":"chat","VideoID":"v","Author":"A","Text":"t","At":"2026-11-02T12:00:00Z","Likes":0,"Replies":0,"Program":"P"}`), &m); err != nil || m.Role != "" || m.ID != "x" {
+		t.Errorf("línea vieja: %+v %v", m, err)
+	}
+	b, _ := json.Marshal(Message{ID: "x", Source: "chat"})
+	if strings.Contains(string(b), "Role") {
+		t.Errorf("un mensaje común cambió su línea: %s", b)
+	}
+}
+
+// emissionAt arma una emisión de 10:00 a 11:00 del día que está days días
+// antes de now, con el programa LA TARDE en el vivo v1.
+func emissionAt(now time.Time, days int, msgs ...Message) Emission {
+	d := dayStart(now).AddDate(0, 0, -days)
+	return Emission{Day: d, Program: "LA TARDE", Segs: []Segment{{VideoID: "v1", Program: "LA TARDE", Start: d.Add(10 * time.Hour), End: d.Add(11 * time.Hour)}}, Msgs: msgs}
+}
+
+func loyaltyMsg(now time.Time, days int, author, text, role string, n int) []Message {
+	d := dayStart(now).AddDate(0, 0, -days)
+	var out []Message
+	for i := range n {
+		out = append(out, Message{ID: fmt.Sprintf("%s-%d-%d", author, days, i), Source: "chat", VideoID: "v1", Program: "LA TARDE",
+			Author: author, Text: text, Role: role, At: d.Add(10*time.Hour + time.Duration(i)*time.Minute)})
+	}
+	return out
+}
+
+// TestLoyalty (CA3): los números de fidelización con 20 emisiones armadas.
+func TestLoyalty(t *testing.T) {
+	now := noonToday()
+	var ems []Emission
+	for k := 1; k <= 20; k++ {
+		var msgs []Message
+		if k <= 10 {
+			msgs = append(msgs, loyaltyMsg(now, k, "A", "buenas", "", 3)...)
+		}
+		if k >= 15 && k <= 19 {
+			msgs = append(msgs, loyaltyMsg(now, k, "B", "buenas", "", 1)...)
+		}
+		if k == 2 || k == 3 {
+			msgs = append(msgs, loyaltyMsg(now, k, "C", "buenas", "", 1)...)
+		}
+		if k == 1 {
+			msgs = append(msgs, loyaltyMsg(now, k, "D", "buenas", "", 1)...)
+		}
+		if k == 9 {
+			msgs = append(msgs, loyaltyMsg(now, k, "E", "buenas", "", 1)...)
+		}
+		msgs = append(msgs, loyaltyMsg(now, k, "Mod", "ordenen el chat", "moderador", 2)...)
+		msgs = append(msgs, loyaltyMsg(now, k, "S", "entrá a http://spam.com", "", 2)...)
+		ems = append(ems, emissionAt(now, k, msgs...))
+	}
+	l := Loyalty(ems, now)
+	near := func(name string, got, want float64) {
+		t.Helper()
+		if math.Abs(got-want) > 0.05 {
+			t.Errorf("%s = %.2f, quería %.2f", name, got, want)
+		}
+	}
+	if l.Emissions != 20 || l.Participants != 5 {
+		t.Errorf("emisiones %d, participantes %d; quería 20 y 5 (sin moderador ni spam)", l.Emissions, l.Participants)
+	}
+	if !l.ReturnOK {
+		t.Error("sin retorno semanal")
+	}
+	near("retorno", l.Return, 50)
+	near("asistencia", l.Attendance, 3.8)
+	near("stickiness", l.Sticky, 19)
+	near("núcleo personas", l.CorePeople, 20)
+	near("núcleo mensajes", l.CoreMsgs, 30*100.0/39)
+	if l.AtRisk != 1 {
+		t.Errorf("en riesgo = %d, quería 1 (B)", l.AtRisk)
+	}
+	want := []LoyaltySegment{
+		{Key: "nuevos", Label: "Nuevos / de paso", Rule: "1 vivo", People: 2, PeoplePct: 40, MsgsPct: 2 * 100.0 / 39},
+		{Key: "ocasionales", Label: "Ocasionales", Rule: "2–3 vivos", People: 1, PeoplePct: 20, MsgsPct: 2 * 100.0 / 39},
+		{Key: "habituales", Label: "Habituales", Rule: "4–9 vivos", People: 1, PeoplePct: 20, MsgsPct: 5 * 100.0 / 39},
+		{Key: "nucleo", Label: "Núcleo", Rule: "10+ vivos", People: 1, PeoplePct: 20, MsgsPct: 30 * 100.0 / 39},
+	}
+	if len(l.Segments) != len(want) {
+		t.Fatalf("segmentos = %+v", l.Segments)
+	}
+	for i, w := range want {
+		g := l.Segments[i]
+		if g.Key != w.Key || g.Label != w.Label || g.Rule != w.Rule || g.People != w.People {
+			t.Errorf("segmento %d = %+v, quería %+v", i, g, w)
+		}
+		near(w.Key+" % personas", g.PeoplePct, w.PeoplePct)
+		near(w.Key+" % mensajes", g.MsgsPct, w.MsgsPct)
+	}
+	// Cohortes de la más vieja a la más nueva: semanas de 7 días hacia atrás desde now.
+	if len(l.Cohorts) != 4 {
+		t.Fatalf("cohortes = %+v", l.Cohorts)
+	}
+	cells := func(c Cohort) string {
+		var out []string
+		for _, x := range c.Cells {
+			out = append(out, x.Text)
+		}
+		return fmt.Sprintf("%d:%s", c.New, strings.Join(out, ","))
+	}
+	for i, w := range []string{"0:—,—,—,—", "1:100 %,0 %,0 %,—", "2:100 %,50 %,—,—", "2:100 %,—,—,—"} {
+		if got := cells(l.Cohorts[i]); got != w {
+			t.Errorf("cohorte %d = %s, quería %s", i, got, w)
+		}
+	}
+	if !l.Cohorts[1].Start.Equal(now.Add(-21 * 24 * time.Hour)) {
+		t.Errorf("inicio de la cohorte 1 = %v", l.Cohorts[1].Start)
+	}
+	// Con pocas emisiones un rango puede quedar vacío.
+	if got := Loyalty(ems[:4], now).Segments; got[1].Rule != "—" || got[3].Rule != "2+ vivos" {
+		t.Errorf("reglas con 4 emisiones = %+v", got)
+	}
+}
+
+// sentEmission arma una emisión de 10:00 a 11:00 con una franja de
+// sentimiento y n mensajes con queja técnica.
+func sentEmission(now time.Time, days, pos, neu, neg, tech int) (Emission, SentSlot) {
+	e := emissionAt(now, days, loyaltyMsg(now, days, "T", "se corta todo", "", tech)...)
+	return e, SentSlot{Start: e.Segs[0].Start.Add(10 * time.Minute), Program: "La Tarde", Pos: pos, Neu: neu, Neg: neg}
+}
+
+// TestEmissionSentiment (CA4): % por emisión, mediana y marcas.
+func TestEmissionSentiment(t *testing.T) {
+	now := noonToday()
+	var ems []Emission
+	var slots []SentSlot
+	for _, c := range []struct{ days, pos, neu, neg, tech int }{
+		{1, 60, 30, 10, 0}, {2, 50, 20, 30, 3}, {3, 34, 15, 1, 0}, {4, 58, 30, 12, 0}, {5, 60, 29, 11, 0},
+	} {
+		e, s := sentEmission(now, c.days, c.pos, c.neu, c.neg, c.tech)
+		ems, slots = append(ems, e), append(slots, s)
+	}
+	// Otra franja de otro programa y otra fuera del horario: no cuentan.
+	slots = append(slots, SentSlot{Start: ems[0].Segs[0].Start, Program: "OTRO", Neg: 50},
+		SentSlot{Start: ems[0].Segs[0].Start.Add(3 * time.Hour), Program: "LA TARDE", Neg: 50})
+	rows, med := EmissionSentiment(ems, slots)
+	if len(rows) != 5 {
+		t.Fatalf("filas = %+v", rows)
+	}
+	if math.Abs(med-11) > 0.01 {
+		t.Errorf("mediana = %.2f, quería 11", med)
+	}
+	r := rows[1]
+	if r.N != 100 || math.Abs(r.Neg-30) > 0.01 || r.Mark != "Más negativa de lo normal · con quejas técnicas" || r.Tech != 3 {
+		t.Errorf("emisión atípica = %+v", r)
+	}
+	if rows[0].Mark != "" || rows[0].NegText != "10 % negativo" || rows[0].Label != emissionLabel(ems[0].Day) {
+		t.Errorf("emisión normal = %+v", rows[0])
+	}
+	if rows[2].Mark != "Menos negativa de lo normal" || math.Abs(rows[2].Width-50) > 0.01 || math.Abs(rows[0].Width-100) > 0.01 {
+		t.Errorf("emisión corta = %+v", rows[2])
+	}
+	if rows, _ := EmissionSentiment(ems, nil); len(rows) != 0 {
+		t.Errorf("sin tandas = %+v", rows)
+	}
+}
+
+// slotEmission arma una emisión de 10:00 a 11:00 con 1.000 espectadores y,
+// en cada franja de 5 min, tantas personas como diga per (por minuto del reloj).
+func slotEmission(now time.Time, days int, per map[int]int) Emission {
+	e := emissionAt(now, days)
+	start := e.Segs[0].Start
+	for m := 0; m < 60; m += 5 {
+		n := per[m]
+		if n == 0 {
+			n = 10
+		}
+		for i := range n {
+			e.Msgs = append(e.Msgs, Message{ID: fmt.Sprintf("%d-%d-%d", days, m, i), Source: "chat", VideoID: "v1", Program: "LA TARDE",
+				Author: fmt.Sprintf("p%d", i), Text: "hola", At: start.Add(time.Duration(m)*time.Minute + time.Second)})
+		}
+		e.Viewers = append(e.Viewers, ViewerSample{VideoID: "v1", At: start.Add(time.Duration(m)*time.Minute + time.Minute), Viewers: 1000})
+	}
+	return e
+}
+
+// TestStrongWeakSlots (CA5): franjas fuertes y débiles por hora del reloj.
+func TestStrongWeakSlots(t *testing.T) {
+	now := noonToday()
+	var ems []Emission
+	for d := 1; d <= 4; d++ {
+		ems = append(ems, slotEmission(now, d, map[int]int{20: 60 + d, 25: 50, 30: 40, 35: 30, 40: 2, 45: 3}))
+	}
+	rows, ok := StrongWeakSlots(ems)
+	if !ok || len(rows) != 6 {
+		t.Fatalf("filas = %+v (ok %v)", rows, ok)
+	}
+	var got []string
+	for _, r := range rows {
+		got = append(got, fmt.Sprintf("%s %v", r.Clock, r.Strong))
+	}
+	if s := strings.Join(got, ","); s != "10:20–10:25 true,10:25–10:30 true,10:30–10:35 true,10:35–10:40 true,10:40–10:45 false,10:45–10:50 false" {
+		t.Errorf("orden = %s", s)
+	}
+	r := rows[0]
+	if r.Msgs != 63 || r.Viewers != 1000 || r.PctText != "6,2 %" || r.Top != 4 || r.Of != 4 || r.Range != "62–63" {
+		t.Errorf("franja fuerte = %+v", r)
+	}
+	if rows[4].Top != 0 || rows[4].Of != 4 {
+		t.Errorf("franja débil = %+v", rows[4])
+	}
+	if _, ok := StrongWeakSlots(ems[:2]); ok {
+		t.Error("con 2 emisiones no debería haber tabla")
+	}
+}
+
+// TestEmissionMap (CA6): bloques de 30 min, lo último arriba, mediana y clases.
+func TestEmissionMap(t *testing.T) {
+	now := noonToday()
+	ems := []Emission{
+		slotEmission(now, 1, map[int]int{0: 20, 5: 20, 10: 20, 15: 20, 20: 20, 25: 20}),
+		slotEmission(now, 2, map[int]int{30: 40, 35: 40, 40: 40, 45: 40, 50: 40, 55: 40}),
+		slotEmission(now, 3, nil),
+	}
+	m, ok := EmissionMap(ems)
+	if !ok || strings.Join(m.Cols, ",") != "10:00,10:30" || len(m.Rows) != 3 {
+		t.Fatalf("mapa = %+v (ok %v)", m, ok)
+	}
+	text := func(r MapRow) string {
+		var out []string
+		for _, c := range r.Cells {
+			out = append(out, c.Text+"/"+c.Class)
+		}
+		return strings.Join(out, ",")
+	}
+	if got := text(m.Rows[0]); got != "2,0/m1,1,0/m0" {
+		t.Errorf("fila 0 = %s", got)
+	}
+	if got := text(m.Rows[1]); got != "1,0/m0,4,0/m4" {
+		t.Errorf("fila 1 = %s", got)
+	}
+	if m.Median.Label != "Mediana" || text(m.Median) != "1,0/m0,1,0/m0" {
+		t.Errorf("mediana = %+v", m.Median)
+	}
+	if m.Rows[0].Label != emissionLabel(ems[0].Day) {
+		t.Errorf("etiqueta = %q", m.Rows[0].Label)
+	}
+	if _, ok := EmissionMap([]Emission{emissionAt(now, 1)}); ok {
+		t.Error("sin espectadores no debería haber mapa")
+	}
+}
+
+// TestLoyaltyPerf (riesgo de performance): 28 emisiones × 3.000 mensajes.
+func TestLoyaltyPerf(t *testing.T) {
+	if testing.Short() || raceEnabled {
+		t.Skip("lento; con -race los tiempos no dicen nada")
+	}
+	now := noonToday()
+	var ems []Emission
+	for d := 1; d <= 28; d++ {
+		e := emissionAt(now, d)
+		for i := range 3000 {
+			e.Msgs = append(e.Msgs, Message{ID: fmt.Sprintf("%d-%d", d, i), Source: "chat", VideoID: "v1", Program: "LA TARDE",
+				Author: fmt.Sprintf("p%d", (i*7+d)%900), Text: "hola qué tal", At: e.Segs[0].Start.Add(time.Duration(i) * time.Second)})
+		}
+		for m := 0; m < 60; m++ {
+			e.Viewers = append(e.Viewers, ViewerSample{VideoID: "v1", At: e.Segs[0].Start.Add(time.Duration(m) * time.Minute), Viewers: 5000})
+		}
+		ems = append(ems, e)
+	}
+	start := time.Now()
+	Loyalty(ems, now)
+	EmissionSentiment(ems, nil)
+	StrongWeakSlots(ems)
+	EmissionMap(ems)
+	if d := time.Since(start); d > loyaltyPerfLimit {
+		t.Errorf("tardó %s, el límite es %s", d, loyaltyPerfLimit)
+	}
+}
+
+// TestProgramDetailSections (CA7): las secciones nuevas en su orden, con
+// Super Chats al final.
+func TestProgramDetailSections(t *testing.T) {
+	now := noonToday()
+	day := dayStart(now)
+	_, srv := programServer(t, now, false)
+	keyMan := segmentKey("UC1", Segment{VideoID: "v1", Program: "LA MAÑANA", Start: day.Add(8 * time.Hour)})
+	body := getBody(srv.Routes(), "/parcial/programas/detalle?tramo="+url.QueryEscape(keyMan))
+	last := -1
+	for _, id := range []string{`id="fidelizacion"`, `id="emisiones"`, `id="franjas"`, `id="mapa"`, `id="supers"`} {
+		i := strings.Index(body, id)
+		if i < 0 || i < last {
+			t.Errorf("%s en %d (el anterior en %d)", id, i, last)
+		}
+		last = i
+	}
+	for _, w := range []string{"Fidelización del chat", "ventana fija de 4 semanas", "Emisión por emisión", "Franjas fuertes y débiles", "Mapa por emisión",
+		"Super Chats del programa", "Segmentos por asistencia", "Cohortes: ¿vuelven los que llegan?"} {
+		if !strings.Contains(body, w) {
+			t.Errorf("falta %q", w)
+		}
+	}
+	if t.Failed() {
+		t.Logf("detalle:\n%s", body)
+	}
+}
+
+// TestCatRowsShare (CA8): % del total que suman 100, ejemplo recortado y
+// Otros al final.
+func TestCatRowsShare(t *testing.T) {
+	long := strings.Repeat("excelente la entrevista ", 5)
+	msgs := []Message{
+		{Text: "excelente programa"}, {Text: long}, {Text: "hola a todos"}, {Text: "¿a qué hora vuelven?"},
+	}
+	rows := catRows(msgs)
+	var sum float64
+	for _, r := range rows {
+		sum += r.Share
+	}
+	if math.Abs(sum-100) > 0.01 {
+		t.Errorf("los %% suman %.2f", sum)
+	}
+	if rows[0].Key != CatElogio || rows[0].N != 2 || rows[0].Example != `"`+string([]rune(strings.TrimSpace(long))[:59])+`…"` {
+		t.Errorf("primera fila = %+v", rows[0])
+	}
+	if rows[len(rows)-1].Key != CatOtro {
+		t.Errorf("Otros no va al final: %+v", rows)
+	}
+	srvRows := renderString(t, "categorias", map[string]any{"Cats": rows, "CatTotal": 4})
+	for _, w := range []string{`class="cstack"`, `class="seg elogio" style="width: 50.0%"`, `<span class="num">50 %</span>`} {
+		if !strings.Contains(srvRows, w) {
+			t.Errorf("falta %q en:\n%s", w, srvRows)
+		}
+	}
+}
+
+// loyaltyPerfLimit es el tope de TestLoyaltyPerf. Solo tarda ~180 ms (casi
+// todo es Classify, lineal); el tope deja margen para la máquina cargada y
+// atrapa una regresión cuadrática.
+const loyaltyPerfLimit = 500 * time.Millisecond
+
+// renderString ejecuta una plantilla con nombre y devuelve el HTML.
+func renderString(t *testing.T, name string, data any) string {
+	t.Helper()
+	var b strings.Builder
+	if err := tmpl.ExecuteTemplate(&b, name, data); err != nil {
+		t.Errorf("plantilla %s: %v", name, err)
+	}
+	return b.String()
 }

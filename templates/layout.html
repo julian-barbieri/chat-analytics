@@ -41,6 +41,11 @@
   --ia-text: #1d4f91;
   --field-border: #cfcec8;
   --on-accent: #ffffff;
+  --heat-0: #f1f8f3;
+  --heat-1: #d9efe1;
+  --heat-2: #bce3ca;
+  --heat-3: #98d2ae;
+  --heat-4: #72c091;
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
@@ -77,6 +82,11 @@
     --ia-text: #9cc0f5;
     --field-border: #3d3d3a;
     --on-accent: #ffffff;
+    --heat-0: #1b2620;
+    --heat-1: #1f3427;
+    --heat-2: #24462f;
+    --heat-3: #2a5c3b;
+    --heat-4: #327448;
   }
 }
 * { box-sizing: border-box; }
@@ -311,6 +321,38 @@ details summary { cursor: pointer; min-height: 32px; font-weight: 600; }
 .plegable summary { min-height: 44px; padding: 11px 0; line-height: 22px; color: var(--text-primary); }
 .plegable summary::marker { color: var(--text-muted); }
 .plegable[open] summary { padding-bottom: 4px; }
+
+/* Categorías de En vivo: barra apilada y filas con ejemplo. */
+.cstack { display: flex; height: 12px; border-radius: 6px; overflow: hidden; background: var(--grid); margin: 4px 0 10px; }
+.seg.elogio, .sw.elogio { background: var(--series-1); }
+.seg.queja, .sw.queja { background: var(--series-2); }
+.seg.spam, .sw.spam { background: var(--series-3); }
+.seg.insulto, .sw.insulto { background: var(--live); }
+.seg.pregunta, .sw.pregunta { background: var(--series-4); }
+.seg.otro, .sw.otro { background: var(--sent-neu); }
+table.cats td { padding: 8px 6px; border-top: 1px solid var(--border); vertical-align: middle; }
+table.cats tr:first-child td { border-top: 0; }
+table.cats td.ex { font-size: 13px; overflow-wrap: anywhere; }
+/* Historia del programa en Programas. */
+.sw.nuevos { background: var(--sent-neu); }
+.sw.ocasionales { background: var(--series-1); }
+.sw.habituales { background: var(--series-4); }
+.sw.nucleo { background: var(--series-2); }
+.tile small { font-size: 13px; font-weight: 600; color: var(--text-secondary); }
+.tile .v.warnv { color: var(--series-2); }
+table.heat td.m0 { background: var(--heat-0); }
+table.heat td.m1 { background: var(--heat-1); }
+table.heat td.m2 { background: var(--heat-2); }
+table.heat td.m3 { background: var(--heat-3); }
+table.heat td.m4 { background: var(--heat-4); }
+table.heat tr.med th, table.heat tr.med td { border-top: 2px solid var(--border); font-weight: 650; }
+.emis { list-style: none; margin: 0; padding: 0; }
+.emis li { display: grid; grid-template-columns: 82px minmax(0, 1fr) minmax(0, 40%); gap: 10px; align-items: center; padding: 6px 0; border-top: 1px solid var(--border); font-size: 13.5px; }
+.emis li:first-child { border-top: 0; }
+.emis .ebar { display: flex; }
+.emis .hbar { flex: none; }
+.emis .et.atip { color: var(--series-2); }
+@media (max-width: 560px) { .emis li { grid-template-columns: 70px minmax(0, 1fr); } .emis .et { grid-column: 1 / -1; } }
 </style>
 </head>
 <body>

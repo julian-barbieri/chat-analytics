@@ -277,6 +277,7 @@ type Message struct {
 	Likes   int64
 	Replies int64
 	Program string // en el chat, programa al aire cuando llegó el mensaje
+	Role    string `json:",omitempty"` // en el chat: "dueño", "moderador" o "" (el resto)
 
 	// Solo en Super Chats y Super Stickers. Con omitempty las líneas de los
 	// mensajes comunes de datos.jsonl quedan iguales que antes.
@@ -500,7 +501,9 @@ type chatPage struct {
 			} `json:"superStickerDetails"`
 		} `json:"snippet"`
 		AuthorDetails struct {
-			DisplayName string `json:"displayName"`
+			DisplayName     string `json:"displayName"`
+			IsChatOwner     bool   `json:"isChatOwner"`
+			IsChatModerator bool   `json:"isChatModerator"`
 		} `json:"authorDetails"`
 	} `json:"items"`
 	Error struct { // en el streaming, los errores llegan dentro de la respuesta
@@ -541,13 +544,26 @@ func apiInt(raw json.RawMessage) int64 {
 	return n
 }
 
+// chatRole dice si quien escribió es el dueño del canal o un moderador: la
+// fidelización de Programas los deja afuera. Viene en authorDetails, que ya se
+// pide: no cuesta cuota.
+func chatRole(owner, moderator bool) string {
+	switch {
+	case owner:
+		return "dueño"
+	case moderator:
+		return "moderador"
+	}
+	return ""
+}
+
 func (r chatPage) messages(videoID string) []Message {
 	var out []Message
 	for _, it := range r.Items {
 		sn := it.Snippet
 		m := Message{
 			ID: it.ID, Source: "chat", VideoID: videoID, Author: it.AuthorDetails.DisplayName,
-			Text: sn.DisplayMessage, At: sn.PublishedAt,
+			Text: sn.DisplayMessage, At: sn.PublishedAt, Role: chatRole(it.AuthorDetails.IsChatOwner, it.AuthorDetails.IsChatModerator),
 		}
 		// Los pagos se guardan aunque no traigan texto (un Super Sticker no
 		// tiene): lo que importa es el monto.

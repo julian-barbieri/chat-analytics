@@ -107,14 +107,15 @@
         <div>{{.Text}}</div>
       </li>{{else}}<li class="muted">Sin preguntas.</li>{{end}}</ul>{{end}}
     </div>
-    <div class="inner supers">
+  </div>
+  {{with .History}}{{template "historia" .}}{{end}}
+  <div id="supers" class="inner supers">
       <h3>Super Chats del programa</h3>
       {{if .Supers}}<table>
         <tr><th scope="col">Moneda</th><th scope="col" class="n">Cantidad</th><th scope="col" class="n">Total</th></tr>
         {{range .Supers}}<tr><td>{{.Currency}}</td><td class="n">{{miles .N}}</td><td class="n">{{.Total}}</td></tr>{{end}}
       </table>{{else}}<p class="muted">Sin Super Chats ni Super Stickers.</p>{{end}}
       <p class="muted">{{.SupersNote}}</p>
-    </div>
   </div>
 {{else}}<p class="muted">Ese programa ya no está guardado.</p>{{end}}
 </section>
@@ -123,3 +124,72 @@
 {{/* Una fila de "Sentimiento del programa": el promedio o una franja de 5 min. */}}
 {{define "sfila"}}<li title="{{.Label}}"{{if eq .Hour "Promedio"}} class="prom"{{end}}><span class="h">{{.Hour}}</span>
   <span class="hbar" role="img" aria-label="{{.Label}}">{{if .Low}}<span class="low" style="width: 100%"></span>{{else}}<span class="pos" style="width: {{printf "%.1f" .Pos}}%"></span><span class="neu" style="width: {{printf "%.1f" .Neu}}%"></span><span class="neg" style="width: {{printf "%.1f" .Neg}}%"></span>{{end}}</span></li>{{end}}
+
+{{/* Lo que compara el programa con sus emisiones de las últimas 4 semanas. */}}
+{{define "historia"}}
+  <div id="fidelizacion" class="inner">
+    <div class="chead"><h3>Fidelización del chat</h3><span class="muted">ventana fija de 4 semanas (28 días), sin importar el filtro Día · {{plural .Emissions "emisión" "emisiones"}}</span></div>
+    {{with .Loyalty}}{{if .Participants}}
+    <div class="tiles">
+      <div class="card tile"><div class="l">Retorno semanal</div><div class="v">{{if .ReturnOK}}{{printf "%.0f" .Return}} %{{else}}—{{end}}</div><div class="muted">escribieron la semana pasada y volvieron esta</div></div>
+      <div class="card tile"><div class="l">Asistencia media</div><div class="v">{{decimal .Attendance}} <small>de {{plural .Emissions "vivo" "vivos"}}</small></div><div class="muted">vivos en los que escribe cada participante (dice si la gente vuelve)</div></div>
+      <div class="card tile"><div class="l">Stickiness</div><div class="v">{{printf "%.0f" .Sticky}} %</div><div class="muted">únicos por vivo ÷ únicos de las 4 semanas (comunidad estable)</div></div>
+      <div class="card tile"><div class="l">Núcleo</div><div class="v">{{printf "%.0f" .CorePeople}} %</div><div class="muted">de los participantes escribe el {{printf "%.0f" .CoreMsgs}} % de los mensajes</div></div>
+      <div class="card tile"><div class="l">En riesgo</div><div class="v warnv">{{miles .AtRisk}}</div><div class="muted">habituales sin escribir hace 14+ días</div></div>
+    </div>
+    <div class="grid2">
+      <div>
+        <h3>Segmentos por asistencia</h3>
+        <p class="muted">Cada participante se ubica según en cuántos de {{plural .Emissions "vivo" "vivos"}} del programa escribió.</p>
+        <div class="tablewrap"><table>
+          <thead><tr><th scope="col">Segmento</th><th scope="col">Regla</th><th scope="col" class="n">Participantes</th><th scope="col" class="n">% personas</th><th scope="col" class="n">% mensajes</th></tr></thead>
+          <tbody>{{range .Segments}}<tr><td><span class="sw {{.Key}}" aria-hidden="true"></span> {{.Label}}</td><td class="muted">{{.Rule}}</td><td class="n">{{miles .People}}</td><td class="n">{{printf "%.0f" .PeoplePct}} %</td><td class="n">{{printf "%.0f" .MsgsPct}} %</td></tr>{{end}}</tbody>
+        </table></div>
+        <p class="muted">La regla va en % de vivos (núcleo = 50 % o más; habituales, 20 % o más), así un programa semanal y uno diario se comparan igual. Quedan afuera el dueño del canal, los moderadores (desde que se guarda ese dato) y los mensajes de spam. Las personas se cuentan por nombre visible.</p>
+      </div>
+      <div>
+        <h3>Cohortes: ¿vuelven los que llegan?</h3>
+        <p class="muted">Agrupados por la semana de su primer mensaje en el programa; % que volvió a escribir en cada semana siguiente.</p>
+        <div class="tablewrap"><table class="heat">
+          <thead><tr><th scope="col">Cohorte</th><th scope="col" class="n">Nuevos</th><th scope="col" class="n">Sem. 0</th><th scope="col" class="n">+1</th><th scope="col" class="n">+2</th><th scope="col" class="n">+3</th></tr></thead>
+          <tbody>{{range .Cohorts}}<tr><td>Sem. {{.Start.Local.Format "02/01"}}</td><td class="n">{{miles .New}}</td>{{range .Cells}}<td class="n {{.Class}}">{{.Text}}</td>{{end}}</tr>{{end}}</tbody>
+        </table></div>
+        <p class="muted">Leer en diagonal: si cada cohorte nueva retiene más en +1, el programa fideliza mejor que antes. "—" = semana que todavía no pasó. Solo se guardan 30 días: la primera semana incluye a quienes ya venían de antes.</p>
+      </div>
+    </div>
+    {{else}}<p class="muted">Todavía no hay mensajes de chat de este programa en las últimas 4 semanas.</p>{{end}}{{end}}
+  </div>
+  <div id="emisiones" class="inner">
+    <h3>Emisión por emisión {{if .Sent}}<span class="ia">Claude</span>{{end}}</h3>
+    {{if .Sent}}<p class="muted">Mediana de negativo: {{.SentMedian}} · se marca la que se aleja 5 pts o más. El largo de la barra es la cantidad de mensajes analizados.</p>
+    <ul class="emis">{{range .Sent}}<li>
+      <span class="h">{{.Label}}</span>
+      <span class="ebar"><span class="hbar" role="img" aria-label="{{.Label}}: {{printf "%.0f" .Pos}} % positivo, {{printf "%.0f" .Neu}} % neutro, {{printf "%.0f" .Neg}} % negativo ({{plural .N "mensaje" "mensajes"}})" style="width: {{printf "%.1f" .Width}}%"><span class="pos" style="width: {{printf "%.1f" .Pos}}%"></span><span class="neu" style="width: {{printf "%.1f" .Neu}}%"></span><span class="neg" style="width: {{printf "%.1f" .Neg}}%"></span></span></span>
+      <span class="et{{if .Mark}} atip{{end}}">{{.NegText}}{{with .Mark}} · {{.}}{{end}}</span>
+    </li>{{end}}</ul>
+    <p class="muted leyenda"><span class="sw pos" aria-hidden="true"></span> Positivo <span class="sw neu" aria-hidden="true"></span> Neutro <span class="sw neg" aria-hidden="true"></span> Negativo</p>
+    {{else}}<p class="muted">{{.SentNote}}</p>{{end}}
+  </div>
+  <div class="grid2">
+    <div id="franjas" class="inner">
+      <h3>Franjas fuertes y débiles</h3>
+      {{if .SlotsOK}}{{if .Slots}}<div class="tablewrap"><table>
+        <thead><tr><th scope="col"></th><th scope="col">Franja</th><th scope="col" class="n">Mediana msj</th><th scope="col" class="n">Rango normal</th><th scope="col" class="n">Mirando</th><th scope="col" class="n">% partic.</th><th scope="col" class="n">En el top 5 de su emisión</th></tr></thead>
+        <tbody>{{range .Slots}}<tr><td>{{if .Strong}}<span class="chip ok">Fuerte</span>{{else}}<span class="chip warn">Débil</span>{{end}}</td><td><strong>{{.Clock}}</strong></td><td class="n">{{miles .Msgs}}</td><td class="n muted">{{.Range}}</td><td class="n">{{if .Viewers}}{{miles .Viewers}}{{else}}—{{end}}</td><td class="n">{{.PctText}}</td><td class="n">{{.Top}} de {{.Of}}</td></tr>{{end}}</tbody>
+      </table></div>
+      <p class="muted">Franjas de 5 minutos por hora del reloj, en las emisiones que las tienen (al menos la mitad). Medianas entre emisiones; rango normal = del 25 % al 75 % de las emisiones.</p>
+      {{else}}<p class="muted">Sin franjas para comparar.</p>{{end}}
+      {{else}}<p class="muted">Hacen falta al menos {{.MinEmissions}} emisiones en las últimas 4 semanas para comparar franjas.</p>{{end}}
+    </div>
+    <div id="mapa" class="inner">
+      <h3>Mapa por emisión · % participación cada 30 min</h3>
+      {{if .MapOK}}<div class="tablewrap"><table class="heat">
+        <thead><tr><th scope="col">Emisión</th>{{range .Map.Cols}}<th scope="col" class="n">{{.}}</th>{{end}}</tr></thead>
+        <tbody>{{range .Map.Rows}}<tr><td>{{.Label}}</td>{{range .Cells}}<td class="n {{.Class}}">{{.Text}}</td>{{end}}</tr>{{end}}
+        <tr class="med"><th scope="row">{{.Map.Median.Label}}</th>{{range .Map.Median.Cells}}<td class="n {{.Class}}">{{.Text}}</td>{{end}}</tr></tbody>
+      </table></div>
+      <p class="muted">Más verde = más gente escribiendo en proporción a la audiencia. Sirve para ver qué días se salieron del patrón y en qué horario. Las últimas 10 emisiones, lo último arriba.</p>
+      {{else}}<p class="muted">Sin dato de cuántos miraban en estas emisiones: no se puede calcular el %.</p>{{end}}
+    </div>
+  </div>
+{{end}}

@@ -312,9 +312,9 @@ func RunWorker(ctx context.Context, yt *YouTube, st *Store, cfg WorkerConfig) {
 			log.Printf("chat de %s: chat en pausa desde Canales", live.ID)
 		case ev.err != nil:
 			chatFailed(c, live.ID, ev.err, true)
-		default:
-			log.Printf("chat de %s: YouTube cerró la conexión de tiempo real a los %s", live.ID, humanDur(c.lastDur))
 		}
+		// El cierre normal de YouTube no se loguea: pasa cada pocos segundos y
+		// llenaba la consola. La duración queda en c.lastDur para Canales.
 	}
 
 	publish := func() {

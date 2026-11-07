@@ -428,6 +428,23 @@ type ProgramDetail struct {
 	// Participación de todo el tramo (el gráfico de "Momentos con más
 	// participación"); nil en un tramo sin vivo.
 	Part map[string]any
+	// History compara el programa con sus emisiones de las últimas 4 semanas;
+	// nil en un tramo sin programa.
+	History *ProgramHistory
+}
+
+// ProgramHistory son las secciones de Programas que comparan emisiones.
+type ProgramHistory struct {
+	Loyalty      LoyaltyData
+	Sent         []EmissionSent
+	SentMedian   string
+	SentNote     string // por qué no hay filas, si no hay
+	Slots        []SlotStat
+	SlotsOK      bool
+	Map          MapData
+	MapOK        bool
+	Emissions    int
+	MinEmissions int
 }
 
 // SentRow es una fila de "Sentimiento del programa": una franja de 5 min con
@@ -490,7 +507,107 @@ func (s *Server) programDetail(ps ProgramSeg, msgs []Message, a *ClaudeAnalysis,
 	if s.analyst != nil {
 		s.programSentiment(&d, ps, msgs, now)
 	}
+	if sg.Program != "" {
+		d.History = s.programHistory(ps, snap, now)
+	}
 	return d
+}
+
+// programHistory junta las emisiones del programa de las últimas 4 semanas
+// (loyaltyWindow) y arma sus secciones. Pide al Store solo los mensajes de
+// los vivos de esas emisiones (MessagesOf), los espectadores de esos vivos y,
+// con Claude, las franjas de sentimiento del canal: nunca Snapshot.
+func (s *Server) programHistory(ps ProgramSeg, snap Snapshot, now time.Time) *ProgramHistory {
+	var days []time.Time
+	for i := range int(loyaltyWindow / (24 * time.Hour)) {
+		days = append(days, dayStart(now).AddDate(0, 0, -i))
+	}
+	from := days[len(days)-1]
+	samples := s.st.Lives(from.Add(-12 * time.Hour))
+	segs := programSegs([]ChannelStatus{ps.Channel}, samples, snap.Videos, days, now)
+	ems := programEmissions(segs, ps.Seg.Program, now)
+	ids := map[string]bool{}
+	for _, e := range ems {
+		for _, id := range e.videoIDs() {
+			ids[id] = true
+		}
+	}
+	if len(ids) > 0 {
+		fillEmissions(ems, s.st.MessagesOf(ids, from.Add(-segmentLead)), videoTitles(snap.Videos))
+		for id := range ids {
+			viewers := s.st.Viewers(id, from)
+			for i := range ems {
+				ems[i].addViewers(id, viewers)
+			}
+		}
+	}
+	h := &ProgramHistory{Loyalty: Loyalty(ems, now), Emissions: len(ems), MinEmissions: minEmissions}
+	switch {
+	case s.analyst == nil:
+		h.SentNote = "Sale de las tandas de Claude, que están apagadas."
+	default:
+		var med float64
+		h.Sent, med = EmissionSentiment(ems, s.st.SentSlots(ps.Channel.ID, from))
+		h.SentMedian = fmt.Sprintf("%.0f %%", med)
+		if len(h.Sent) == 0 {
+			h.SentNote = "Todavía no hay mensajes de este programa analizados por las tandas de Claude."
+		}
+	}
+	h.Slots, h.SlotsOK = StrongWeakSlots(ems)
+	h.Map, h.MapOK = EmissionMap(ems)
+	return h
+}
+
+// programEmissions agrupa por día local los tramos con ese programa (sin
+// distinguir mayúsculas) que empezaron dentro de la ventana, del más nuevo
+// al más viejo. Un título que parpadea parte el tramo, no la emisión.
+func programEmissions(segs []ProgramSeg, program string, now time.Time) []Emission {
+	var ems []Emission
+	for _, ps := range segs {
+		sg := ps.Seg
+		if !strings.EqualFold(sg.Program, program) || sg.Start.Before(now.Add(-loyaltyWindow)) {
+			continue
+		}
+		if sg.State == SegLive || sg.End.After(now) {
+			sg.End = now
+		}
+		d := dayStart(sg.Start)
+		i := slices.IndexFunc(ems, func(e Emission) bool { return e.Day.Equal(d) })
+		if i < 0 {
+			ems = append(ems, Emission{Day: d, Program: program})
+			i = len(ems) - 1
+		}
+		ems[i].Segs = append(ems[i].Segs, sg)
+	}
+	sort.SliceStable(ems, func(i, j int) bool { return ems[i].Day.After(ems[j].Day) })
+	return ems
+}
+
+// fillEmissions reparte los mensajes de chat entre las emisiones con el
+// mismo criterio que segmentMessages (del vivo, con su programa, desde 5 min
+// antes hasta 5 min después del tramo), en una pasada.
+func fillEmissions(ems []Emission, msgs []Message, titles map[string]string) {
+	byDay := map[time.Time]int{}
+	for i, e := range ems {
+		byDay[e.Day] = i
+	}
+	for _, m := range msgs {
+		if m.Source != "chat" {
+			continue
+		}
+		for _, d := range []time.Time{dayStart(m.At), dayStart(m.At.Add(segmentLead)), dayStart(m.At.Add(-segmentLead))} {
+			i, ok := byDay[d]
+			if !ok || !strings.EqualFold(programOf(m, titles), ems[i].Program) {
+				continue
+			}
+			if slices.ContainsFunc(ems[i].Segs, func(sg Segment) bool {
+				return sg.VideoID == m.VideoID && !m.At.Before(sg.Start.Add(-segmentLead)) && !m.At.After(sg.End.Add(segmentLead))
+			}) {
+				ems[i].Msgs = append(ems[i].Msgs, m)
+				break
+			}
+		}
+	}
 }
 
 // programParticipation arma el gráfico de participación del tramo entero,
