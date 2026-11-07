@@ -181,15 +181,7 @@
 <div class="grid2">
   {{template "vivo-preguntas" .}}
 
-  <section id="categorias" class="card" aria-labelledby="categorias-h">
-    <div class="chead"><h2 id="categorias-h">Categorías</h2><span class="muted">{{plural .A.Total "mensaje" "mensajes"}}</span></div>
-    {{range .Cats}}<div class="catrow" title="{{.Label}}: {{.N}}">
-      <span>{{.Label}}</span>
-      <div class="track"><div class="fill" style="width: {{printf "%.1f" .Pct}}%"></div></div>
-      <span class="num">{{miles .N}}</span>
-    </div>{{end}}
-    <p class="muted">Por reglas simples, de {{.Super.Of}}; el detalle fino hacelo con Claude sobre el CSV.</p>
-  </section>
+  {{template "categorias" .}}
 </div>
 
 {{with .Monitor}}<section id="monitor" class="card" aria-labelledby="monitor-h">
@@ -329,3 +321,18 @@ Lo usan En vivo y el detalle de Programas. */}}
   <p class="muted">Agrupadas por Claude en las tandas; las cantidades las cuenta el monitor.</p>
   {{end}}{{end}}
 </section>{{end}}
+
+{{/* Tarjeta Categorías de En vivo: barra apilada con el % de cada categoría y una fila por categoría con un ejemplo. */}}
+{{define "categorias"}}<section id="categorias" class="card" aria-labelledby="categorias-h">
+    <div class="chead"><h2 id="categorias-h">Categorías</h2><span class="muted">{{plural .CatTotal "mensaje" "mensajes"}}</span></div>
+    <div class="cstack" role="img" aria-label="{{range $i, $c := .Cats}}{{if $i}}, {{end}}{{$c.Label}} {{printf "%.0f" $c.Share}} %{{end}}">{{range .Cats}}{{if .N}}<span class="seg {{.Key}}" style="width: {{printf "%.1f" .Share}}%"></span>{{end}}{{end}}</div>
+    <table class="cats">
+      {{range .Cats}}<tr title="{{.Label}}: {{.N}}">
+        <td><span class="sw {{.Key}}" aria-hidden="true"></span> <strong>{{.Label}}</strong></td>
+        <td class="muted ex">{{.Example}}</td>
+        <td class="n"><span class="num">{{miles .N}}</span></td>
+        <td class="n"><span class="num">{{printf "%.0f" .Share}} %</span></td>
+      </tr>{{end}}
+    </table>
+    <p class="muted">Por reglas simples{{with .CatOf}}, de {{.}}{{end}}; el detalle fino hacelo con Claude sobre el CSV.</p>
+  </section>{{end}}

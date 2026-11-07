@@ -26,10 +26,11 @@ var templatesFS embed.FS
 var staticFS embed.FS
 
 var tmpl = template.Must(template.New("").Funcs(template.FuncMap{
-	"hora":   func(t time.Time) string { return t.Local().Format("15:04") },
-	"fecha":  func(t time.Time) string { return t.Local().Format("02/01 15:04") },
-	"miles":  miles,
-	"plural": plural,
+	"hora":    func(t time.Time) string { return t.Local().Format("15:04") },
+	"fecha":   func(t time.Time) string { return t.Local().Format("02/01 15:04") },
+	"miles":   miles,
+	"decimal": decimal,
+	"plural":  plural,
 }).ParseFS(templatesFS, "templates/*.html"))
 
 var categories = []string{CatPregunta, CatQueja, CatElogio, CatInsulto, CatSpam, CatOtro}
@@ -136,7 +137,9 @@ type Bar struct {
 type CatRow struct {
 	Key, Label string
 	N          int
-	Pct        float64
+	Pct        float64 // largo de la barra, relativo a la categoría más grande
+	Share      float64 // % del total
+	Example    string  // un mensaje corto de ejemplo, o una descripción
 }
 
 // summary es la franja de estado de arriba de cada pantalla: cuándo se
@@ -152,11 +155,17 @@ func (s *Server) summary(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// catRows cuenta las categorías por reglas de unos mensajes.
+// catRows cuenta las categorías por reglas de unos mensajes, de la más
+// grande a la más chica y Otros al final, con su % del total y un ejemplo:
+// el mensaje más reciente de la categoría, recortado y sin autor. Spam y
+// Otros llevan una descripción en vez de un ejemplo (un link de spam no se
+// muestra como ejemplo).
 func catRows(msgs []Message) []CatRow {
-	counts := map[string]int{}
+	counts, last := map[string]int{}, map[string]string{}
 	for _, m := range msgs {
-		counts[Classify(m.Text)]++
+		c := Classify(m.Text)
+		counts[c]++
+		last[c] = m.Text
 	}
 	peak := 1
 	for _, c := range categories {
@@ -164,9 +173,33 @@ func catRows(msgs []Message) []CatRow {
 	}
 	var rows []CatRow
 	for _, c := range categories {
-		rows = append(rows, CatRow{c, catLabels[c], counts[c], float64(counts[c]) * 100 / float64(peak)})
+		ex := catExamples[c]
+		if ex == "" && last[c] != "" {
+			ex = `"` + shortText(last[c], catExampleRunes) + `"`
+		}
+		rows = append(rows, CatRow{Key: c, Label: catLabels[c], N: counts[c], Pct: float64(counts[c]) * 100 / float64(peak),
+			Share: share(counts[c], len(msgs)), Example: ex})
 	}
+	sort.SliceStable(rows, func(i, j int) bool {
+		if (rows[i].Key == CatOtro) != (rows[j].Key == CatOtro) {
+			return rows[j].Key == CatOtro
+		}
+		return rows[i].N > rows[j].N
+	})
 	return rows
+}
+
+const catExampleRunes = 60
+
+var catExamples = map[string]string{CatSpam: "links, teléfonos, promos", CatOtro: "saludos y comentarios"}
+
+// shortText recorta un texto a n runas como mucho, con "…" si se cortó.
+func shortText(text string, n int) string {
+	r := []rune(strings.TrimSpace(text))
+	if len(r) <= n {
+		return string(r)
+	}
+	return strings.TrimSpace(string(r[:n-1])) + "…"
 }
 
 // LiveButton es un botón para elegir qué se ve: un canal de -canal (Canal) o
@@ -710,7 +743,7 @@ func bars(counts []Count) []CatRow {
 	}
 	var out []CatRow
 	for _, c := range counts {
-		out = append(out, CatRow{c.Key, c.Key, c.N, float64(c.N) * 100 / float64(peak)})
+		out = append(out, CatRow{Key: c.Key, Label: c.Key, N: c.N, Pct: float64(c.N) * 100 / float64(peak)})
 	}
 	return out
 }
@@ -853,7 +886,7 @@ func analysisData(msgs []Message, viewers []ViewerSample, ids []string, videos [
 	sup["Of"], sup["In"] = sc.of, sc.in
 	return map[string]any{
 		"Hours": hours, "A": a, "Tech": bars(a.Tech), "Part": part, "Super": sup,
-		"Tiles": liveTiles(msgs, concurrent, sc, now), "Cats": catRows(msgs),
+		"Tiles": liveTiles(msgs, concurrent, sc, now), "Cats": catRows(msgs), "CatTotal": a.Total, "CatOf": sc.of,
 	}
 }
 
