@@ -1,6 +1,6 @@
 # Spec: En vivo — Momentos de todo el canal, Categorías con Claude y mensajes de cada motivo
 
-- **Estado:** aprobada
+- **Estado:** implementada
 - **Tipo:** mejora (con un bug)
 - **Rama:** `feat/en-vivo-momentos-categorias`
 - **Origen:** pedido del usuario con capturas de En vivo (2026-11-10)
@@ -27,32 +27,38 @@ cerrada por defecto.
 
 ## Criterios de aceptación
 
-- [ ] CA1: con "Programa en curso", el gráfico y el ranking de Momentos incluyen franjas de un
+- [x] CA1: con "Programa en curso", el gráfico y el ranking de Momentos incluyen franjas de un
   programa anterior del mismo canal (otro título y otro vivo de hoy o de ayer, dentro de 24 h).
   Nunca incluyen mensajes ni espectadores de otro canal. — `TestMomentsWholeChannel`
-- [ ] CA2: con "Todo el día del canal", Momentos también cubre 24 h (incluye franjas de antes
+- [x] CA2: con "Todo el día del canal", Momentos también cubre 24 h (incluye franjas de antes
   de las 00:00). — `TestMomentsWholeChannel` (caso día)
-- [ ] CA3: con Claude prendido y etiquetas, Categorías cuenta cada mensaje etiquetado con su
+- [x] CA3: con Claude prendido y etiquetas, Categorías cuenta cada mensaje etiquetado con su
   `Cat` de Claude. Los que `Classify` marca como spam se cuentan como spam, porque no se le
   mandan a Claude. Los no etiquetados se cuentan por reglas. La nota dice "Por Claude" y "N
   todavía sin etiquetar (por reglas)" cuando N > 0. Los % siguen sumando 100. —
   `TestCatRowsClaude`
-- [ ] CA4: sin Claude, o con Claude y sin ninguna etiqueta en el alcance, Categorías queda
+- [x] CA4: sin Claude, o con Claude y sin ninguna etiqueta en el alcance, Categorías queda
   igual que hoy (texto "Por reglas simples…"). — `TestCatRowsShare` sin cambios y
   `TestCatRowsClaude` (caso apagado)
-- [ ] CA5: el CSV (`csvRow`) y las "Preguntas" de reglas siguen con `Classify`. —
+- [x] CA5: el CSV (`csvRow`) y las "Preguntas" de reglas siguen con `Classify`. —
   `TestFlowAgainstFakeAPI` y los tests de CSV sin cambios
-- [ ] CA6: cada motivo (no "Otros") lleva un `<details>` cerrado por defecto con la cantidad
+- [x] CA6: cada motivo (no "Otros") lleva un `<details>` cerrado por defecto con la cantidad
   ("Ver 12 mensajes") y, adentro, todos sus mensajes del alcance sin autor, sin repetidos y
   los más nuevos primero. Como mucho son `motiveListMax` (100); si hay más, se avisa "y N más".
   Sin abrir no se ve ninguna cita. — `TestMotives` (ampliado) y `TestSentimentFold`
-- [ ] CA7: el estado abierto sobrevive al refresco de 30 s. Las claves `neg1…neg3` y
+- [x] CA7: el estado abierto sobrevive al refresco de 30 s. Las claves `neg1…neg3` y
   `pos1…pos3` se suman a `foldSections` y viajan en `abrir`, como `preguntas`. Un valor que
   no esté en la lista no se refleja. — `TestFoldParam` (casos nuevos) y `TestSentimentFold`
-- [ ] CA8: `AGENTS.md` (regla del clasificador y mapa de `server.go`) y un ADR 0010 dicen
+- [x] CA8: `AGENTS.md` (regla del clasificador y mapa de `server.go`) y un ADR 0010 dicen
   que Categorías usa Claude cuando hay etiquetas y que el CSV sigue por reglas.
+- [x] CA10 (pedido durante /implementar): cada momento de "Momentos con más participación"
+  muestra a la vista solo el horario y el título (más Mirando, Personas y %). Una flecha
+  (`<details>` cerrado por defecto) despliega el link del reel, los temas y todos los
+  mensajes de la franja, en orden, sin los vacíos ni el spam, como mucho `momentListMax`
+  (100) con "y N más". Sigue abierta tras el refresco con `mom1…mom5` en `abrir`. —
+  `TestMomentFold`, `TestLiveParticipationView*`
 - [ ] CA9: navegador con la vista previa: En vivo en claro, oscuro y ancho de celular.
-- [ ] Gates de `CLAUDE.md` → "Definición de terminado" en verde.
+- [x] Gates de `CLAUDE.md` → "Definición de terminado" en verde.
 
 ## Diseño propuesto
 

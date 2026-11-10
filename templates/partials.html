@@ -165,14 +165,15 @@
   {{if .Outside}}<p class="muted">{{.Outside}}</p>{{end}}
   {{if .Moments}}<table class="tops">
     <tr><th scope="col">Momento</th><th scope="col" class="n">Mirando</th><th scope="col" class="n" title="Personas distintas que escribieron en esos 5 minutos">Personas</th><th scope="col" class="n"><strong>%</strong></th></tr>
-    {{range .Moments}}<tr class="main">
-      <td><strong>{{.Rank}}.</strong> {{fecha .Start}} a {{hora .End}}{{if .Program}}<div class="muted">{{.Program}}</div>{{end}}</td>
+    {{range .Moments}}<tr class="mom">
+      <td><details class="plegable mom"{{if .Fold.Open}} open{{end}}><summary id="plegar-{{.Key}}" hx-get="{{.Fold.Href}}" hx-sync="closest #vivo-analisis:replace" hx-target="#vivo-analisis" hx-swap="outerHTML"><strong>{{.Rank}}.</strong> {{fecha .Start}} a {{hora .End}}{{if .Program}}<span class="muted mprog">{{.Program}}</span>{{end}}</summary>
+        <div class="mdet">Para el reel: {{if .Href}}<a href="{{.Href}}" target="_blank" rel="noopener">{{.Hint}}</a>{{else}}<span class="muted">{{.Hint}}</span>{{end}}
+        {{if .TopicText}}<div>Temas: {{.TopicText}}</div>{{end}}{{range .Msgs}}<div class="muted"><strong>{{.Author}}</strong>: {{.Text}}</div>{{end}}{{if .More}}<div class="muted">y {{miles .More}} más</div>{{end}}</div>
+      </details></td>
       <td class="n">{{.ViewersText}}</td>
       <td class="n">{{miles .Authors}}</td>
       <td class="n"><strong>{{.PctText}}</strong></td>
-    </tr>
-    <tr class="det"><td colspan="4">Para el reel: {{if .Href}}<a href="{{.Href}}" target="_blank" rel="noopener">{{.Hint}}</a>{{else}}<span class="muted">{{.Hint}}</span>{{end}}
-      {{if .TopicText}}<div>Temas: {{.TopicText}}</div>{{end}}{{range .Examples}}<div class="muted"><strong>{{.Author}}</strong>: {{.Text}}</div>{{end}}</td></tr>{{end}}
+    </tr>{{end}}
   </table>{{end}}
   {{if .Why}}<p class="muted">{{.Why}}</p>{{end}}
   <p class="muted">Franjas de 5 minutos: el ranking y la participación típica usan {{.Window}}; el gráfico, las horas elegidas (sin el tramo del principio que no tiene datos). Personas = nombres distintos que escribieron; mirando = lo que informa YouTube en ese momento (promedio de las lecturas de la franja). Es una aproximación: sirve para elegir qué mirar, no como medición exacta.</p>
@@ -276,7 +277,9 @@
 
 {{define "motivos"}}{{if .}}<ul class="qlist">{{range .}}<li>
   <div><strong>{{.Text}}</strong> <span class="muted">· {{.Pct}}</span></div>
-  {{range .Quotes}}<div class="muted">«{{.}}»</div>{{end}}
+  {{if .Msgs}}<details class="plegable"{{if .Fold.Open}} open{{end}}><summary id="plegar-{{.Key}}" hx-get="{{.Fold.Href}}" hx-sync="closest #vivo-analisis:replace" hx-target="#vivo-analisis" hx-swap="outerHTML">Ver {{plural .Listed "mensaje" "mensajes"}}</summary>
+    {{range .Msgs}}<div class="muted">«{{.}}»</div>{{end}}{{if .More}}<div class="muted">y {{miles .More}} más</div>{{end}}
+  </details>{{end}}
 </li>{{end}}</ul>{{else}}<p class="muted">Claude todavía no dio motivos en este período.</p>{{end}}{{end}}
 
 {{/* Gráfico de participación: barras del % (o personas), la línea de los que
@@ -334,5 +337,6 @@ Lo usan En vivo y el detalle de Programas. */}}
         <td class="n"><span class="num">{{printf "%.0f" .Share}} %</span></td>
       </tr>{{end}}
     </table>
-    <p class="muted">Por reglas simples{{with .CatOf}}, de {{.}}{{end}}; el detalle fino hacelo con Claude sobre el CSV.</p>
+    {{if .CatClaude}}<p class="muted">Por Claude{{with .CatOf}}, de {{.}}{{end}}, con las tandas; el spam, por reglas{{if .CatPending}}. {{.CatPending}} todavía sin etiquetar (por reglas){{end}}. El CSV sigue por reglas.</p>
+    {{else}}<p class="muted">Por reglas simples{{with .CatOf}}, de {{.}}{{end}}; el detalle fino hacelo con Claude sobre el CSV.</p>{{end}}
   </section>{{end}}

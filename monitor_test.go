@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"maps"
 	"math"
 	"net/http"
 	"net/http/httptest"
@@ -2473,7 +2474,7 @@ func TestLiveParticipationView(t *testing.T) {
 		"Participación típica del vivo: 4,0 %", "150 mirando ahora", "máx. 4,0 %",
 		"<th scope=\"col\">Momento</th>", "<td class=\"n\">150</td>", "<td class=\"n\">6</td>", "4,0 %",
 		peak.Local().Format("02/01 15:04") + " a " + peak.Add(5*time.Minute).Local().Format("15:04"), "LA MAÑANA",
-		`<tr class="det"><td colspan="4">`, "Para el reel:", `target="_blank" rel="noopener"`,
+		`<details class="plegable mom"><summary id="plegar-mom1"`, "abrir=mom1", "Para el reel:", `target="_blank" rel="noopener"`,
 		// v1 está en curso: YouTube ignora t=, así que se linkea el vivo y se dice cuánto retroceder.
 		`href="https://www.youtube.com/watch?v=v1"`, "Abrí el vivo y retrocedé ~",
 		"&lt;script&gt;x&lt;/script&gt;", "dólar blue", "Solo 1" + e2,
@@ -2501,7 +2502,7 @@ func TestLiveParticipationView(t *testing.T) {
 	// Los 5: sin mensaje de que faltan.
 	body = get("/parcial/vivo/analisis?video=v5")
 	check("v5", body, []string{"7,0 %", "3,0 %"}, []string{hidden, e0, e1, e2})
-	if n := strings.Count(body, `<tr class="det">`); n != 5 {
+	if n := strings.Count(body, `<tr class="mom">`); n != 5 {
 		t.Errorf("v5: %d momentos, quería 5", n)
 	}
 }
@@ -2785,10 +2786,10 @@ func TestLiveParticipationViewEdges(t *testing.T) {
 				t.Errorf("%s: no debería tener %q", name, bad)
 			}
 		}
-		// Cada fila principal tiene 4 celdas y su fila de detalle ocupa las 4.
-		mains := strings.Split(body, `<tr class="main">`)[1:]
-		if n := strings.Count(body, `<tr class="det"><td colspan="4">`); n != len(mains) {
-			t.Errorf("%s: %d filas de detalle con colspan=4 para %d momentos", name, n, len(mains))
+		// Cada momento es una fila de 4 celdas con su detalle plegado en la primera.
+		mains := strings.Split(body, `<tr class="mom">`)[1:]
+		if n := strings.Count(body, `<details class="plegable mom"`); n != len(mains) {
+			t.Errorf("%s: %d momentos plegados para %d filas", name, n, len(mains))
 		}
 		for i, row := range mains {
 			row = row[:strings.Index(row, "</tr>")]
@@ -2796,15 +2797,15 @@ func TestLiveParticipationViewEdges(t *testing.T) {
 				t.Errorf("%s: la fila %d tiene %d celdas", name, i+1, n)
 			}
 		}
-		if n := strings.Count(body, "colspan="); n != len(mains) {
-			t.Errorf("%s: %d colspan para %d momentos", name, n, len(mains))
+		if strings.Contains(body, "colspan=") {
+			t.Errorf("%s: sobra una fila de detalle aparte", name)
 		}
 	}
 
 	body := section5(t, get("/parcial/vivo/analisis?video=x1"))
 	common("x1", body)
 	for _, want := range []string{
-		"&lt;script&gt;alert(1)&lt;/script&gt;</div>",           // programa en la tabla
+		"&lt;script&gt;alert(1)&lt;/script&gt;</span>",          // programa en la tabla
 		"· &lt;script&gt;alert(1)&lt;/script&gt; · 10 mensajes", // programa en el <title>
 		"&lt;img src=x onerror=alert(2)&gt; hola",               // ejemplo
 		"200,0 %", "máx. 200,0 %", "<td class=\"n\">5</td>", "<td class=\"n\">10</td>",
@@ -2822,7 +2823,7 @@ func TestLiveParticipationViewEdges(t *testing.T) {
 
 	body = section5(t, get("/parcial/vivo/analisis?video=x2"))
 	common("x2", body)
-	if !strings.Contains(body, "Solo 4 de 5: el resto de las franjas") || strings.Count(body, `<tr class="main">`) != 4 {
+	if !strings.Contains(body, "Solo 4 de 5: el resto de las franjas") || strings.Count(body, `<tr class="mom">`) != 4 {
 		t.Errorf("x2: E2 con 4 momentos")
 	}
 	if !strings.Contains(body, "&lt;b&gt;PROG&lt;/b&gt;") {
@@ -7305,6 +7306,7 @@ func TestFoldParam(t *testing.T) {
 		{"espacios se ignoran", url.Values{"abrir": {" quejas,preguntas "}}, ""},
 		{"vacíos y comas", url.Values{"abrir": {",,quejas,"}}, "quejas"},
 		{"html", url.Values{"abrir": {`"><img src=x onerror=1>,preguntas`}}, "preguntas"},
+		{"motivos", url.Values{"abrir": {"pos2,neg1,neg4,pos0,quejas"}}, "quejas,neg1,pos2"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -9382,7 +9384,7 @@ func TestMotives(t *testing.T) {
 	if len(got) != 4 {
 		t.Fatalf("filas: %+v", got)
 	}
-	if r := got[0]; r.Text != "Problemas de audio" || r.N != 4 || r.Pct != "40 %" || len(r.Quotes) != 2 || r.Quotes[0] != "no se escucha nada" || r.Quotes[1] != "se corta el audio" {
+	if r := got[0]; r.Text != "Problemas de audio" || r.N != 4 || r.Pct != "40 %" || len(r.Msgs) != 3 || !slices.Contains(r.Msgs, "no se escucha nada") || !slices.Contains(r.Msgs, "se corta el audio") {
 		t.Errorf("primero: %+v", r)
 	}
 	if got[1].Text != "Desacuerdo con el invitado" || got[1].Pct != "10 %" {
@@ -9392,13 +9394,13 @@ func TestMotives(t *testing.T) {
 		t.Errorf("otros: %+v", o)
 	}
 	for _, r := range got {
-		for _, q := range r.Quotes {
+		for _, q := range r.Msgs {
 			if strings.Contains(q, "Ana") || strings.Contains(q, "Beto") {
 				t.Errorf("una cita tiene el autor: %q", q)
 			}
 		}
 	}
-	if pos := Motives(batches, "positivo", 1, msgs, now.Add(-slotStep)); len(pos) != 1 || pos[0].Pct != "100 %" || len(pos[0].Quotes) != 0 {
+	if pos := Motives(batches, "positivo", 1, msgs, now.Add(-slotStep)); len(pos) != 1 || pos[0].Pct != "100 %" || len(pos[0].Msgs) != 0 {
 		t.Errorf("positivos (ID que ya no está): %+v", pos)
 	}
 	if none := Motives(nil, "negativo", 5, msgs, now); none != nil {
@@ -10505,4 +10507,205 @@ func renderString(t *testing.T, name string, data any) string {
 		t.Errorf("plantilla %s: %v", name, err)
 	}
 	return b.String()
+}
+
+// TestMomentsWholeChannel (CA1, CA2 de en-vivo-momentos-categorias): Momentos
+// cubre las últimas 24 h del canal con cualquier alcance (programas
+// anteriores y de antes de las 00:00), nunca de otro canal.
+func TestMomentsWholeChannel(t *testing.T) {
+	now := noonLocal(t)
+	st := liveStore(t, now)
+	// Ayer a la noche: un vivo b0 del mismo canal; otro canal con x1.
+	for _, s := range livesEvery("b0", "UCB", "Radio B", "🔴 [EN VIVO] LA NOCHE | RADIO B", now.Add(-14*time.Hour), now.Add(-13*time.Hour)) {
+		st.AddLives(s.At, []Video{{ID: s.VideoID, ChannelID: s.ChannelID, Channel: s.Channel, Title: s.Title, LiveStatus: "live"}})
+	}
+	for _, s := range livesEvery("x1", "UCX", "Radio X", "🔴 [EN VIVO] OTRA | RADIO X", now.Add(-4*time.Hour), now.Add(-3*time.Hour)) {
+		st.AddLives(s.At, []Video{{ID: s.VideoID, ChannelID: s.ChannelID, Channel: s.Channel, Title: s.Title, LiveStatus: "live"}})
+	}
+	at := func(d time.Duration) time.Time { return now.Add(-d).Truncate(slotStep).Add(time.Minute) }
+	// Un momento por vivo: 6 mensajes de 3 personas y 100 mirando.
+	for _, c := range []struct {
+		video, prog string
+		ago         time.Duration
+	}{{"b1", "LA MAÑANA", 150 * time.Minute}, {"b0", "LA NOCHE", 14*time.Hour - 20*time.Minute}, {"x1", "OTRA", 210 * time.Minute}} {
+		st.Add(chatRun(c.video, c.video, c.prog, at(c.ago), 10*time.Second, 6))
+		st.AddViewers(at(c.ago), []Video{{ID: c.video, LiveStatus: "live", Concurrent: 100}})
+	}
+	srv := &Server{st: st, budget: 9000, now: func() time.Time { return now }}
+	hm := func(d time.Duration) string { return at(d).Truncate(slotStep).Local().Format("02/01 15:04") }
+	cases := []struct {
+		name, q   string
+		want, not []string
+	}{
+		{"programa en curso, 6 h", "ver=programa", []string{hm(150 * time.Minute), "LA MAÑANA"}, []string{hm(210 * time.Minute)}},
+		{"programa en curso, 24 h", "ver=programa&horas=24", []string{hm(150 * time.Minute), hm(14*time.Hour - 20*time.Minute)}, []string{hm(210 * time.Minute)}},
+		{"todo el día, 24 h", "ver=dia&horas=24", []string{hm(150 * time.Minute), hm(14*time.Hour - 20*time.Minute)}, []string{hm(210 * time.Minute)}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			body := getBody(srv.Routes(), "/parcial/vivo/analisis?canal=UCB&video=b2&"+c.q)
+			for _, w := range c.want {
+				if !strings.Contains(body, w) {
+					t.Errorf("falta %q", w)
+				}
+			}
+			for _, w := range c.not {
+				if strings.Contains(body, w) {
+					t.Errorf("sobra %q (otro canal)", w)
+				}
+			}
+		})
+	}
+	// Las demás tarjetas siguen con el programa en curso: el mensaje de
+	// LA MAÑANA sale una sola vez, como ejemplo de su momento.
+	if body := getBody(srv.Routes(), "/parcial/vivo/analisis?canal=UCB&video=b2&ver=programa"); strings.Count(body, "mensaje b1 0") != 1 ||
+		!strings.Contains(body, `<h2 id="categorias-h">Categorías</h2><span class="muted">1 mensaje`) {
+		t.Errorf("un mensaje de otro programa entró en las tarjetas del programa en curso")
+	}
+}
+
+// TestCatRowsClaude (CA3, CA4): con etiquetas, la categoría de Claude; spam y
+// sin etiquetar por reglas, con la nota; sin etiquetas, como siempre.
+func TestCatRowsClaude(t *testing.T) {
+	msgs := []Message{
+		{ID: "a", Text: "hola a todos"},          // Claude: elogio (reglas: otro)
+		{ID: "b", Text: "¿a qué hora vuelven?"},  // Claude: pregunta
+		{ID: "c", Text: "mirá www.promo.com ya"}, // spam por reglas aunque Claude diga otra cosa
+		{ID: "d", Text: "excelente programa"},    // sin etiqueta: elogio por reglas
+		{ID: "e", Text: "son unos idiotas"},      // Claude: insulto
+	}
+	labels := map[string]MessageLabel{
+		"a": {ID: "a", Cat: CatElogio}, "b": {ID: "b", Cat: CatPregunta}, "c": {ID: "c", Cat: CatOtro}, "e": {ID: "e", Cat: CatInsulto},
+	}
+	rows, pending := catRowsWith(msgs, labels)
+	got := map[string]int{}
+	var sum float64
+	for _, r := range rows {
+		got[r.Key] = r.N
+		sum += r.Share
+	}
+	want := map[string]int{CatElogio: 2, CatPregunta: 1, CatSpam: 1, CatInsulto: 1, CatQueja: 0, CatOtro: 0}
+	if !maps.Equal(got, want) || pending != 1 {
+		t.Errorf("filas %v (pendientes %d), quiero %v y 1", got, pending, want)
+	}
+	if math.Abs(sum-100) > 0.01 {
+		t.Errorf("los %% suman %.2f", sum)
+	}
+	if r, p := catRowsWith(msgs, nil); p != 0 || !slices.Equal(r, catRows(msgs)) {
+		t.Errorf("sin etiquetas no es lo de siempre")
+	}
+	html := renderString(t, "categorias", map[string]any{"Cats": rows, "CatTotal": 5, "CatClaude": true, "CatPending": 1})
+	for _, w := range []string{"Por Claude", "1 todavía sin etiquetar (por reglas)"} {
+		if !strings.Contains(html, w) {
+			t.Errorf("falta %q en:\n%s", w, html)
+		}
+	}
+	if html := renderString(t, "categorias", map[string]any{"Cats": rows, "CatTotal": 5}); !strings.Contains(html, "Por reglas simples") {
+		t.Errorf("sin Claude cambió el texto:\n%s", html)
+	}
+}
+
+// TestSentimentFold (CA6, CA7): cada motivo con su flecha cerrada, todos sus
+// mensajes adentro (sin autor, los más nuevos primero) y abierta tras el refresco.
+func TestSentimentFold(t *testing.T) {
+	now := noonLocal(t)
+	st := liveStore(t, now)
+	srv := &Server{st: st, budget: 9000, now: func() time.Time { return now }, analyst: NewAnalyst()}
+	st.SetClaudeStatus(ClaudeStatus{On: true, Model: defaultClaudeModel, Tope: 2_000_000})
+	cur := chatRun("s", "b2", "LA TARDE", now.Add(-4*time.Minute), 5*time.Second, 6)
+	st.Add(cur)
+	var labels []MessageLabel
+	var ids []string
+	for _, m := range cur {
+		labels = append(labels, MessageLabel{ID: m.ID, VideoID: "b2", At: m.At, Program: "LA TARDE", Sentiment: "negativo"})
+		ids = append(ids, m.ID)
+	}
+	st.AddBatch(ClaudeBatch{At: now, ChannelID: "UCB", From: cur[0].At, To: cur[5].At, Labels: labels,
+		Motives: []BatchMotive{{Kind: "negativo", Text: "No les gusta el invitado", IDs: ids}}})
+	base := "/parcial/vivo/analisis?canal=UCB&video=b2&ver=programa"
+	closed := getBody(srv.Routes(), base)
+	for _, w := range []string{`id="plegar-neg1"`, "Ver 6 mensajes", "abrir=neg1"} {
+		if !strings.Contains(closed, w) {
+			t.Errorf("cerrada: falta %q", w)
+		}
+	}
+	if strings.Contains(closed, `id="plegar-neg1" `) && strings.Contains(closed, "plegar-neg1\" open") {
+		t.Errorf("la flecha arranca abierta")
+	}
+	if !strings.Contains(closed, `<details class="plegable"><summary id="plegar-neg1"`) {
+		t.Errorf("el <details> del motivo no arranca cerrado")
+	}
+	open := getBody(srv.Routes(), base+"&abrir=neg1")
+	if !strings.Contains(open, `<details class="plegable" open><summary id="plegar-neg1"`) ||
+		!strings.Contains(open, `name="abrir" value="neg1"`) {
+		t.Errorf("abierta: no sigue abierta tras el refresco")
+	}
+	first, last := strings.Index(open, "«mensaje s 5»"), strings.Index(open, "«mensaje s 0»")
+	if first < 0 || last < 0 || first > last {
+		t.Errorf("faltan los mensajes o no van los más nuevos primero")
+	}
+	from, to := strings.Index(open, "Por qué hay mensajes negativos"), strings.Index(open, "Lo arma Claude con las tandas")
+	if from < 0 || to < from || strings.Contains(open[from:to], "autor-s-") {
+		t.Errorf("se ve un autor en los motivos")
+	}
+}
+
+// TestMotivesList (CA6): todos los mensajes del motivo, sin repetidos, los más
+// nuevos primero, con tope y "y N más".
+func TestMotivesList(t *testing.T) {
+	now := noonLocal(t)
+	msgs := map[string]Message{}
+	var ids []string
+	for i := range motiveListMax + 3 {
+		id := fmt.Sprintf("m%d", i)
+		msgs[id] = Message{ID: id, Text: fmt.Sprintf("texto %d", i), At: now.Add(time.Duration(i-200) * time.Second)}
+		ids = append(ids, id)
+	}
+	b := []ClaudeBatch{{To: now, Motives: []BatchMotive{{Kind: "negativo", Text: "Muchos", IDs: append(ids, "m0", "m1")}}}}
+	got := Motives(b, "negativo", len(ids), msgs, now.Add(-time.Hour))
+	if len(got) != 1 {
+		t.Fatalf("filas: %+v", got)
+	}
+	r := got[0]
+	if r.N != len(ids) || len(r.Msgs) != motiveListMax || r.More != 3 || r.Msgs[0] != fmt.Sprintf("texto %d", len(ids)-1) {
+		t.Errorf("motivo: N %d, %d mensajes, %d más, %v", r.N, len(r.Msgs), r.More, r.Msgs[:min(len(r.Msgs), 1)])
+	}
+}
+
+// TestMomentFold: cada momento muestra solo el horario y el título; la flecha
+// despliega el reel, los temas y todos sus mensajes, y sigue abierta tras el
+// refresco (abrir=mom1).
+func TestMomentFold(t *testing.T) {
+	now := noonLocal(t)
+	st := liveStore(t, now)
+	at := now.Add(-90 * time.Minute).Truncate(slotStep).Add(time.Minute)
+	st.Add(chatRun("b1", "b1", "LA MAÑANA", at, 10*time.Second, 8))
+	st.AddViewers(at, []Video{{ID: "b1", LiveStatus: "live", Concurrent: 100}})
+	srv := &Server{st: st, budget: 9000, now: func() time.Time { return now }}
+	base := "/parcial/vivo/analisis?canal=UCB&video=b2&ver=dia"
+	closed := getBody(srv.Routes(), base)
+	if !strings.Contains(closed, `<details class="plegable mom"><summary id="plegar-mom1"`) || !strings.Contains(closed, "abrir=mom1") {
+		t.Fatalf("el momento no arranca plegado con su flecha")
+	}
+	sum := closed[strings.Index(closed, `id="plegar-mom1"`):]
+	sum = sum[:strings.Index(sum, "</summary>")]
+	if !strings.Contains(sum, at.Truncate(slotStep).Local().Format("02/01 15:04")) || !strings.Contains(sum, "LA MAÑANA") || strings.Contains(sum, "Para el reel") {
+		t.Errorf("la flecha debe mostrar solo horario y título: %q", sum)
+	}
+	open := getBody(srv.Routes(), base+"&abrir=mom1")
+	if !strings.Contains(open, `<details class="plegable mom" open><summary id="plegar-mom1"`) || !strings.Contains(open, `name="abrir" value="mom1"`) {
+		t.Errorf("abierto: no sigue abierto tras el refresco")
+	}
+	// Los 8 mensajes, en orden, no solo 2 ejemplos.
+	prev := -1
+	for i := range 8 {
+		j := strings.Index(open, fmt.Sprintf("mensaje b1 %d<", i))
+		if j < 0 || j < prev {
+			t.Fatalf("falta el mensaje %d o está fuera de orden", i)
+		}
+		prev = j
+	}
+	if got := foldParam(url.Values{"abrir": {"mom1,mom5,mom6"}}); !got["mom1"] || !got["mom5"] || got["mom6"] {
+		t.Errorf("foldParam con momentos: %v", got)
+	}
 }
