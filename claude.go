@@ -544,6 +544,16 @@ type ClaudeGroup struct {
 	Text         string
 	Msgs, People int      // mensajes válidos y personas distintas que los escribieron
 	Examples     []string // hasta 3 IDs de mensajes
+	IDs          []string `json:",omitempty"` // todos los válidos, para desplegar el grupo
+}
+
+// groupIDs son los mensajes del grupo; un análisis guardado antes de IDs
+// solo tiene los ejemplos.
+func groupIDs(g ClaudeGroup) []string {
+	if len(g.IDs) > 0 {
+		return g.IDs
+	}
+	return g.Examples
 }
 
 // validClaudeResult valida lo que devolvió el modelo contra los mensajes
@@ -567,6 +577,7 @@ func validClaudeResult(raw ClaudeRaw, sent []Message) (ClaudeResult, error) {
 				seen[n] = true
 				m := sent[n-1]
 				cg.Msgs++
+				cg.IDs = append(cg.IDs, m.ID)
 				people[m.Author] = true
 				if len(cg.Examples) < 3 {
 					cg.Examples = append(cg.Examples, m.ID)

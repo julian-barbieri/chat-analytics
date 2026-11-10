@@ -140,6 +140,9 @@ type CatRow struct {
 	Pct        float64 // largo de la barra, relativo a la categoría más grande
 	Share      float64 // % del total
 	Example    string  // un mensaje corto de ejemplo, o una descripción
+	FoldKey    string  // cat-<Key>: la fila se despliega con sus mensajes
+	Fold       Fold
+	List       *FoldMsgs // solo si está desplegada
 }
 
 // summary es la franja de estado de arriba de cada pantalla: cuándo se
@@ -172,10 +175,8 @@ func catRows(msgs []Message) []CatRow {
 func catRowsWith(msgs []Message, labels map[string]MessageLabel) (rows []CatRow, pending int) {
 	counts, last := map[string]int{}, map[string]string{}
 	for _, m := range msgs {
-		c := Classify(m.Text)
-		if l, ok := labels[m.ID]; ok && c != CatSpam {
-			c = l.Cat
-		} else if len(labels) > 0 && c != CatSpam {
+		c, unlabeled := catOf(m, labels)
+		if unlabeled {
 			pending++
 		}
 		counts[c]++
@@ -202,7 +203,43 @@ func catRowsWith(msgs []Message, labels map[string]MessageLabel) (rows []CatRow,
 	return rows, pending
 }
 
+// catOf es la categoría de un mensaje en la tarjeta: la de Claude si está
+// etiquetado y no es spam; si no, la de las reglas (unlabeled: con etiquetas
+// en el alcance, este todavía no entró en una tanda).
+func catOf(m Message, labels map[string]MessageLabel) (cat string, unlabeled bool) {
+	c := Classify(m.Text)
+	if l, ok := labels[m.ID]; ok && c != CatSpam {
+		return l.Cat, false
+	}
+	return c, len(labels) > 0 && c != CatSpam
+}
+
+// catFolds le pone su flecha a cada fila con mensajes (menos el spam) y arma
+// la lista solo de las desplegadas, con la misma cuenta que la fila.
+func catFolds(rows []CatRow, msgs []Message, labels map[string]MessageLabel, fold foldState) []CatRow {
+	for i, r := range rows {
+		if r.N == 0 || r.Key == CatSpam {
+			continue
+		}
+		rows[i].FoldKey = "cat-" + r.Key
+		rows[i].Fold = fold.link(rows[i].FoldKey)
+		if !rows[i].Fold.Open {
+			continue
+		}
+		var in []Message
+		for _, m := range msgs {
+			if c, _ := catOf(m, labels); c == r.Key {
+				in = append(in, m)
+			}
+		}
+		rows[i].List = foldMsgs(in, len(in))
+	}
+	return rows
+}
+
 const catExampleRunes = 60
+
+const maxFoldMsgs = 20
 
 var catExamples = map[string]string{CatSpam: "links, teléfonos, promos", CatOtro: "saludos y comentarios"}
 
@@ -429,7 +466,55 @@ func motiveParam(q url.Values) string {
 // neg1…neg3 y pos1…pos3 son los mensajes de cada motivo (motivesShown), por
 // posición: con una clave por texto, la lista dejaría de ser cerrada. mom1…mom5
 // son los momentos para reels (maxMomentos), también por posición.
-var foldSections = []string{"preguntas", "quejas", "alertas", "maspreguntas", "neg1", "neg2", "neg3", "pos1", "pos2", "pos3", "mom1", "mom2", "mom3", "mom4", "mom5"}
+// tema1…tema5 son los temas del resumen (groups(raw.Temas, 5)), cat-<Cat*> las
+// filas de Categorías (sin spam: sus mensajes no se muestran) y qg1…qg30 los
+// grupos de "Preguntas agrupadas", también por posición.
+var foldSections = slices.Concat([]string{"preguntas", "quejas", "alertas", "maspreguntas", "neg1", "neg2", "neg3", "pos1", "pos2", "pos3", "mom1", "mom2", "mom3", "mom4", "mom5"},
+	numbered("tema", 5), catFoldKeys(), numbered("qg", qgFolds))
+
+// numbered es prefix1…prefixN.
+func numbered(prefix string, n int) []string {
+	out := make([]string, n)
+	for i := range out {
+		out[i] = prefix + strconv.Itoa(i+1)
+	}
+	return out
+}
+
+// catFoldKeys son las claves de las filas plegables de Categorías.
+func catFoldKeys() []string {
+	var out []string
+	for _, c := range categories {
+		if c != CatSpam {
+			out = append(out, "cat-"+c)
+		}
+	}
+	return out
+}
+
+// qgFolds es cuántos grupos de preguntas se pueden desplegar: más abajo, un
+// grupo se ve sin flecha (la lista cerrada de "abrir" no puede crecer sin fin).
+const qgFolds = 30
+
+// FoldMsgs son los mensajes de una sección desplegada, los más nuevos primero,
+// con tope (maxFoldMsgs): una lista de un día entero tapaba la pantalla.
+type FoldMsgs struct {
+	Msgs []ClaudeExample
+	More int
+}
+
+// foldMsgs arma la lista de unos mensajes; total es cuántos tiene el grupo
+// (puede ser más que los que se encontraron: vencidos o de un análisis viejo).
+func foldMsgs(msgs []Message, total int) *FoldMsgs {
+	msgs = slices.Clone(msgs)
+	sort.SliceStable(msgs, func(i, j int) bool { return msgs[i].At.After(msgs[j].At) })
+	l := &FoldMsgs{}
+	for _, m := range msgs[:min(len(msgs), maxFoldMsgs)] {
+		l.Msgs = append(l.Msgs, ClaudeExample{m.Author, m.At.Local().Format("15:04"), m.Text})
+	}
+	l.More = max(total, len(msgs)) - len(l.Msgs)
+	return l
+}
 
 // foldParam lee qué secciones plegadas están abiertas ("abrir", separadas por
 // coma). Un <details> abierto se cerraría en cada refresco de 30 s (htmx no
@@ -774,7 +859,7 @@ func (s *Server) liveAnalysis(w http.ResponseWriter, r *http.Request) {
 	open := foldParam(q)
 	for _, c := range snap.Channels {
 		if c.ID == q.Get("canal") && c.ID != "" {
-			s.channelAnalysis(w, snap, c, q.Get("video"), q.Get("ver"), hours, open, motiveParam(q), localRequest(r))
+			s.channelAnalysis(w, snap, c, q.Get("video"), q.Get("ver"), hours, open, motiveParam(q), localRequest(r), slotPick{q.Get("franja"), q.Get("sent")})
 			return
 		}
 	}
@@ -911,7 +996,7 @@ func analysisData(msgs []Message, viewers []ViewerSample, ids []string, part0 pa
 	sup["Of"], sup["In"] = sc.of, sc.in
 	return map[string]any{
 		"Hours": hours, "A": a, "Tech": bars(a.Tech), "Part": part, "Super": sup,
-		"Tiles": liveTiles(msgs, concurrent, sc, now), "Cats": catRows(msgs), "CatTotal": a.Total, "CatOf": sc.of,
+		"Tiles": liveTiles(msgs, concurrent, sc, now), "Cats": catFolds(catRows(msgs), msgs, nil, fold), "CatTotal": a.Total, "CatOf": sc.of,
 	}
 }
 
@@ -919,13 +1004,23 @@ func analysisData(msgs []Message, viewers []ViewerSample, ids []string, part0 pa
 // actual con el programa actual, desde el inicio del tramo menos 5 min) o
 // "Todo el día del canal" (sus vivos desde las 00:00 locales). Nunca entran
 // mensajes de otro canal.
-func (s *Server) channelAnalysis(w http.ResponseWriter, snap Snapshot, ch ChannelStatus, want, ver string, hours int, open map[string]bool, motives string, local bool) {
+func (s *Server) channelAnalysis(w http.ResponseWriter, snap Snapshot, ch ChannelStatus, want, ver string, hours int, open map[string]bool, motives string, local bool, pick slotPick) {
 	now := s.clock()
 	ls := s.channelScope(snap, ch, want, ver, now)
 	fold := foldState{Open: open, Query: analysisQuery(ch.ID, ls.video, ls.ver, hours, motives)}
+	// La franja elegida en "Cómo fue cambiando" viaja como "abrir": solo si
+	// es una franja del gráfico, y la pestaña de una lista cerrada.
+	sel := pick.valid(sentChartFrom(ls, now), now)
+	if sel.ok {
+		fold.Query.Set("franja", strconv.FormatInt(sel.at.Unix(), 10))
+		fold.Query.Set("sent", sel.tab)
+	}
 	data := analysisData(ls.msgs, ls.viewers, ls.pids, ls.part, snap.Videos, ls.concurrent, ls.segs, now, hours, ls.sc, fold)
 	data["Canal"], data["Video"], data["Ver"], data["Label"], data["Span"], data["Note"] = ch.ID, ls.video, ls.ver, channelName(ch), ls.span, ls.note
 	data["Abrir"], data["Motivos"] = foldValue(open), motives
+	if sel.ok {
+		data["Franja"], data["SentTab"] = fold.Query.Get("franja"), sel.tab
+	}
 	data["Monitor"] = monitorView(ls.msgs, ls.sc)
 	cardVer := "dia"
 	if ls.prog != "" {
@@ -936,11 +1031,12 @@ func (s *Server) channelAnalysis(w http.ResponseWriter, snap Snapshot, ch Channe
 	labels := s.st.Labels(messageIDs(ls.msgs))
 	if s.claudeActive(snap) && len(labels) > 0 {
 		// Categorías por Claude; el CSV sigue por reglas (ADR 0010).
-		data["Cats"], data["CatPending"] = catRowsWith(ls.msgs, labels)
+		rows, pending := catRowsWith(ls.msgs, labels)
+		data["Cats"], data["CatPending"] = catFolds(rows, ls.msgs, labels, fold), pending
 		data["CatClaude"] = true
 	}
 	data["Alertas"] = alertsData(Alerts(ls.msgs, labels, now), fold)
-	data["Sent"] = s.sentimentData(snap, ch, ls, labels, now, motives, fold)
+	data["Sent"] = s.sentimentData(snap, ch, ls, labels, now, motives, fold, sel)
 	qg := s.questionsData(snap, ls, labels, fold)
 	data["QG"] = qg
 	if !qg.ByRules {
@@ -1093,6 +1189,7 @@ type SentData struct {
 	Off, Empty string
 	View       SentimentView
 	Chart      SentChart
+	Slot       *SlotDetail // la franja elegida en el gráfico, con sus mensajes
 	Neg, Pos   []MotiveRow
 	NegN, PosN int
 	When       string      // "en los últimos 30 min": la ventana de los motivos
@@ -1112,7 +1209,7 @@ func (s *Server) claudeActive(snap Snapshot) bool {
 
 // sentimentData arma el sentimiento del alcance con las franjas ya sumadas
 // en el Store (SentSlots) y las etiquetas de los mensajes del alcance.
-func (s *Server) sentimentData(snap Snapshot, ch ChannelStatus, ls liveScope, labels map[string]MessageLabel, now time.Time, motives string, fold foldState) SentData {
+func (s *Server) sentimentData(snap Snapshot, ch ChannelStatus, ls liveScope, labels map[string]MessageLabel, now time.Time, motives string, fold foldState, sel slotSel) SentData {
 	if !s.claudeActive(snap) {
 		return SentData{Off: "El sentimiento lo calcula Claude: está apagado (ver Canales)."}
 	}
@@ -1126,10 +1223,7 @@ func (s *Server) sentimentData(snap Snapshot, ch ChannelStatus, ls liveScope, la
 	cur := slotOf(now)
 	all := s.st.SentSlots(ch.ID, now.Add(-7*24*time.Hour))
 	var history, today, chart []SentSlot
-	chartFrom := dayStart(now)
-	if ls.prog != "" {
-		chartFrom = now.Add(-sentChartSpan)
-	}
+	chartFrom := sentChartFrom(ls, now)
 	tramo := slotOf(ls.start)
 	for _, sl := range all {
 		if !sl.Start.Before(slotOf(chartFrom)) {
@@ -1155,6 +1249,7 @@ func (s *Server) sentimentData(snap Snapshot, ch ChannelStatus, ls liveScope, la
 		byID[m.ID] = m
 	}
 	d := SentData{Chart: sentimentChart(chart, ls.segs, chartFrom, now)}
+	s.slotLinks(&d, ls, fold, sel)
 	since := now.Add(-slotStep)
 	for _, mw := range motiveWindows {
 		key, label, when := mw.Key, mw.Label, mw.When
@@ -1194,6 +1289,146 @@ func (s *Server) sentimentData(snap Snapshot, ch ChannelStatus, ls liveScope, la
 	return d
 }
 
+// sentChartFrom es desde cuándo grafica "Cómo fue cambiando": 3 h con el
+// programa en curso, desde las 00:00 con todo el día.
+func sentChartFrom(ls liveScope, now time.Time) time.Time {
+	if ls.prog != "" {
+		return now.Add(-sentChartSpan)
+	}
+	return dayStart(now)
+}
+
+// slotPick es la franja y la pestaña pedidas, tal como llegan.
+type slotPick struct{ franja, sent string }
+
+// slotSel es la franja elegida, ya validada, y su pestaña.
+type slotSel struct {
+	at  time.Time
+	tab string
+	ok  bool
+}
+
+// sentTabs son las pestañas del detalle de una franja: lista cerrada, con
+// los negativos primero (lo que más le sirve a producción).
+var sentTabs = []struct{ Key, Sentiment, Label string }{
+	{"neg", "negativo", "Negativos"},
+	{"neu", "neutro", "Neutros"},
+	{"pos", "positivo", "Positivos"},
+}
+
+// valid acepta la franja solo si es el inicio de una franja de 5 min del
+// gráfico (desde from hasta la de ahora); la pestaña, si no está en la
+// lista, es la primera. Nada de lo que llega se refleja tal cual.
+func (p slotPick) valid(from, now time.Time) slotSel {
+	n, err := strconv.ParseInt(p.franja, 10, 64)
+	if err != nil {
+		return slotSel{}
+	}
+	at := time.Unix(n, 0)
+	if !slotOf(at).Equal(at) || at.Before(slotOf(from)) || at.After(slotOf(now)) {
+		return slotSel{}
+	}
+	sel := slotSel{at: at, tab: sentTabs[0].Key, ok: true}
+	for _, t := range sentTabs {
+		if t.Key == p.sent {
+			sel.tab = t.Key
+		}
+	}
+	return sel
+}
+
+// SlotDetail son los mensajes de una franja de "Cómo fue cambiando",
+// separados por sentimiento; se ve la lista de una pestaña por vez.
+type SlotDetail struct {
+	Title, Close string
+	Tabs         []SlotTab
+	List         *FoldMsgs
+	Empty        string
+}
+
+// SlotTab es una pestaña del detalle de una franja.
+type SlotTab struct {
+	Key, Label, Href string
+	On               bool
+}
+
+// slotLinks le pone a cada barra el pedido de su franja y, con una elegida,
+// arma su detalle con los mensajes del canal de esos 5 min y sus etiquetas
+// (solo esos: nunca las tandas de 7 días).
+func (s *Server) slotLinks(d *SentData, ls liveScope, fold foldState, sel slotSel) {
+	base := maps.Clone(fold.Query)
+	base.Del("franja")
+	base.Del("sent")
+	if v := foldValue(fold.Open); v != "" {
+		base.Set("abrir", v)
+	}
+	href := func(q url.Values) string { return "/parcial/vivo/analisis?" + q.Encode() }
+	for i := range d.Chart.Bars {
+		b := &d.Chart.Bars[i]
+		q := maps.Clone(base)
+		q.Set("franja", strconv.FormatInt(b.Start.Unix(), 10))
+		b.Href = href(q)
+		b.Sel = sel.ok && b.Start.Equal(sel.at)
+	}
+	if !sel.ok {
+		return
+	}
+	d.Chart.Sel = true
+	ids := map[string]bool{}
+	for _, id := range ls.part.ids {
+		ids[id] = true
+	}
+	end := sel.at.Add(slotStep)
+	var msgs []Message
+	for _, m := range s.st.MessagesOf(ids, sel.at) {
+		if m.Source == "chat" && m.At.Before(end) {
+			msgs = append(msgs, m)
+		}
+	}
+	labels := s.st.Labels(messageIDs(msgs))
+	by := map[string][]Message{}
+	for _, m := range msgs {
+		if l, ok := labels[m.ID]; ok {
+			by[l.Sentiment] = append(by[l.Sentiment], m)
+		}
+	}
+	det := &SlotDetail{Title: "Mensajes de las " + sel.at.Local().Format("15:04") + " a " + end.Local().Format("15:04"), Close: href(base)}
+	if p := slotProgram(ls.segs, sel.at, end); p != "" {
+		det.Title += " · " + p
+	}
+	for _, t := range sentTabs {
+		q := maps.Clone(base)
+		q.Set("franja", strconv.FormatInt(sel.at.Unix(), 10))
+		q.Set("sent", t.Key)
+		tab := SlotTab{Key: t.Key, Label: t.Label + " (" + miles(len(by[t.Sentiment])) + ")", Href: href(q), On: t.Key == sel.tab}
+		det.Tabs = append(det.Tabs, tab)
+		if tab.On {
+			if in := by[t.Sentiment]; len(in) > 0 {
+				det.List = foldMsgs(in, len(in))
+			} else {
+				det.Empty = "Ningún mensaje " + strings.ToLower(strings.TrimSuffix(t.Label, "s")) + " en esta franja."
+			}
+		}
+	}
+	d.Slot = det
+}
+
+// slotProgram es el programa que más ocupa la franja [from, to), con el
+// mismo nombre que la franja de programas del gráfico; "" sin vivo.
+func slotProgram(segs []Segment, from, to time.Time) string {
+	best, most := "", time.Duration(0)
+	for _, g := range segs {
+		end := g.End
+		if end.IsZero() || end.After(to) {
+			end = to
+		}
+		if d := end.Sub(maxTime(g.Start, from)); g.Program != "" && d > most {
+			best, most = g.Program, d
+		}
+	}
+	return best
+}
+
 // motiveFolds le pone a cada motivo con mensajes su flecha (prefix1, prefix2…).
 func motiveFolds(rows []MotiveRow, prefix string, fold foldState) []MotiveRow {
 	for i := range rows {
@@ -1215,10 +1450,14 @@ type QGData struct {
 	Fold      Fold    // "Ver N más": sigue abierto después del refresco
 }
 
-// QGRow es un grupo con su cantidad ya escrita.
+// QGRow es un grupo con su cantidad ya escrita y su flecha (Key vacía más
+// allá de qgFolds).
 type QGRow struct {
 	QGroupRow
 	Count string
+	Key   string
+	Fold  Fold
+	List  *FoldMsgs // solo si está desplegado
 }
 
 // qgTop es cuántos grupos se ven sin desplegar: con muchos, la lista tapaba
@@ -1241,6 +1480,19 @@ func (s *Server) questionsData(snap Snapshot, ls liveScope, labels map[string]Me
 	d := QGData{N: n, Header: plural(n, "pregunta", "preguntas") + " · " + plural(len(rows), "grupo", "grupos"), Fold: fold.link("maspreguntas")}
 	for i, r := range rows {
 		row := QGRow{QGroupRow: r, Count: miles(r.N)}
+		if i < qgFolds {
+			row.Key = "qg" + strconv.Itoa(i+1)
+			row.Fold = fold.link(row.Key)
+			if row.Fold.Open {
+				var in []Message
+				for _, m := range ls.msgs {
+					if labels[m.ID].Group == r.ID {
+						in = append(in, m)
+					}
+				}
+				row.List = foldMsgs(in, r.N)
+			}
+		}
 		if i < qgTop {
 			d.Top = append(d.Top, row)
 		} else {
@@ -1423,6 +1675,11 @@ func (s *Server) claudeInput(snap Snapshot, ch ChannelStatus, want, ver string, 
 				for _, id := range g.Examples {
 					need[id] = true
 				}
+			}
+		}
+		for _, g := range a.Result.Topics {
+			for _, id := range groupIDs(g) {
+				need[id] = true
 			}
 		}
 	}
@@ -1972,6 +2229,9 @@ type SentimentBar struct {
 type ClaudeItem struct {
 	Text, Count string
 	Examples    []ClaudeExample
+	Key         string // tema1…: el tema se despliega en En vivo
+	Fold        Fold
+	List        *FoldMsgs // solo si está desplegado
 }
 
 type ClaudeExample struct{ Author, Hour, Text string }
@@ -2046,6 +2306,7 @@ func claudeView(in claudeInput) ClaudeCard {
 	if a, ok := best[key]; ok && in.HasCur {
 		b := claudeBlock(a, in.Msgs, false)
 		b.QFold, b.CFold = in.Fold.link("preguntas"), in.Fold.link("quejas")
+		topicFolds(&b, a.Result.Topics, in.Msgs, in.Fold)
 		c.Blocks = append(c.Blocks, b)
 	} else if c.Note == "" {
 		c.Note = "Todavía no hay análisis de este programa: se hace solo cuando termina"
@@ -2103,6 +2364,29 @@ func claudeBlock(a ClaudeAnalysis, msgs map[string]Message, compact bool) Claude
 	b.Topics, b.Questions, b.Complaints = items(r.Topics), items(r.Questions), items(r.Complaints)
 	b.Footer = fmt.Sprintf("Analizado a las %s con %s · %s de %s mensajes", a.At.Local().Format("15:04"), a.Model, miles(a.Sent), miles(a.Total))
 	return b
+}
+
+// topicFolds le pone su flecha a cada tema del resumen de En vivo y arma la
+// lista de los desplegados con los mensajes guardados del tema.
+func topicFolds(b *ClaudeBlock, topics []ClaudeGroup, msgs map[string]Message, fold foldState) {
+	for i := range b.Topics {
+		if i >= len(topics) {
+			break
+		}
+		it := &b.Topics[i]
+		it.Key = "tema" + strconv.Itoa(i+1)
+		it.Fold = fold.link(it.Key)
+		if !it.Fold.Open {
+			continue
+		}
+		var in []Message
+		for _, id := range groupIDs(topics[i]) {
+			if m, ok := msgs[id]; ok {
+				in = append(in, m)
+			}
+		}
+		it.List = foldMsgs(in, topics[i].Msgs)
+	}
 }
 
 func plural(n int, one, many string) string {
