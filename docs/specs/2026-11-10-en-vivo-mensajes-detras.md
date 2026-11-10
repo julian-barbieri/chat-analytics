@@ -50,13 +50,15 @@ estado plegado sobreviviendo al refresco de 30 s.
   `ChatNote`).
 - [ ] CA7: cada barra con color de "Cómo fue cambiando" es un `<a>` con `aria-label`
   (hora, %, mensajes) y `hx-get` del análisis con `franja=<unix>`. Con `franja`, debajo del
-  gráfico aparece "Mensajes de las HH:MM a HH:MM · <programa>" con tres `<details>`:
-  Negativos (abierto), Neutros y Positivos, hasta 20 mensajes cada uno y "y N más"; la barra
-  queda marcada (clase `sel`) y hay un botón "Cerrar" que pide el análisis sin `franja`. —
-  `TestSentimentSlotDetail`.
+  gráfico aparece "Mensajes de las HH:MM a HH:MM · <programa>" con tres pestañas
+  (`role="tablist"`, botones con `aria-pressed`, 44 px): "Negativos (N)", "Neutros (N)" y
+  "Positivos (N)". Se ve una sola lista por vez, hasta 20 mensajes (autor, hora, texto) y
+  "y N más"; por defecto, Negativos. La barra queda marcada (clase `sel`) y hay un botón
+  "Cerrar" que pide el análisis sin `franja` ni `sent`. — `TestSentimentSlotDetail`.
 - [ ] CA8: `franja` se acepta solo si es un inicio de franja de 5 min dentro de la ventana
-  del gráfico; cualquier otro valor se ignora y no se refleja en el HTML. El refresco de
-  30 s conserva la franja (input oculto `.vq`). — `TestSentimentSlotParam` (tabla).
+  del gráfico, y `sent` solo si es `neg`, `neu` o `pos` (si no, `neg`); cualquier otro
+  valor se ignora y no se refleja en el HTML. El refresco de 30 s conserva franja y
+  pestaña (inputs ocultos `.vq`). — `TestSentimentSlotParam` (tabla).
 - [ ] CA9: los colores nuevos (barra marcada) están en los dos temas. — `TestTemplateTokens`.
 - [ ] Gates de `CLAUDE.md` → "Definición de terminado" en verde y vista previa revisada en
   las tres pantallas, claro y oscuro y ancho de celular.
@@ -71,12 +73,13 @@ estado plegado sobreviviendo al refresco de 30 s.
 - Categorías: `catRowsWith` / `catRows` devuelven también los mensajes de cada fila (los
   más nuevos primero, cortados al tope), y el chip y el pie salen de `CatClaude` / `CatOf`.
 - Preguntas: `questionGroups` junta los mensajes de cada grupo al contar.
-- Sentimiento, opción A (recomendada): parámetro `franja` validado contra la ventana de
-  `sentimentChart`, mensajes de la franja con `Store.MessagesOf` de los vivos del canal y
-  sus `Labels` (solo los de esa franja, no las tandas de 7 días). Alternativas, si la
-  persona las prefiere: **B** las mismas tres listas pero como pestañas Neg/Neu/Pos (una
-  visible por vez, otro parámetro más); **C** sin clic en el gráfico, una lista de franjas
-  plegables debajo (más larga: hasta 288 franjas en "Todo el día").
+- Sentimiento, opción B (elegida por la persona): parámetros `franja` (validado contra la
+  ventana de `sentimentChart`) y `sent` (pestaña, lista cerrada), que viajan como `ver`,
+  `horas` y `abrir`. Mensajes de la franja con `Store.MessagesOf` de los vivos del canal y
+  sus `Labels` (solo los de esa franja, no las tandas de 7 días); se cuentan los tres
+  sentimientos y se arma solo la lista de la pestaña elegida. Cada pestaña es un botón con
+  `hx-get` del análisis con `sent` cambiado. Descartadas: A (tres `<details>` a la vez,
+  más largo) y C (lista de franjas debajo, hasta 288 en "Todo el día").
 - `worker.go:662`: borrar la parte de `streaming`.
 
 ## Fuera de alcance
