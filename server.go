@@ -161,9 +161,23 @@ func (s *Server) summary(w http.ResponseWriter, r *http.Request) {
 // Otros llevan una descripción en vez de un ejemplo (un link de spam no se
 // muestra como ejemplo).
 func catRows(msgs []Message) []CatRow {
+	rows, _ := catRowsWith(msgs, nil)
+	return rows
+}
+
+// catRowsWith es catRows con la categoría que dio Claude en las tandas para
+// los mensajes etiquetados. El spam sale siempre de las reglas (no se le
+// manda a Claude) y los que todavía no entraron en una tanda, también:
+// pending dice cuántos son.
+func catRowsWith(msgs []Message, labels map[string]MessageLabel) (rows []CatRow, pending int) {
 	counts, last := map[string]int{}, map[string]string{}
 	for _, m := range msgs {
 		c := Classify(m.Text)
+		if l, ok := labels[m.ID]; ok && c != CatSpam {
+			c = l.Cat
+		} else if len(labels) > 0 && c != CatSpam {
+			pending++
+		}
 		counts[c]++
 		last[c] = m.Text
 	}
@@ -171,7 +185,6 @@ func catRows(msgs []Message) []CatRow {
 	for _, c := range categories {
 		peak = max(peak, counts[c])
 	}
-	var rows []CatRow
 	for _, c := range categories {
 		ex := catExamples[c]
 		if ex == "" && last[c] != "" {
@@ -186,7 +199,7 @@ func catRows(msgs []Message) []CatRow {
 		}
 		return rows[i].N > rows[j].N
 	})
-	return rows
+	return rows, pending
 }
 
 const catExampleRunes = 60
@@ -413,7 +426,10 @@ func motiveParam(q url.Values) string {
 
 // foldSections son las secciones plegables de En vivo, en el orden en que se
 // escriben en "abrir". Lista cerrada: nada de lo que llega se refleja tal cual.
-var foldSections = []string{"preguntas", "quejas", "alertas", "maspreguntas"}
+// neg1…neg3 y pos1…pos3 son los mensajes de cada motivo (motivesShown), por
+// posición: con una clave por texto, la lista dejaría de ser cerrada. mom1…mom5
+// son los momentos para reels (maxMomentos), también por posición.
+var foldSections = []string{"preguntas", "quejas", "alertas", "maspreguntas", "neg1", "neg2", "neg3", "pos1", "pos2", "pos3", "mom1", "mom2", "mom3", "mom4", "mom5"}
 
 // foldParam lee qué secciones plegadas están abiertas ("abrir", separadas por
 // coma). Un <details> abierto se cerraría en cada refresco de 30 s (htmx no
@@ -779,13 +795,13 @@ func (s *Server) liveAnalysis(w http.ResponseWriter, r *http.Request) {
 	now := s.clock()
 	msgs := sinceFor(snap.Msgs, id, now.Add(-24*time.Hour))
 	viewers := s.st.Viewers(id, now.Add(-24*time.Hour))
-	data := analysisData(msgs, viewers, []string{id}, snap.Videos, video.Concurrent, nil, now, hours, scopeLast24)
+	fold := foldState{Open: open, Query: url.Values{"video": {id}, "horas": {strconv.Itoa(hours)}}}
+	data := analysisData(msgs, viewers, []string{id}, partInput{msgs, viewers, []string{id}}, snap.Videos, video.Concurrent, nil, now, hours, scopeLast24, fold)
 	data["Video"], data["Label"], data["Span"], data["Abrir"] = id, label, label+" · últimas 24 h", foldValue(open)
 	data["Monitor"] = monitorView(msgs, scopeLast24)
 	// El análisis con Claude es por canal: un vivo suelto no lo tiene.
 	data["Claude"] = claudeView(claudeInput{Configured: s.analyst != nil, Status: snap.Claude, Now: now})
 	// Sin canal no hay tandas: alertas y preguntas por reglas.
-	fold := foldState{Open: open, Query: url.Values{"video": {id}, "horas": {strconv.Itoa(hours)}}}
 	data["Alertas"] = alertsData(Alerts(msgs, nil, now), fold)
 	data["QG"] = QGData{ByRules: true}
 	s.render(w, "vivo-analisis", data)
@@ -875,12 +891,21 @@ func liveTiles(msgs []Message, concurrent int64, sc scope, now time.Time) []Tile
 	}
 }
 
+// partInput es lo que grafica "Momentos con más participación": las últimas
+// 24 h del canal (o del vivo suelto), con cualquier alcance. Con el del
+// programa en curso, los programas anteriores no se veían.
+type partInput struct {
+	msgs    []Message
+	viewers []ViewerSample
+	ids     []string
+}
+
 // analysisData arma las tarjetas del análisis con los mensajes ya filtrados
-// (de un vivo, del día del canal o del programa en curso).
-func analysisData(msgs []Message, viewers []ViewerSample, ids []string, videos []Video, concurrent int64, segs []Segment, now time.Time, hours int, sc scope) map[string]any {
+// (de un vivo, del día del canal o del programa en curso); Momentos usa part.
+func analysisData(msgs []Message, viewers []ViewerSample, ids []string, part0 partInput, videos []Video, concurrent int64, segs []Segment, now time.Time, hours int, sc scope, fold foldState) map[string]any {
 	a := Analyze(msgs)
 	titles := videoTitles(videos)
-	part := participationView(msgs, viewers, ids, videos, concurrent, titles, segs, now, hours)
+	part := participationView(part0.msgs, part0.viewers, part0.ids, videos, concurrent, titles, segs, now, hours, fold)
 	part["Window"] = sc.window
 	sup := superView(Supers(msgs, titles))
 	sup["Of"], sup["In"] = sc.of, sc.in
@@ -897,7 +922,8 @@ func analysisData(msgs []Message, viewers []ViewerSample, ids []string, videos [
 func (s *Server) channelAnalysis(w http.ResponseWriter, snap Snapshot, ch ChannelStatus, want, ver string, hours int, open map[string]bool, motives string, local bool) {
 	now := s.clock()
 	ls := s.channelScope(snap, ch, want, ver, now)
-	data := analysisData(ls.msgs, ls.viewers, ls.pids, snap.Videos, ls.concurrent, ls.segs, now, hours, ls.sc)
+	fold := foldState{Open: open, Query: analysisQuery(ch.ID, ls.video, ls.ver, hours, motives)}
+	data := analysisData(ls.msgs, ls.viewers, ls.pids, ls.part, snap.Videos, ls.concurrent, ls.segs, now, hours, ls.sc, fold)
 	data["Canal"], data["Video"], data["Ver"], data["Label"], data["Span"], data["Note"] = ch.ID, ls.video, ls.ver, channelName(ch), ls.span, ls.note
 	data["Abrir"], data["Motivos"] = foldValue(open), motives
 	data["Monitor"] = monitorView(ls.msgs, ls.sc)
@@ -905,10 +931,14 @@ func (s *Server) channelAnalysis(w http.ResponseWriter, snap Snapshot, ch Channe
 	if ls.prog != "" {
 		cardVer = "programa"
 	}
-	fold := foldState{Open: open, Query: analysisQuery(ch.ID, ls.video, ls.ver, hours, motives)}
 	data["Claude"] = s.claudeCard(snap, ch, ls.video, cardVer, local, "", fold)
 	data["ClaudeLine"] = s.claudeLine(snap, ch, now)
 	labels := s.st.Labels(messageIDs(ls.msgs))
+	if s.claudeActive(snap) && len(labels) > 0 {
+		// Categorías por Claude; el CSV sigue por reglas (ADR 0010).
+		data["Cats"], data["CatPending"] = catRowsWith(ls.msgs, labels)
+		data["CatClaude"] = true
+	}
 	data["Alertas"] = alertsData(Alerts(ls.msgs, labels, now), fold)
 	data["Sent"] = s.sentimentData(snap, ch, ls, labels, now, motives, fold)
 	qg := s.questionsData(snap, ls, labels, fold)
@@ -936,27 +966,37 @@ type liveScope struct {
 	concurrent       int64
 	span, note       string
 	sc               scope
+	part             partInput // Momentos: las últimas 24 h del canal
 }
 
 func (s *Server) channelScope(snap Snapshot, ch ChannelStatus, want, ver string, now time.Time) liveScope {
-	from := dayStart(now)
-	samples := s.st.Lives(from)
+	from, from24 := dayStart(now), now.Add(-24*time.Hour)
+	var samples []LiveSample
 	var lives []Video
-	ids, live := map[string]bool{}, map[string]bool{}
+	ids, ids24, live := map[string]bool{}, map[string]bool{}, map[string]bool{}
 	for _, v := range snap.Videos {
 		if v.ChannelID == ch.ID && v.LiveStatus == "live" {
 			lives = append(lives, v)
-			ids[v.ID], live[v.ID] = true, true
+			ids[v.ID], ids24[v.ID], live[v.ID] = true, true, true
 		}
 	}
 	// El vivo que se mira va primero: es el del "programa en curso".
 	sort.SliceStable(lives, func(i, j int) bool { return lives[i].ID == want && lives[j].ID != want })
-	for _, l := range samples {
-		if l.ChannelID == ch.ID {
+	// from24 siempre es anterior a las 00:00 de hoy: una sola lectura alcanza.
+	for _, l := range s.st.Lives(from24) {
+		if l.ChannelID != ch.ID {
+			continue
+		}
+		if !l.At.Before(from24) {
+			ids24[l.VideoID] = true
+		}
+		if !l.At.Before(from) {
+			samples = append(samples, l)
 			ids[l.VideoID] = true
 		}
 	}
 	ls := liveScope{ver: ver, segs: ProgramSegments(samples, ch.ID, live, from, now), sc: scopeDay, start: from}
+	ls.part = s.channelPart(snap, ids24, from24)
 	if ls.ver != "dia" && ls.ver != "programa" {
 		ls.ver = "dia"
 		if len(lives) > 0 {
@@ -1003,6 +1043,25 @@ func (s *Server) channelScope(snap Snapshot, ch ChannelStatus, want, ver string,
 	}
 	ls.span = "todo el día del canal"
 	return ls
+}
+
+// channelPart junta los mensajes y espectadores de unos vivos desde since,
+// para Momentos.
+func (s *Server) channelPart(snap Snapshot, ids map[string]bool, since time.Time) partInput {
+	var p partInput
+	for _, m := range snap.Msgs {
+		if ids[m.VideoID] && !m.At.Before(since) {
+			p.msgs = append(p.msgs, m)
+		}
+	}
+	for id := range ids {
+		p.ids = append(p.ids, id)
+	}
+	sort.Strings(p.ids)
+	for _, id := range p.ids {
+		p.viewers = append(p.viewers, s.st.Viewers(id, since)...)
+	}
+	return p
 }
 
 func messageIDs(msgs []Message) []string {
@@ -1123,8 +1182,8 @@ func (s *Server) sentimentData(snap Snapshot, ch ChannelStatus, ls liveScope, la
 	win := sentCount(ls.msgs, labels, since, now)
 	batches := s.st.Batches(ch.ID, since)
 	d.NegN, d.PosN = win.Neg, win.Pos
-	d.Neg = Motives(batches, "negativo", win.Neg, byID, since)
-	d.Pos = Motives(batches, "positivo", win.Pos, byID, since)
+	d.Neg = motiveFolds(Motives(batches, "negativo", win.Neg, byID, since), "neg", fold)
+	d.Pos = motiveFolds(Motives(batches, "positivo", win.Pos, byID, since), "pos", fold)
 	// El cartel habla de los últimos 5 min: su causa sale de esos 5 min
 	// aunque se esté mirando otra ventana.
 	cause := ""
@@ -1133,6 +1192,17 @@ func (s *Server) sentimentData(snap Snapshot, ch ChannelStatus, ls liveScope, la
 	}
 	d.View = sentimentCards(recent, typ, where, ok, cause)
 	return d
+}
+
+// motiveFolds le pone a cada motivo con mensajes su flecha (prefix1, prefix2…).
+func motiveFolds(rows []MotiveRow, prefix string, fold foldState) []MotiveRow {
+	for i := range rows {
+		if len(rows[i].Msgs) > 0 {
+			rows[i].Key = prefix + strconv.Itoa(i+1)
+			rows[i].Fold = fold.link(rows[i].Key)
+		}
+	}
+	return rows
 }
 
 // QGData es la tarjeta "Preguntas agrupadas para producción". ByRules: sin
@@ -1484,6 +1554,32 @@ type MomentRow struct {
 	End                             time.Time
 	ViewersText, PctText, TopicText string
 	Href, Hint                      string
+	Key                             string    // mom1…mom5: la flecha del momento
+	Fold                            Fold      // plegado por defecto: solo horario y título a la vista
+	Msgs                            []Message // los mensajes de la franja, en orden (momentListMax)
+	More                            int       // los que no entraron en Msgs
+}
+
+// momentListMax es cuántos mensajes de un momento se listan como mucho: una
+// franja de 5 min con mucho chat haría un HTML enorme en cada refresco.
+const momentListMax = 100
+
+// momentMsgs son los mensajes de un momento para leer al desplegarlo: en
+// orden, sin los que no tienen texto (Super Stickers) ni el spam.
+func momentMsgs(msgs []Message) (out []Message, more int) {
+	msgs = slices.Clone(msgs)
+	sort.SliceStable(msgs, func(i, j int) bool { return msgs[i].At.Before(msgs[j].At) })
+	for _, m := range msgs {
+		if strings.TrimSpace(m.Text) == "" || Classify(m.Text) == CatSpam {
+			continue
+		}
+		if len(out) == momentListMax {
+			more++
+			continue
+		}
+		out = append(out, m)
+	}
+	return out, more
 }
 
 // Ventana del gráfico de participación: con las 24 h cada franja medía ~5 px
@@ -1509,7 +1605,7 @@ func chartWindow(slots []Slot, hours int) []Slot {
 
 // participationView arma la sección de momentos con más participación de uno
 // o varios vivos (los de un canal). concurrent es cuántos miran ahora.
-func participationView(msgs []Message, viewers []ViewerSample, ids []string, videos []Video, concurrent int64, titles map[string]string, segs []Segment, now time.Time, hours int) map[string]any {
+func participationView(msgs []Message, viewers []ViewerSample, ids []string, videos []Video, concurrent int64, titles map[string]string, segs []Segment, now time.Time, hours int, fold foldState) map[string]any {
 	slots, typical, ok := Participation(msgs, viewers, ids, now)
 	moments := TopMoments(slots, titles)
 	shown := chartWindow(slots, hours)
@@ -1539,6 +1635,9 @@ func participationView(msgs []Message, viewers []ViewerSample, ids []string, vid
 		}
 		row.TopicText = strings.Join(topics, ", ")
 		row.Href, row.Hint = momentLink(videos, m.VideoID, m.Start, now)
+		row.Key = "mom" + strconv.Itoa(m.Rank)
+		row.Fold = fold.link(row.Key)
+		row.Msgs, row.More = momentMsgs(m.Msgs)
 		rows = append(rows, row)
 	}
 	// Por qué hay menos de 5, para que no parezca un error.

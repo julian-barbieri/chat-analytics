@@ -297,7 +297,6 @@ const (
 	techAlertMin    = 15              // quejas técnicas en 5 min
 	alertMsgsMax    = 10
 	motivesShown    = 3
-	motiveQuotes    = 2
 	sentChartSpan   = 3 * time.Hour // ventana del gráfico con "Programa en curso"
 )
 
@@ -595,8 +594,16 @@ func maxTime(a, b time.Time) time.Time {
 type MotiveRow struct {
 	Text, Pct string
 	N         int
-	Quotes    []string
+	Msgs      []string // los textos del alcance, los más nuevos primero (motiveListMax)
+	More      int      // los que no entraron en Msgs
+	Listed    int      // len(Msgs) + More: los mensajes del motivo en el alcance
+	Key       string   // su sección en "abrir" (neg1, pos2…)
+	Fold      Fold     // la flecha que despliega Msgs (cerrada por defecto)
 }
+
+// motiveListMax es cuántos mensajes de un motivo se listan como mucho: con
+// un programa entero, un motivo puede juntar cientos.
+const motiveListMax = 100
 
 // Motives junta los motivos de un tipo de las tandas desde since por texto
 // normalizado (minúsculas, sin tildes) y los cuenta por mensajes distintos;
@@ -648,11 +655,17 @@ func Motives(batches []ClaudeBatch, kind string, total int, msgs map[string]Mess
 	for _, k := range keys[:min(len(keys), motivesShown)] {
 		a := by[k]
 		r := MotiveRow{Text: a.text, N: len(a.ids), Pct: share(len(a.ids))}
+		var found []Message
 		for _, id := range a.order {
-			if m, ok := msgs[id]; ok && len(r.Quotes) < motiveQuotes {
-				r.Quotes = append(r.Quotes, m.Text)
+			if m, ok := msgs[id]; ok {
+				found = append(found, m)
 			}
 		}
+		sort.SliceStable(found, func(i, j int) bool { return found[i].At.After(found[j].At) })
+		for _, m := range found[:min(len(found), motiveListMax)] {
+			r.Msgs = append(r.Msgs, m.Text)
+		}
+		r.More, r.Listed = len(found)-len(r.Msgs), len(found)
 		used += r.N
 		out = append(out, r)
 	}
