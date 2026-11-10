@@ -1,10 +1,10 @@
 # Spec: En vivo — Momentos de todo el canal, Categorías con Claude y mensajes de cada motivo
 
-- **Estado:** borrador
+- **Estado:** aprobada
 - **Tipo:** mejora (con un bug)
 - **Rama:** `feat/en-vivo-momentos-categorias`
 - **Origen:** pedido del usuario con capturas de En vivo (2026-11-10)
-- **Aprobada por / fecha:** —
+- **Aprobada por / fecha:** Julian Barbieri, 2026-11-10
 
 ## Contexto
 
