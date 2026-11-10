@@ -1,10 +1,10 @@
 # Spec: comparar la participación de un programa con sus emisiones anteriores
 
-- **Estado:** borrador
+- **Estado:** aprobada
 - **Tipo:** mejora
 - **Rama:** `feat/programas-comparar-emisiones`
 - **Origen:** pedido del usuario (captura de "Participación durante el programa" de NADIE NOS PARA, Rock And Pop)
-- **Aprobada por / fecha:** —
+- **Aprobada por / fecha:** Julian Barbieri, 2026-11-10
 
 ## Contexto
 
