@@ -1,10 +1,10 @@
 # Spec: En vivo, ver los mensajes detrás de cada dato
 
-- **Estado:** borrador
+- **Estado:** aprobada
 - **Tipo:** mejora
 - **Rama:** `feat/en-vivo-mensajes-detras`
 - **Origen:** pedido del usuario con capturas de En vivo (2026-11-10)
-- **Aprobada por / fecha:** —
+- **Aprobada por / fecha:** Julian Barbieri, 2026-11-10
 
 ## Contexto
 
