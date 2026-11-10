@@ -657,10 +657,9 @@ func RunWorker(ctx context.Context, yt *YouTube, st *Store, cfg WorkerConfig) {
 				note = fmt.Sprintf("Se llegó al tope de cuota del chat (%d unidades): los vivos conectados siguen en tiempo real, pero si se corta la conexión no se vuelve a abrir hasta que se reinicie la cuota.", cfg.Budget-reserveForComments)
 			}
 		default:
+			// Cuántos vivos están conectados en tiempo real no se dice: no le
+			// servía a quien mira (la tarjeta Canal ya dice cómo llega el chat).
 			var parts []string
-			if streaming > 0 {
-				parts = append(parts, fmt.Sprintf("Chat en tiempo real: %d de %d vivo(s) conectados ahora", open, streaming))
-			}
 			if polling > 0 {
 				p := "Leyendo el chat cada " + humanDur(every)
 				if len(groups) > 1 {
@@ -679,7 +678,9 @@ func RunWorker(ctx context.Context, yt *YouTube, st *Store, cfg WorkerConfig) {
 			if held > 0 {
 				parts = append(parts, fmt.Sprintf("Chat en pausa desde Canales en %d vivo(s)", held))
 			}
-			note = strings.Join(parts, ". ") + "."
+			if len(parts) > 0 {
+				note = strings.Join(parts, ". ") + "."
+			}
 			if live == nil {
 				break
 			}

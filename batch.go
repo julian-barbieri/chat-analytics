@@ -449,6 +449,9 @@ type SentStack struct {
 	PosY, PosH       float64
 	Low              bool
 	Label            string
+	Start            time.Time // inicio de la franja: el clic pide sus mensajes
+	Href             string    // lo arma el servidor, con la consulta del análisis
+	Sel              bool      // la franja desplegada abajo
 }
 
 // SentLine es la línea punteada de un cambio de programa. El nombre va en la
@@ -470,6 +473,7 @@ type SentChart struct {
 	Strip []SentProg
 	Ticks []Tick
 	Aria  string
+	Sel   bool // hay una franja elegida: las otras barras se atenúan
 }
 
 // sentimentChart arma el gráfico desde from (alineado a 5 min) hasta now con
@@ -487,6 +491,7 @@ func sentimentChart(slots []SentSlot, segs []Segment, from, now time.Time) SentC
 		}
 		withData++
 		b := sentStack(s)
+		b.Start = s.Start
 		b.X, b.W = float64(n-1-i)+0.1, 0.8 // lo más nuevo a la izquierda
 		c.Bars = append(c.Bars, b)
 	}

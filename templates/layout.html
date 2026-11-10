@@ -230,6 +230,14 @@ tr.sel td { background: var(--ia-bg); }
 .schart .neg { fill: var(--sent-neg); }
 .schart .low { fill: var(--sent-low); }
 .schart .corte { stroke: var(--text-muted); stroke-dasharray: 4 3; }
+/* Cada barra es un link a su franja; con una elegida, las otras se atenúan. */
+.schart a { cursor: pointer; outline: none; }
+.schart a:hover rect { opacity: .8; }
+.schart.has-sel a:not(.sel) rect { opacity: .4; }
+.schart a:focus-visible rect, .schart a.sel rect { stroke: var(--text-primary); stroke-width: 2px; vector-effect: non-scaling-stroke; }
+.sdet { margin-top: 12px; }
+.sdet .vbtns { margin: 8px 0 4px; }
+.fmsgs { margin-top: 4px; }
 .pchart .corte { stroke: var(--text-muted); stroke-width: 1; opacity: .5; }
 /* Franja de programas debajo del gráfico: el nombre se corta con … y el
    completo va en el title y en la lista de abajo. */
@@ -332,9 +340,16 @@ details summary { cursor: pointer; min-height: 32px; font-weight: 600; }
 .seg.insulto, .sw.insulto { background: var(--live); }
 .seg.pregunta, .sw.pregunta { background: var(--series-4); }
 .seg.otro, .sw.otro { background: var(--sent-neu); }
-table.cats td { padding: 8px 6px; border-top: 1px solid var(--border); vertical-align: middle; }
-table.cats tr:first-child td { border-top: 0; }
-table.cats td.ex { font-size: 13px; overflow-wrap: anywhere; }
+/* Filas de Categorías: cada una se despliega con sus mensajes. La flecha va
+   en el summary; las filas sin mensajes dejan el mismo espacio a la izquierda. */
+.cats > .plegable:first-child, .cats > .catline:first-child { border-top: 0; }
+.cats .catline { border-top: 1px solid var(--border); padding: 11px 0 11px 1.4em; }
+.crow { display: inline-grid; width: calc(100% - 1.4em); vertical-align: middle; grid-template-columns: 8.5em minmax(0, 1fr) 3em 3.5em; gap: 8px; align-items: center; font-weight: 400; }
+.catline .crow { width: 100%; }
+.crow .ex { font-size: 13px; overflow-wrap: anywhere; }
+.crow .num { text-align: right; }
+.qgroups .qg .qrow { display: inline-flex; width: calc(100% - 1.4em); vertical-align: middle; font-weight: 400; }
+@media (max-width: 600px) { .crow { grid-template-columns: minmax(0, 1fr) 3em 3.5em; } .crow .ex { grid-column: 1 / -1; grid-row: 2; } }
 /* Historia del programa en Programas. */
 .sw.nuevos { background: var(--sent-neu); }
 .sw.ocasionales { background: var(--series-1); }
