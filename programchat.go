@@ -24,9 +24,9 @@ const (
 
 // programFolds es lo que se puede desplegar en el detalle: lista cerrada, en
 // el orden en que se escribe "abrir". tema1…tema5 son los temas del resumen,
-// qg1…qg30 los grupos de preguntas de las tandas y cq1…cq8 las preguntas del
-// resumen, por posición como en En vivo.
-var programFolds = slices.Concat([]string{"chat"}, numbered("tema", 5), numbered("qg", qgFolds), numbered("cq", cqFolds))
+// qg1…qg30 los grupos de preguntas de las tandas (maspreguntas, los que pasan
+// de qgTop) y cq1…cq8 las preguntas del resumen, por posición como en En vivo.
+var programFolds = slices.Concat([]string{"chat", "maspreguntas"}, numbered("tema", 5), numbered("qg", qgFolds), numbered("cq", cqFolds))
 
 // chatSents son las opciones del filtro de sentimiento ("sin": sin etiqueta).
 var chatSents = []struct{ Key, Label, Class string }{
@@ -449,6 +449,12 @@ func programFoldLists(d *ProgramDetail, a *ClaudeAnalysis, msgs []Message, label
 			}
 		}
 		r.List = foldMsgs(in, len(in))
+	}
+	// Como En vivo: con muchos grupos la tarjeta tapaba el resto del detalle.
+	// Se corta después de numerar, así el sexto sigue siendo qg6.
+	if len(d.QGroups) > qgTop {
+		d.QGroups, d.QRest = d.QGroups[:qgTop], d.QGroups[qgTop:]
+		d.QMore = q.fold("maspreguntas")
 	}
 }
 

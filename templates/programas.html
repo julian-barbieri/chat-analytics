@@ -113,9 +113,11 @@
     <div class="inner">
       <h3>Preguntas {{if or .QGroups (and .Claude .Claude.Questions)}}<span class="ia">Claude</span>{{else if not .QClaude}}<span class="chip">por reglas</span>{{end}}</h3>
       {{if .QGroups}}<p class="muted">{{.QHeader}}</p>
-      <ul class="qlist qgroups">{{range .QGroups}}<li{{if .Answered}} class="hecha"{{end}}>{{if .Key}}<details class="plegable qg"{{if .Fold.Open}} open{{end}}>{{template "pf-summary" .}}{{template "qrow" .}}</summary>
-        {{template "fold-msgs" .List}}
-      </details>{{else}}<div>{{template "qrow" .}}</div>{{end}}</li>{{end}}</ul>
+      <ul class="qlist qgroups">{{range .QGroups}}{{template "prog-qg" .}}{{end}}</ul>
+      {{if .QRest}}<details class="plegable"{{if .QMore.Open}} open{{end}}>
+        <summary id="pf-maspreguntas" hx-get="{{.QMore.Href}}" hx-sync="#programas:replace" hx-target="#programas" hx-swap="outerHTML">Ver {{len .QRest}} más</summary>
+        <ul class="qlist qgroups">{{range .QRest}}{{template "prog-qg" .}}{{end}}</ul>
+      </details>{{end}}
       <p class="muted">Agrupadas por Claude en las tandas; las cantidades las cuenta el monitor.</p>
       {{else if and .Claude .Claude.Questions}}{{template "prog-items" .Claude.Questions}}
       {{else if .QClaude}}<p class="muted">Claude no agrupó preguntas en este programa.</p>
@@ -158,6 +160,11 @@ cierra con </summary> en quien la usa. */}}
     {{if .Tabs}}<div class="vbtns" role="group" aria-label="Qué mensajes ver">{{range .Tabs}}<button type="button" class="seg" hx-get="{{.Href}}" hx-sync="#programas:replace" hx-target="#programas" hx-swap="outerHTML" aria-pressed="{{.On}}">{{.Label}}</button>{{end}}</div>{{end}}
     {{if .Empty}}<p class="muted">{{.Empty}}</p>{{else}}{{template "fold-msgs" .List}}{{end}}
   </section>{{end}}{{end}}
+
+{{/* Un grupo de preguntas de las tandas: con más de un mensaje, se despliega. */}}
+{{define "prog-qg"}}<li{{if .Answered}} class="hecha"{{end}}>{{if .Key}}<details class="plegable qg"{{if .Fold.Open}} open{{end}}>{{template "pf-summary" .}}{{template "qrow" .}}</summary>
+        {{template "fold-msgs" .List}}
+      </details>{{else}}<div>{{template "qrow" .}}</div>{{end}}</li>{{end}}
 
 {{/* Preguntas del resumen de Claude: con más de un mensaje, se despliegan. */}}
 {{define "prog-items"}}<ul class="qlist">{{range .}}<li>
