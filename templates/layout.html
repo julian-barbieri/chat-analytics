@@ -46,6 +46,10 @@
   --heat-2: #bce3ca;
   --heat-3: #98d2ae;
   --heat-4: #72c091;
+  --cmp-band: #dcdad3;
+  --cmp-med: #6b6a65;
+  --cmp-line: var(--series-3);
+  --cmp-over: var(--text-primary);
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
@@ -87,6 +91,10 @@
     --heat-2: #24462f;
     --heat-3: #2a5c3b;
     --heat-4: #327448;
+    --cmp-band: #34342f;
+    --cmp-med: #a5a49c;
+    --cmp-line: var(--series-3);
+    --cmp-over: var(--text-primary);
   }
 }
 * { box-sizing: border-box; }
@@ -208,6 +216,16 @@ tr.sel td { background: var(--ia-bg); }
 .pwin { margin: 4px 0 8px; }
 .pwin .vbtn { font-size: 13px; }
 .tipica { stroke: var(--text-muted); stroke-dasharray: 4 3; vector-effect: non-scaling-stroke; }
+/* Comparación con emisiones anteriores (Programas): la banda de lo normal va
+   detrás de las barras; las barras por encima llevan borde, además del color del top. */
+.banda { fill: var(--cmp-band); opacity: .8; pointer-events: none; }
+.mediana { fill: none; stroke: var(--cmp-med); stroke-width: 1.5; pointer-events: none; }
+.cmp { fill: none; stroke: var(--cmp-line); stroke-width: 2.5; stroke-linejoin: round; pointer-events: none; }
+.bar.sobre { stroke: var(--cmp-over); stroke-width: 2; vector-effect: non-scaling-stroke; }
+.psum { margin: 0 0 8px; font-weight: 600; }
+.pcmp { margin: 0 0 8px; }
+.seg:disabled { opacity: .5; cursor: not-allowed; }
+.cmpwhy { margin: 0 0 8px; font-size: 12.5px; }
 .base { stroke: var(--grid); vector-effect: non-scaling-stroke; }
 /* Resumen de Claude: la barra de sentimiento usa los tokens de sentimiento,
    que están en los dos temas; los % van también en texto. */

@@ -1993,6 +1993,21 @@ func viewersLine(slots []Slot, span string) (ViewersLine, bool) {
 // quedar vacío. El viewBox es de len(slots) × 100: una unidad por franja.
 // slots puede ser una ventana de las 24 h (chartWindow).
 func participationChart(slots []Slot, moments []Moment, typical float64, ok bool, titles map[string]string) map[string]any {
+	return participationChartCmp(slots, moments, typical, ok, titles, nil)
+}
+
+// ChartCompare es contra qué se compara el gráfico de participación de un
+// programa, por hora del reloj (clockKey): la banda de lo normal o la línea
+// del % de otra emisión. Label dice contra qué ("martes 03/11").
+type ChartCompare struct {
+	Band  map[string]Band
+	Line  map[string]float64
+	Label string
+}
+
+// participationChartCmp es participationChart con una comparación (nil:
+// ninguna, el gráfico de siempre). Solo dibuja la comparación en modo %.
+func participationChartCmp(slots []Slot, moments []Moment, typical float64, ok bool, titles map[string]string, cmp *ChartCompare) map[string]any {
 	w := max(len(slots), 1)
 	rank := map[time.Time]int{}
 	for _, m := range moments {
@@ -2012,11 +2027,27 @@ func participationChart(slots []Slot, moments []Moment, typical float64, ok bool
 	}
 	if ok {
 		scale = max(best.Pct, typical)
+		// Lo comparado también entra en la escala, para que nada quede afuera.
+		for _, s := range slots {
+			if cmp == nil {
+				break
+			}
+			k := clockKey(s.Start)
+			if b, has := cmp.Band[k]; has {
+				scale = max(scale, b.P75)
+			}
+			if v, has := cmp.Line[k]; has {
+				scale = max(scale, v)
+			}
+		}
 	} else {
 		scale = float64(peak.Authors)
 	}
-	var bars []Bar
+	var bars, bands []Bar
 	var marks []Mark
+	median, line := make([]float64, len(slots)), make([]float64, len(slots))
+	hasMed, hasLine := make([]bool, len(slots)), make([]bool, len(slots))
+	over := 0
 	for i, s := range slots {
 		v := float64(s.Authors)
 		if ok {
@@ -2036,6 +2067,21 @@ func participationChart(slots []Slot, moments []Moment, typical float64, ok bool
 			b.Class = "top"
 			b.Label += fmt.Sprintf(" · N.º %d de los %d con más participación", r, maxMomentos)
 			marks = append(marks, Mark{Left: (pos + 0.5) / float64(w) * 100, Rank: r})
+		}
+		if cmp != nil && ok && scale > 0 {
+			k, p := clockKey(s.Start), len(slots)-1-i
+			if bd, has := cmp.Band[k]; has {
+				bands = append(bands, Bar{X: pos, Y: 100 - bd.P75/scale*100, W: 1, H: (bd.P75 - bd.P25) / scale * 100})
+				median[p], hasMed[p] = bd.Med, true
+				if eligible(s) && s.Pct > bd.P75 {
+					b.Class = strings.TrimSpace(b.Class + " sobre")
+					b.Label += fmt.Sprintf(" · por encima de lo normal (lo normal: %s a %s)", pctFine(bd.P25), pctFine(bd.P75))
+					over++
+				}
+			}
+			if v, has := cmp.Line[k]; has {
+				line[p], hasLine[p] = v, true
+			}
 		}
 		bars = append(bars, b)
 	}
@@ -2085,8 +2131,39 @@ func participationChart(slots []Slot, moments []Moment, typical float64, ok bool
 	} else {
 		aria += fmt.Sprintf("todavía sin franjas con dato de espectadores y al menos %d personas", minPersonasTop)
 	}
+	if len(bands) > 0 {
+		// Las franjas van al revés que las posiciones: de izquierda a derecha.
+		slices.Reverse(bands)
+		out["Bands"], out["Median"] = bands, stepPath(median, hasMed, scale)
+		aria += "; comparado con " + cmp.Label + ": " + plural(over, "franja", "franjas") + " por encima de lo normal"
+	}
+	if p := stepPath(line, hasLine, scale); p != "" {
+		out["CmpLine"] = p
+		aria += "; comparado con " + cmp.Label + " (línea)"
+	}
 	out["Aria"] = aria
 	return out
+}
+
+// stepPath es una línea escalonada con un escalón por posición del gráfico
+// (de izquierda a derecha), que se corta donde has es false.
+func stepPath(vals []float64, has []bool, scale float64) string {
+	if scale <= 0 {
+		return ""
+	}
+	var path strings.Builder
+	for i, v := range vals {
+		if !has[i] {
+			continue
+		}
+		y := 100 - v/scale*100
+		if i == 0 || !has[i-1] {
+			fmt.Fprintf(&path, "M%d %.2fH%d", i, y, i+1)
+		} else {
+			fmt.Fprintf(&path, "V%.2fH%d", y, i+1)
+		}
+	}
+	return path.String()
 }
 
 // slotTitle es el <title> de una franja: qué pasó y por qué entra o no en el ranking.
@@ -2155,6 +2232,15 @@ func decimal(f float64) string {
 }
 
 func pct(f float64) string { return decimal(f) + " %" }
+
+// pctFine es pct con dos decimales por debajo del 1 %: la participación de
+// un programa suele ser de 0,0x % y con un decimal todas se verían iguales.
+func pctFine(f float64) string {
+	if f > 0 && f < 1 {
+		return strings.Replace(fmt.Sprintf("%.2f", f), ".", ",", 1) + " %"
+	}
+	return pct(f)
+}
 
 func (s *Server) export(w http.ResponseWriter, r *http.Request) {
 	if key := r.URL.Query().Get("tramo"); key != "" {
