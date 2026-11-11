@@ -87,5 +87,6 @@ Publicaciones de Comunidad (no hay API; scrapear no), likes de comentarios en el
 - **Datos:** `datos.likes.jsonl` es de la API: 30 días, `.gitignore` (`datos.*.jsonl`),
   nunca dentro de `datos.jsonl`. Campos nuevos con `omitempty` en `VideoRecord`.
 - **Tamaño:** ~1 línea cada 3 min por vivo + ≤ 1 cada 30 min por video que cambia.
-- **Alcance:** es grande; si conviene, se parte en dos PR (Comentarios: CA1–CA9;
-  Programas: CA10).
+- **Alcance:** es grande y va en un solo PR (lo decidió la persona). Para que se pueda
+  revisar, un commit por parte: datos (CA3, CA5–CA7), Comentarios (CA1, CA2, CA4, CA8,
+  CA9) y Programas (CA10).
