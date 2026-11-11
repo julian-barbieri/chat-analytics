@@ -10411,6 +10411,36 @@ func TestEmissionMap(t *testing.T) {
 	}
 }
 
+// TestEmissionMapFine: por debajo del 1 % las celdas llevan dos decimales,
+// para que 0,12 y 0,08 no se vean los dos como 0,1.
+func TestEmissionMapFine(t *testing.T) {
+	now := noonToday()
+	fine := func(days, n int) Emission {
+		per := map[int]int{}
+		for m := 0; m < 60; m += 5 {
+			per[m] = n
+		}
+		e := slotEmission(now, days, per)
+		for i := range e.Viewers {
+			e.Viewers[i].Viewers = 10000
+		}
+		return e
+	}
+	m, ok := EmissionMap([]Emission{fine(1, 12), fine(2, 8)})
+	if !ok {
+		t.Fatal("sin mapa")
+	}
+	if got := m.Rows[0].Cells[0].Text; got != "0,12" {
+		t.Errorf("fila 0 = %q, quiero 0,12", got)
+	}
+	if got := m.Rows[1].Cells[0].Text; got != "0,08" {
+		t.Errorf("fila 1 = %q, quiero 0,08", got)
+	}
+	if got := m.Median.Cells[0].Text; got != "0,10" {
+		t.Errorf("mediana = %q, quiero 0,10", got)
+	}
+}
+
 // TestLoyaltyPerf (riesgo de performance): 28 emisiones × 3.000 mensajes.
 func TestLoyaltyPerf(t *testing.T) {
 	if testing.Short() || raceEnabled {

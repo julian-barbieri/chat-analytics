@@ -2237,11 +2237,14 @@ func pct(f float64) string { return decimal(f) + " %" }
 
 // pctFine es pct con dos decimales por debajo del 1 %: la participación de
 // un programa suele ser de 0,0x % y con un decimal todas se verían iguales.
-func pctFine(f float64) string {
+func pctFine(f float64) string { return decimalFine(f) + " %" }
+
+// decimalFine es decimal con dos decimales por debajo de 1 (ver pctFine).
+func decimalFine(f float64) string {
 	if f > 0 && f < 1 {
-		return strings.Replace(fmt.Sprintf("%.2f", f), ".", ",", 1) + " %"
+		return strings.Replace(fmt.Sprintf("%.2f", f), ".", ",", 1)
 	}
-	return pct(f)
+	return decimal(f)
 }
 
 func (s *Server) export(w http.ResponseWriter, r *http.Request) {
