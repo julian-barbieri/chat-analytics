@@ -299,9 +299,10 @@ Lo usan En vivo y el detalle de Programas. */}}
 {{define "part-chart"}}<div class="pmax" aria-hidden="true"><span>{{.Max}}</span>{{with .Viewers}}<span class="vmax">{{.Max}}</span>{{end}}</div>
   <div class="pmarks" aria-hidden="true">{{range .Marks}}<span style="left: {{printf "%.2f" .Left}}%">{{.Rank}}</span>{{end}}</div>
   <div class="pchart">
-    <svg viewBox="{{with .X0}}{{.}}{{else}}0{{end}} 0 {{with .VW}}{{.}}{{else}}{{.W}}{{end}} 100" preserveAspectRatio="none" role="img" aria-label="{{.Aria}}{{with .Viewers}}. {{.Aria}}{{end}}">
+    <svg viewBox="{{with .X0}}{{.}}{{else}}0{{end}} 0 {{with .VW}}{{.}}{{else}}{{.W}}{{end}} 100" preserveAspectRatio="none" role="{{if .Links}}group{{else}}img{{end}}" aria-label="{{.Aria}}{{with .Viewers}}. {{.Aria}}{{end}}">
       {{range .Bands}}<rect class="banda" x="{{.X}}" y="{{.Y}}" width="{{.W}}" height="{{.H}}"></rect>{{end}}
-      {{range .Bars}}<g><title>{{.Label}}</title><rect class="hit" x="{{.X}}" y="0" width="{{.W}}" height="100"></rect><rect class="bar{{if .Class}} {{.Class}}{{end}}" x="{{.X}}" y="{{.Y}}" width="{{.W}}" height="{{.H}}"></rect></g>
+      {{/* En Programas cada barra pide los mensajes de su franja (Href). */}}
+      {{range .Bars}}{{if .Href}}<a id="{{.ID}}" class="pbar{{if .Sel}} sel{{end}}" href="#franja-det" hx-get="{{.Href}}" hx-sync="#programas:replace" hx-target="#programas" hx-swap="outerHTML" aria-label="{{.Label}}. Ver los mensajes">{{else}}<g>{{end}}<title>{{.Label}}</title><rect class="hit" x="{{.X}}" y="0" width="{{.W}}" height="100"></rect><rect class="bar{{if .Class}} {{.Class}}{{end}}" x="{{.X}}" y="{{.Y}}" width="{{.W}}" height="{{.H}}"></rect>{{if .Href}}</a>{{else}}</g>{{end}}
       {{end}}{{range .Lines}}<line class="corte" x1="{{.X}}" x2="{{.X}}" y1="0" y2="100" vector-effect="non-scaling-stroke"></line>{{end}}
       {{if and .ByPct (not .Bands)}}<line class="tipica" x1="0" x2="{{.W}}" y1="{{.TypicalY}}" y2="{{.TypicalY}}"></line>{{end}}
       {{with .Median}}<path class="mediana" d="{{.}}" vector-effect="non-scaling-stroke"></path>{{end}}

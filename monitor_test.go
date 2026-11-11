@@ -7257,8 +7257,8 @@ func TestLiveHoursLocalSlots(t *testing.T) {
 }
 
 // TestProgramDetailNoFolds (CA1.2, "el detalle de Programas no cambia"): con un
-// análisis que trae preguntas y quejas, el detalle las muestra a la vista, sin
-// <details> ni "abrir".
+// análisis que trae preguntas y quejas de un mensaje, el detalle las muestra a
+// la vista, sin flecha (programas-chat-y-detalles: solo el chat va plegado).
 func TestProgramDetailNoFolds(t *testing.T) {
 	now := noonToday()
 	day := dayStart(now)
@@ -7279,15 +7279,13 @@ func TestProgramDetailNoFolds(t *testing.T) {
 		if !strings.Contains(body, "¿Hay cortes?") {
 			t.Errorf("%s: faltan las preguntas del análisis", path)
 		}
-		// "plegable" y "abrir" solo en el parcial: la página completa trae el CSS común.
-		nots := []string{"<details", "<summary"}
-		if strings.HasPrefix(path, "/parcial") {
-			nots = append(nots, "plegable", "abrir")
+		// Desde programas-chat-y-detalles se despliegan los ítems de más de un
+		// mensaje y el chat: con un mensaje cada uno, solo queda el chat, cerrado.
+		if n := strings.Count(body, "<details"); n != 1 || !strings.Contains(body, `<details class="plegable pchat">`) {
+			t.Errorf("%s: %d <details>, quiero solo el del chat, cerrado", path, n)
 		}
-		for _, not := range nots {
-			if strings.Contains(body, not) {
-				t.Errorf("%s: el detalle de Programas no debería tener %q", path, not)
-			}
+		if strings.Contains(body, `id="pf-cq`) {
+			t.Errorf("%s: una pregunta de 1 mensaje no se despliega", path)
 		}
 	}
 }
@@ -11869,4 +11867,369 @@ func TestProgramDetailCut(t *testing.T) {
 	if rows, err := csv.NewReader(w.Body).ReadAll(); err != nil || len(rows) != 42 {
 		t.Errorf("CSV del programa cortado: %d filas, %v; quiero 41 mensajes", len(rows)-1, err)
 	}
+}
+
+// TestProgramChatRows (CA1): cada mensaje del chat del programa con su hora y
+// sus tags: categoría (Claude o reglas), sentimiento, grupo de preguntas y temas.
+func TestProgramChatRows(t *testing.T) {
+	day := dayStart(noonToday())
+	at := func(i int) time.Time { return day.Add(8*time.Hour + time.Duration(i)*time.Minute) }
+	msgs := []Message{
+		{ID: "b", Source: "chat", Author: "Beto", Text: "¿A qué hora el clima?", At: at(2)},
+		{ID: "a", Source: "chat", Author: "Ana", Text: "Qué lindo programa", At: at(1)},
+		{ID: "c", Source: "chat", Author: "Caro", Text: "¿Pasan el tema?", At: at(3)},
+		{ID: "s", Source: "chat", Author: "Spam", Text: "ganá plata en http://x.com", At: at(4)},
+		{ID: "k", Source: "comentario", Author: "Coment", Text: "un comentario", At: at(5)},
+	}
+	labels := map[string]MessageLabel{
+		"a": {ID: "a", Sentiment: "positivo", Cat: CatElogio},
+		"b": {ID: "b", Sentiment: "neutro", Cat: CatPregunta, Group: "g1"},
+		"s": {ID: "s", Sentiment: "negativo", Cat: CatOtro},
+	}
+	groups := map[string]BatchGroup{"g1": {ID: "g1", Text: "¿Cuándo pasan el clima?"}}
+	topics := []ClaudeGroup{{Text: "El clima", Msgs: 2, IDs: []string{"b", "a"}}, {Text: "Música", Msgs: 1, IDs: []string{"c"}}}
+	v := programChat(msgs, labels, groups, topics, chatFilter{})
+	if v.Total != 4 || v.Matched != 4 || len(v.Rows) != 4 {
+		t.Fatalf("total %d, coinciden %d, filas %d; quiero 4 de chat", v.Total, v.Matched, len(v.Rows))
+	}
+	type row struct{ id, hour, cat, sent, group, topics string }
+	want := []row{
+		{"a", at(1).Local().Format("15:04"), CatElogio, "positivo", "", "El clima"},
+		{"b", at(2).Local().Format("15:04"), CatPregunta, "neutro", "¿Cuándo pasan el clima?", "El clima"},
+		{"c", at(3).Local().Format("15:04"), CatPregunta, "", "", "Música"}, // sin etiqueta: por reglas
+		{"s", at(4).Local().Format("15:04"), CatSpam, "negativo", "", ""},   // el spam, por reglas
+	}
+	for i, w := range want {
+		r := v.Rows[i]
+		got := row{r.ID, r.Hour, r.Cat, r.Sent, r.Group, strings.Join(r.Topics, ",")}
+		if got != w {
+			t.Errorf("fila %d: %+v, quiero %+v", i, got, w)
+		}
+	}
+	if v.Rows[0].CatLabel != "Elogio" || v.Rows[0].SentLabel != "Positivo" || v.Rows[0].Author != "Ana" {
+		t.Errorf("rótulos: %+v", v.Rows[0])
+	}
+	// Sin etiquetas (Claude apagado): todo por reglas y sin sentimiento.
+	off := programChat(msgs, nil, nil, nil, chatFilter{})
+	if off.Rows[0].Cat != Classify(msgs[1].Text) || off.Rows[0].Sent != "" || off.Rows[1].Group != "" {
+		t.Errorf("sin etiquetas: %+v", off.Rows[:2])
+	}
+}
+
+// TestProgramChatFilter (CA2): los filtros se combinan y la lista se pagina.
+func TestProgramChatFilter(t *testing.T) {
+	day := dayStart(noonToday())
+	at := func(i int) time.Time { return day.Add(8*time.Hour + time.Duration(i)*time.Minute) }
+	msgs := []Message{
+		{ID: "a", Source: "chat", Author: "Ana", Text: "Qué lindo programa", At: at(1)},
+		{ID: "b", Source: "chat", Author: "Beto", Text: "¿A qué hora el CLIMA?", At: at(2)},
+		{ID: "c", Source: "chat", Author: "Climática", Text: "¿Pasan el tema?", At: at(3)},
+		{ID: "d", Source: "chat", Author: "Dani", Text: "Esta canción es horrible", At: at(4)},
+	}
+	labels := map[string]MessageLabel{
+		"a": {ID: "a", Sentiment: "positivo", Cat: CatElogio},
+		"b": {ID: "b", Sentiment: "neutro", Cat: CatPregunta},
+		"d": {ID: "d", Sentiment: "negativo", Cat: CatQueja},
+	}
+	topics := []ClaudeGroup{{Text: "El clima", Msgs: 2, IDs: []string{"b", "c"}}}
+	cases := []struct {
+		name string
+		f    chatFilter
+		ids  string
+	}{
+		{"sin filtro", chatFilter{}, "a,b,c,d"},
+		{"texto sin mayúsculas ni tildes, también el autor", chatFilter{Text: "CLIMÁ"}, "b,c"},
+		{"categoría", chatFilter{Cat: CatPregunta}, "b,c"},
+		{"sentimiento", chatFilter{Sent: "negativo"}, "d"},
+		{"sin etiquetar", chatFilter{Sent: "sin"}, "c"},
+		{"tema", chatFilter{Tema: "tema1"}, "b,c"},
+		{"combinados", chatFilter{Cat: CatPregunta, Sent: "neutro", Text: "hora"}, "b"},
+		{"nada", chatFilter{Text: "zzz"}, ""},
+	}
+	for _, c := range cases {
+		v := programChat(msgs, labels, nil, topics, c.f)
+		var ids []string
+		for _, r := range v.Rows {
+			ids = append(ids, r.ID)
+		}
+		if got := strings.Join(ids, ","); got != c.ids || v.Matched != len(ids) || v.Total != 4 {
+			t.Errorf("%s: %q (coinciden %d de %d), quiero %q", c.name, got, v.Matched, v.Total, c.ids)
+		}
+	}
+	// De a chatPageSize: con 450, la página 1 muestra 200 y la 3, todos.
+	var many []Message
+	for i := range 450 {
+		many = append(many, Message{ID: fmt.Sprint(i), Source: "chat", Text: "hola", At: at(i)})
+	}
+	for _, c := range []struct {
+		pag, shown int
+		more       bool
+	}{{0, 200, true}, {1, 200, true}, {2, 400, true}, {3, 450, false}, {9, 450, false}} {
+		v := programChat(many, nil, nil, nil, chatFilter{Pag: c.pag})
+		if len(v.Rows) != c.shown || v.More != c.more || v.Matched != 450 {
+			t.Errorf("pag %d: %d filas, más %v; quiero %d, %v", c.pag, len(v.Rows), v.More, c.shown, c.more)
+		}
+	}
+}
+
+// TestProgramChatParams (CA2, CA5): los parámetros del detalle, solo valores
+// de la lista cerrada; el texto, recortado.
+func TestProgramChatParams(t *testing.T) {
+	long := strings.Repeat("á", 150)
+	cases := []struct {
+		name, raw string
+		want      programsQuery
+	}{
+		{"vacío", "", programsQuery{}},
+		{"válidos", "abrir=chat,tema2&abrir=qg3&buscar=+hola+&cat=pregunta&senti=sin&tema=tema1&pag=3&franja=1700000100&sent=neu&desde=sent",
+			programsQuery{Abrir: "chat,tema2,qg3", Buscar: "hola", Cat: CatPregunta, Senti: "sin", Tema: "tema1", Pag: 3, Franja: 1700000100, Sent: "neu", Desde: "sent"}},
+		{"inválidos", "abrir=xyz,<b>&cat=<b>&senti=feliz&tema=tema9&pag=-1&franja=abc&sent=x&desde=y",
+			programsQuery{}},
+		{"página enorme", "pag=99999", programsQuery{Pag: maxChatPag}},
+		{"texto largo", "buscar=" + url.QueryEscape(long), programsQuery{Buscar: strings.Repeat("á", 100)}},
+	}
+	for _, c := range cases {
+		v, _ := url.ParseQuery(c.raw)
+		var q programsQuery
+		readDetail(v, &q)
+		if q != c.want {
+			t.Errorf("%s: %+v, quiero %+v", c.name, q, c.want)
+		}
+	}
+	// values() devuelve lo mismo que se leyó, y WithTramo a otro programa lo olvida.
+	q := programsQuery{Dia: "hoy", Tramo: "k", Abrir: "chat", Buscar: "hola", Cat: CatQueja, Franja: 5, Desde: "part"}
+	v := q.values()
+	if v.Get("abrir") != "chat" || v.Get("buscar") != "hola" || v.Get("cat") != CatQueja || v.Get("franja") != "5" || v.Get("desde") != "part" {
+		t.Errorf("values: %v", v)
+	}
+	if o := q.WithTramo("otro"); o.Abrir != "" || o.Buscar != "" || o.Franja != 0 || o.Dia != "hoy" {
+		t.Errorf("WithTramo a otro programa: %+v", o)
+	}
+	if s := q.WithTramo("k"); s != q {
+		t.Errorf("WithTramo al mismo programa cambió: %+v", s)
+	}
+}
+
+// TestProgramsChatSection (CA1, CA3): el chat del programa va plegado al
+// final; abierto, con el formulario, los tags y sin el refresco de 60 s.
+func TestProgramsChatSection(t *testing.T) {
+	now := noonToday()
+	_, srv, key := claudeProgramServer(t, now)
+	h := srv.Routes()
+	base := "/parcial/programas?dia=hoy&tramo=" + url.QueryEscape(key)
+	closed := getBody(h, base)
+	for _, w := range []string{`<details class="plegable pchat">`, `id="pf-chat"`, "Chat del programa (26 mensajes)", "abrir=chat", `hx-trigger="every 60s"`} {
+		if !strings.Contains(closed, w) {
+			t.Errorf("cerrado: falta %q", w)
+		}
+	}
+	if strings.Contains(closed, `id="f-chat"`) || strings.Contains(closed, "mensaje man 7<") {
+		t.Error("cerrado: no se arma la lista")
+	}
+	if i, j := strings.Index(closed, `id="supers"`), strings.Index(closed, `id="pf-chat"`); i < 0 || j < i {
+		t.Error("el chat va al final del detalle")
+	}
+	open := getBody(h, base+"&abrir=chat")
+	for _, w := range []string{
+		`<details class="plegable pchat" open>`, `id="f-chat"`, `name="buscar"`, `name="cat"`, `name="senti"`,
+		`<input type="hidden" name="abrir" value="chat">`, `<input type="hidden" name="tramo" value="` + key + `"`,
+		"26 de 26 mensajes", "mensaje man 7", "autor-man-1", ">Pregunta<", ">Elogio<", "Positivo", "¿A qué hora pasan el pronóstico?",
+		"Actualizado a las",
+	} {
+		if !strings.Contains(open, w) {
+			t.Errorf("abierto: falta %q", w)
+		}
+	}
+	if strings.Contains(open, `hx-trigger="every 60s"`) {
+		t.Error("con el chat abierto no se refresca solo (se perdería lo que se escribe)")
+	}
+	for _, c := range []struct{ q, want string }{
+		{"&buscar=man+1", "11 de 26 mensajes"},
+		{"&cat=pregunta", "7 de 26 mensajes"},
+		{"&senti=sin", "1 de 26 mensajes"},
+		{"&cat=xx%3Cb%3E", "26 de 26 mensajes"},
+	} {
+		body := getBody(h, base+"&abrir=chat"+c.q)
+		if !strings.Contains(body, c.want) {
+			t.Errorf("%s: falta %q", c.q, c.want)
+		}
+		if strings.Contains(body, "xx<b>") || strings.Contains(body, "xx&lt;b&gt;") {
+			t.Errorf("%s: se reflejó un valor inválido", c.q)
+		}
+	}
+	if body := getBody(h, base+"&abrir=chat&buscar=%3Cscript%3E"); strings.Contains(body, "<script>") || !strings.Contains(body, `value="&lt;script&gt;"`) {
+		t.Error("el texto buscado va escapado")
+	}
+}
+
+// TestProgramSlotDetail (CA4, CA5): las barras de participación y las filas de
+// sentimiento piden su franja; abajo de ese gráfico salen sus mensajes.
+func TestProgramSlotDetail(t *testing.T) {
+	now := noonToday()
+	day := dayStart(now)
+	_, srv, key := claudeProgramServer(t, now)
+	h := srv.Routes()
+	base := "/parcial/programas?dia=hoy&tramo=" + url.QueryEscape(key)
+	slot := day.Add(8*time.Hour + 5*time.Minute)
+	f := fmt.Sprint(slot.Unix())
+	closed := getBody(h, base)
+	for _, w := range []string{`class="pbar"`, "desde=part&amp;dia=hoy&amp;franja=" + f, "desde=sent&amp;dia=hoy&amp;franja=" + f, `class="sfila"`, "Ver los mensajes"} {
+		if !strings.Contains(closed, w) {
+			t.Errorf("links: falta %q", w)
+		}
+	}
+	if strings.Contains(closed, `id="franja-det"`) {
+		t.Error("sin franja no hay detalle")
+	}
+	hm := func(t time.Time) string { return t.Local().Format("15:04") }
+	part := getBody(h, base+"&franja="+f+"&desde=part")
+	i := strings.Index(part, `id="franja-det"`)
+	if i < 0 {
+		t.Fatal("falta el detalle de la franja")
+	}
+	if j := strings.Index(part, "<h3>Resumen del chat"); j < i {
+		t.Error("desde Participación, el detalle va abajo de ese gráfico")
+	}
+	d := part[i:]
+	d = d[:strings.Index(d, "</section>")]
+	for _, w := range []string{"Mensajes de las " + hm(slot) + " a " + hm(slot.Add(slotStep)), `aria-pressed="true">Todos (5)`, "Negativos (0)", "Positivos (5)",
+		"mensaje man 5<", "mensaje man 9<", ">Cerrar</button>"} {
+		if !strings.Contains(d, w) {
+			t.Errorf("detalle: falta %q", w)
+		}
+	}
+	if strings.Contains(d, "mensaje man 10<") || strings.Contains(d, "mensaje man 4<") {
+		t.Error("detalle: mensajes de otra franja")
+	}
+	if !strings.Contains(part, `class="pbar sel"`) {
+		t.Error("la barra elegida va marcada")
+	}
+	sent := getBody(h, base+"&franja="+f+"&desde=sent")
+	if i, j := strings.Index(sent, `id="franja-det"`), strings.Index(sent, "<h3>Preguntas"); i < 0 || j < i {
+		t.Error("desde Sentimiento, el detalle va en esa tarjeta")
+	}
+	if !strings.Contains(sent, `aria-pressed="true">Negativos (0)`) || !strings.Contains(sent, "Ningún mensaje negativo en esta franja.") || !strings.Contains(sent, `class="sfila sel"`) {
+		t.Error("desde Sentimiento abre en Negativos")
+	}
+	for _, bad := range []string{fmt.Sprint(slot.Unix() + 60), fmt.Sprint(day.Add(11 * time.Hour).Unix()), fmt.Sprint(day.Add(7 * time.Hour).Unix()), "abc"} {
+		if strings.Contains(getBody(h, base+"&franja="+bad+"&desde=part"), `id="franja-det"`) {
+			t.Errorf("franja %s: fuera del tramo o no alineada, sin detalle", bad)
+		}
+	}
+	// Sin Claude: solo la lista, sin pestañas de sentimiento.
+	_, off := programServer(t, now, false)
+	body := getBody(off.Routes(), base+"&franja="+f+"&desde=part")
+	if !strings.Contains(body, `id="franja-det"`) || strings.Contains(body, "Negativos (") || !strings.Contains(body, "mensaje man 5<") {
+		t.Error("sin Claude: el detalle sin pestañas")
+	}
+}
+
+// TestProgramFolds (CA6): temas y preguntas con más de un mensaje se
+// despliegan con sus mensajes; con uno, quedan como antes.
+func TestProgramFolds(t *testing.T) {
+	now := noonToday()
+	day := dayStart(now)
+	man := Segment{VideoID: "v1", Program: "LA MAÑANA", Start: day.Add(8 * time.Hour)}
+	analysis := func(key string) ClaudeAnalysis {
+		return ClaudeAnalysis{At: day.Add(10 * time.Hour), Key: key, ChannelID: "UC1", VideoID: "v1", Program: "LA MAÑANA",
+			From: man.Start, To: day.Add(9*time.Hour + 57*time.Minute), Model: defaultClaudeModel, Sent: 26, Total: 26,
+			Result: ClaudeResult{Summary: "Resumen",
+				Topics:    []ClaudeGroup{{Text: "El clima", Msgs: 3, People: 2, IDs: []string{"man10", "man11", "man12"}}, {Text: "Fútbol", Msgs: 1, People: 1, IDs: []string{"man13"}}},
+				Questions: []ClaudeGroup{{Text: "¿Hora?", Msgs: 2, People: 2, IDs: []string{"man14", "man15"}}, {Text: "¿Solo?", Msgs: 1, People: 1, Examples: []string{"man16"}}}}}
+	}
+	st, srv, key := claudeProgramServer(t, now)
+	st.AddAnalysis(analysis(key))
+	h := srv.Routes()
+	base := "/parcial/programas?dia=hoy&tramo=" + url.QueryEscape(key)
+	closed := getBody(h, base)
+	for _, w := range []string{`id="pf-tema1"`, "abrir=tema1", `id="pf-qg1"`, "abrir=qg1", "Fútbol · 1"} {
+		if !strings.Contains(closed, w) {
+			t.Errorf("cerrado: falta %q", w)
+		}
+	}
+	if strings.Contains(closed, `id="pf-tema2"`) || strings.Contains(closed, "mensaje man 11<") || strings.Contains(closed, "mensaje man 2<") {
+		t.Error("cerrado: un tema de 1 mensaje no se despliega y no se arman las listas")
+	}
+	open := getBody(h, base+"&abrir=tema1,qg1,xyz")
+	for _, w := range []string{"mensaje man 11<", "mensaje man 12<", "mensaje man 2<", "abrir=qg1", "abrir=tema1"} {
+		if !strings.Contains(open, w) {
+			t.Errorf("abierto: falta %q", w)
+		}
+	}
+	if strings.Contains(open, "xyz") {
+		t.Error("abierto: se reflejó una sección inválida")
+	}
+	// Sin tandas: las preguntas del resumen, cada una con su flecha si tiene más de 1.
+	st2, srv2 := programServer(t, now, true)
+	st2.AddAnalysis(analysis(key))
+	h2 := srv2.Routes()
+	body := getBody(h2, base)
+	if !strings.Contains(body, `id="pf-cq1"`) || strings.Contains(body, `id="pf-cq2"`) || !strings.Contains(body, "mensaje man 16") {
+		t.Error("preguntas del resumen: flecha solo con más de 1; la de 1 sigue con su ejemplo")
+	}
+	if body := getBody(h2, base+"&abrir=cq1"); !strings.Contains(body, "mensaje man 14<") || !strings.Contains(body, "mensaje man 15<") {
+		t.Error("preguntas del resumen: abierta, con sus mensajes")
+	}
+	// El chat filtra por los temas del resumen y los muestra como tag.
+	if body := getBody(h, base+"&abrir=chat&tema=tema1"); !strings.Contains(body, `name="tema"`) || !strings.Contains(body, "3 de 26 mensajes") || !strings.Contains(body, `<span class="badge tema">El clima</span>`) {
+		t.Error("chat: el filtro y el tag de tema")
+	}
+}
+
+// TestProgramReviewFixes (revisión 1 de programas-chat-y-detalles): el tope de
+// páginas del chat, la franja inválida que no viaja, los filtros sin select,
+// las pestañas con Claude apagado, los id para el foco y "Comparar con" sin tramo.
+func TestProgramReviewFixes(t *testing.T) {
+	now := noonToday()
+	day := dayStart(now)
+	t.Run("tope de páginas", func(t *testing.T) {
+		var many []Message
+		for i := range maxChatPag*chatPageSize + 50 {
+			many = append(many, Message{ID: fmt.Sprint(i), Source: "chat", Text: "hola", At: day.Add(time.Duration(i) * time.Second)})
+		}
+		last := programChatSection(many, nil, nil, nil, programsQuery{Tramo: "k", Abrir: "chat", Pag: maxChatPag})
+		if last.MoreHref != "" || !strings.Contains(last.Capped, "Se muestran los primeros 10.000") {
+			t.Errorf("en la última página: más %q, aviso %q", last.MoreHref, last.Capped)
+		}
+		prev := programChatSection(many, nil, nil, nil, programsQuery{Tramo: "k", Abrir: "chat", Pag: maxChatPag - 1})
+		if !strings.Contains(prev.MoreHref, fmt.Sprintf("pag=%d", maxChatPag)) || prev.Capped != "" {
+			t.Errorf("en la anteúltima: más %q, aviso %q", prev.MoreHref, prev.Capped)
+		}
+	})
+	st, srv, key := claudeProgramServer(t, now)
+	h := srv.Routes()
+	base := "/parcial/programas?dia=hoy&tramo=" + url.QueryEscape(key)
+	slot := day.Add(8*time.Hour + 5*time.Minute)
+	f := fmt.Sprint(slot.Unix())
+	t.Run("franja inválida no viaja", func(t *testing.T) {
+		bad := fmt.Sprint(slot.Unix() + 60)
+		if body := getBody(h, base+"&franja="+bad+"&desde=sent"); strings.Contains(body, "franja="+bad) || strings.Contains(body, `id="franja-det"`) {
+			t.Error("una franja inválida quedó en los links")
+		}
+	})
+	t.Run("id para el foco", func(t *testing.T) {
+		body := getBody(h, base)
+		if !strings.Contains(body, `<a id="pb-`+f+`" class="pbar"`) || !strings.Contains(body, `<a id="sf-`+f+`" class="sfila"`) {
+			t.Error("faltan los id de la barra y de la fila")
+		}
+	})
+	t.Run("Comparar con sin tramo conserva lo abierto", func(t *testing.T) {
+		body := getBody(h, "/parcial/programas?dia=hoy&abrir=chat")
+		if !strings.Contains(body, `class="seg" hx-get="/parcial/programas?abrir=chat&amp;dia=hoy&amp;tramo=`) {
+			t.Error("los botones de Comparar con perdieron abrir=chat")
+		}
+	})
+	t.Run("filtros sin select", func(t *testing.T) {
+		_, off := programServer(t, now, false)
+		if body := getBody(off.Routes(), base+"&abrir=chat&senti=negativo&tema=tema1"); !strings.Contains(body, "26 de 26 mensajes") {
+			t.Error("sin etiquetas ni temas, senti y tema no se aplican")
+		}
+	})
+	t.Run("pestañas con Claude apagado", func(t *testing.T) {
+		st.SetClaudeStatus(ClaudeStatus{On: true, Model: defaultClaudeModel, Tope: 0})
+		body := getBody(h, base+"&franja="+f+"&desde=sent")
+		if !strings.Contains(body, "Positivos (5)") || !strings.Contains(body, `aria-pressed="true">Negativos (0)`) {
+			t.Error("con tandas viejas, la franja de Sentimiento sigue con sus pestañas")
+		}
+	})
 }

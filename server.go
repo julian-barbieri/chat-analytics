@@ -132,6 +132,8 @@ type Bar struct {
 	Label      string
 	N          int
 	Class      string // clase CSS extra, por ejemplo "top"
+	Href, ID   string // en Programas: pide los mensajes de la franja (ID: para el foco)
+	Sel        bool   // la franja elegida
 }
 
 type CatRow struct {

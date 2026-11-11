@@ -1,6 +1,6 @@
 # Spec: chat completo, franjas clickeables y temas/preguntas desplegables en Programas
 
-- **Estado:** aprobada
+- **Estado:** implementada
 - **Tipo:** mejora
 - **Rama:** `feat/programas-chat-y-detalles`
 - **Origen:** pedido del usuario (2026-11-11)
@@ -31,36 +31,43 @@ tema y cada grupo de preguntas.
 
 ## Criterios de aceptación
 
-- [ ] CA1: al final del detalle hay "Chat del programa (N mensajes)" en un `<details>`
+- [x] CA1: al final del detalle hay "Chat del programa (N mensajes)" en un `<details>`
   cerrado por defecto. Abierto, lista los mensajes de chat del tramo en orden de hora
   (`HH:MM`, autor, texto) con tags: categoría (la de Claude si hay etiqueta y Claude
-  está prendido, si no la de reglas; ADR 0010), sentimiento (solo con etiqueta), "Pregunta"
-  (con el texto del grupo en `title` si tiene grupo) y tema (los temas del resumen de
-  Claude que incluyen ese mensaje en sus `IDs`). — `TestProgramChatRows` (tabla).
-- [ ] CA2: filtros que se combinan: texto (en texto y autor, sin distinguir mayúsculas
+  está prendido, si no la de reglas; ADR 0010), sentimiento (solo con etiqueta), el grupo de
+  preguntas de Claude (un tag aparte con su texto, si tiene grupo) y tema (los temas del resumen de
+  Claude que incluyen ese mensaje en sus `IDs`). — `TestProgramChatRows` (tabla) y `TestProgramsChatSection`.
+- [x] CA2: filtros que se combinan: texto (en texto y autor, sin distinguir mayúsculas
   ni tildes, hasta 100 runas), categoría, sentimiento (incluye "sin etiquetar") y tema.
   Valores fuera de la lista cerrada se ignoran y no se reflejan en el HTML; el texto sí,
-  escapado. Muestra "N de M mensajes" y pagina de a 200 con "Ver 200 más". —
+  escapado. Muestra "N de M mensajes" y pagina de a 200 con "Ver más mensajes", hasta 50 páginas (10.000; después,
+  un aviso para usar los filtros). Un filtro sin su select (sentimiento sin etiquetas,
+  tema sin resumen) no se aplica. —
   `TestProgramChatFilter` y `TestProgramChatParams`.
-- [ ] CA3: lo abierto del chat y sus filtros viajan en la URL (`programsQuery`), así el
-  refresco de 60 s de "Hoy" no lo cierra ni borra la búsqueda; el campo de texto lleva
-  `hx-preserve` para no perder lo que se está escribiendo. — `TestProgramsQueryChat`.
-- [ ] CA4: cada barra de Participación (no las franjas vacías reservadas hasta el fin
+- [x] CA3: lo abierto del chat y sus filtros viajan en la URL (`programsQuery`), así el
+  refresco de 60 s de "Hoy" no lo cierra; mientras el chat está abierto la pantalla no
+  se refresca sola, para no perder lo que se está escribiendo (en la implementación se
+  descartó `hx-preserve`: dejaba el texto viejo al limpiar o cambiar de programa). —
+  `TestProgramChatParams` y `TestProgramsChatSection`.
+- [x] CA4: cada barra de Participación (no las franjas vacías reservadas hasta el fin
   esperado) y cada fila de Sentimiento del programa (no el Promedio) es un link con
   `aria-label` "… Ver los mensajes". Al tocarla aparece debajo de ese gráfico
   "Mensajes de las HH:MM a HH:MM" con "Cerrar" y pestañas Todos / Negativos / Neutros /
   Positivos con cantidades (sin etiquetas, solo Todos). Desde Participación abre en
   Todos; desde Sentimiento, en Negativos (como En vivo). La franja seleccionada se marca.
   — `TestProgramSlotDetail`.
-- [ ] CA5: `franja` solo vale si es el inicio de una franja de 5 min dentro del tramo;
-  si no, no hay detalle. — `TestProgramSlotDetail` (casos inválidos).
-- [ ] CA6: en Temas de conversación (Claude) y en Preguntas (grupos de las tandas o del
+- [x] CA5: `franja` solo vale si es el inicio de una franja de 5 min dentro del tramo;
+  si no, no hay detalle ni viaja en los links. Las pestañas de la franja usan las
+  etiquetas que ya pintan las filas de Sentimiento (también con Claude apagado y tandas
+  guardadas). Cada barra y fila lleva `id` para conservar el foco y las filas miden
+  44 px de alto. — `TestProgramSlotDetail` (casos inválidos) y `TestProgramReviewFixes`.
+- [x] CA6: en Temas de conversación (Claude) y en Preguntas (grupos de las tandas o del
   resumen), cada ítem con más de 1 mensaje se despliega con una flecha y muestra sus
   mensajes (`fold-msgs`: autor, hora, texto, con tope y "y N más"); con 1 mensaje queda
   como hoy. El estado abierto sobrevive al refresco. — `TestProgramFolds`.
 - [ ] CA7: vista previa: las tres pantallas en claro y oscuro y a ancho de celular; el
   chat de un programa largo abre sin trabarse.
-- [ ] Gates de `CLAUDE.md` → "Definición de terminado" en verde.
+- [x] Gates de `CLAUDE.md` → "Definición de terminado" en verde.
 
 ## Diseño propuesto
 
@@ -94,4 +101,4 @@ tema y cada grupo de preguntas.
   el chat solo se arma abierto.
 - Privacidad: muestra autores, como el resto del dashboard (local, sin exponer). El
   texto buscado se escapa con `html/template`.
-- Refresco de 60 s mientras se escribe: mitigado con `hx-preserve` y el estado en la URL.
+- Refresco de 60 s mientras se escribe: con el chat abierto no hay refresco; el estado viaja en la URL.

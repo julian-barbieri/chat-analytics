@@ -64,6 +64,7 @@
     {{with .CmpWhy}}<p class="muted cmpwhy">{{.}}</p>{{end}}
     <p class="muted">{{if .ByPct}}% de los que miraban que escribió en el chat, cada 5 minutos; los números marcan los 5 momentos más altos. {{if .Chart.Bands}}{{.CmpNote}}{{else}}Típica: {{.Typical}} (línea punteada).{{with .CmpNote}} {{.}}{{end}}{{end}}{{with .Chart.Viewers}} La línea: cuántos miraban, con su escala a la derecha.{{end}}{{else}}Sin dato de cuántos miraban: personas que escribieron cada 5 minutos.{{end}}</p>
     {{with .Chart}}<div class="pfijo" style="width: {{$.Part.Px}}px">{{template "part-chart" .}}</div>{{end}}
+    {{if eq $.SlotIn "part"}}{{template "prog-franja" $.Slot}}{{else}}<p class="muted">Tocá una barra para ver sus mensajes.</p>{{end}}
   </div>{{end}}
   <div class="inner">
     <h3>Resumen del chat {{if .Claude}}<span class="ia">Claude</span>{{end}}</h3>
@@ -86,7 +87,9 @@
   <div class="detail-grid">
     <div class="inner">
       {{if and .Claude .Claude.Topics}}<h3>Temas de conversación <span class="ia">Claude</span></h3>
-      <div class="words">{{range .Claude.Topics}}<span>{{.Text}} · {{.Count}}</span>{{end}}</div>
+      {{range .Claude.Topics}}{{if .Key}}<details class="plegable"{{if .Fold.Open}} open{{end}}>{{template "pf-summary" .}}{{.Text}} · {{.Count}}</summary>
+        {{template "fold-msgs" .List}}
+      </details>{{else}}<div class="plegable tsolo">{{.Text}} · {{.Count}}</div>{{end}}{{end}}
       {{else if .CatsClaude}}<h3>Categorías <span class="ia">Claude</span></h3>
       <div class="cats">{{range .Cats}}<div class="catline" title="{{.Label}}: {{.N}}">{{template "catrow" .}}</div>{{end}}</div>
       <p class="muted">Por Claude, con las tandas; el spam, por reglas{{if .CatsPending}}. {{.CatsPending}} todavía sin etiquetar (por reglas){{end}}. Los temas salen del resumen cuando termina el programa.</p>
@@ -104,14 +107,17 @@
       {{if .SentRows}}<p class="muted">Promedio del programa y cada 5 min, lo más nuevo arriba, con las tandas de Claude:</p>
       <ul class="sfilas">{{with .SentAvg}}{{template "sfila" .}}{{end}}{{range .SentRows}}{{template "sfila" .}}{{end}}</ul>
       <p class="muted leyenda"><span class="sw pos" aria-hidden="true"></span> Positivo <span class="sw neu" aria-hidden="true"></span> Neutro <span class="sw neg" aria-hidden="true"></span> Negativo <span class="sw low" aria-hidden="true"></span> Menos de 5 mensajes</p>
+      {{if eq .SlotIn "sent"}}{{template "prog-franja" .Slot}}{{else}}<p class="muted">Tocá una franja para ver sus mensajes.</p>{{end}}
       {{else if .Sent}}<p class="muted">Todavía no hay mensajes analizados por Claude en este programa.</p>{{end}}
     </div>
     <div class="inner">
       <h3>Preguntas {{if or .QGroups (and .Claude .Claude.Questions)}}<span class="ia">Claude</span>{{else if not .QClaude}}<span class="chip">por reglas</span>{{end}}</h3>
       {{if .QGroups}}<p class="muted">{{.QHeader}}</p>
-      <ul class="qlist qgroups">{{range .QGroups}}<li{{if .Answered}} class="hecha"{{end}}><div>{{template "qrow" .}}</div></li>{{end}}</ul>
+      <ul class="qlist qgroups">{{range .QGroups}}<li{{if .Answered}} class="hecha"{{end}}>{{if .Key}}<details class="plegable qg"{{if .Fold.Open}} open{{end}}>{{template "pf-summary" .}}{{template "qrow" .}}</summary>
+        {{template "fold-msgs" .List}}
+      </details>{{else}}<div>{{template "qrow" .}}</div>{{end}}</li>{{end}}</ul>
       <p class="muted">Agrupadas por Claude en las tandas; las cantidades las cuenta el monitor.</p>
-      {{else if and .Claude .Claude.Questions}}{{template "claude-items" .Claude.Questions}}
+      {{else if and .Claude .Claude.Questions}}{{template "prog-items" .Claude.Questions}}
       {{else if .QClaude}}<p class="muted">Claude no agrupó preguntas en este programa.</p>
       {{else}}<ul class="qlist">{{range .Questions}}<li>
         <div class="meta"><strong>{{.Author}}</strong> · {{fecha .At}}</div>
@@ -128,13 +134,65 @@
       </table>{{else}}<p class="muted">Sin Super Chats ni Super Stickers.</p>{{end}}
       <p class="muted">{{.SupersNote}}</p>
   </div>
+  {{template "prog-chat" .Chat}}
 {{else}}<p class="muted">Ese programa ya no está guardado.</p>{{end}}
 </section>
 {{end}}
 
-{{/* Una fila de "Sentimiento del programa": el promedio o una franja de 5 min. */}}
-{{define "sfila"}}<li title="{{.Label}}"{{if eq .Hour "Promedio"}} class="prom"{{end}}><span class="h">{{.Hour}}</span>
-  <span class="hbar" role="img" aria-label="{{.Label}}">{{if .Low}}<span class="low" style="width: 100%"></span>{{else}}<span class="pos" style="width: {{printf "%.1f" .Pos}}%"></span><span class="neu" style="width: {{printf "%.1f" .Neu}}%"></span><span class="neg" style="width: {{printf "%.1f" .Neg}}%"></span>{{end}}</span></li>{{end}}
+{{/* Una fila de "Sentimiento del programa": el promedio o una franja de 5 min,
+que pide sus mensajes (Href). */}}
+{{define "sfila"}}<li title="{{.Label}}"{{if eq .Hour "Promedio"}} class="prom"{{end}}>{{if .Href}}<a id="{{.ID}}" class="sfila{{if .Sel}} sel{{end}}" href="#franja-det" hx-get="{{.Href}}" hx-sync="#programas:replace" hx-target="#programas" hx-swap="outerHTML" aria-label="{{.Label}}. Ver los mensajes">{{template "sfila-in" .}}</a>{{else}}{{template "sfila-in" .}}{{end}}</li>{{end}}
+{{define "sfila-in"}}<span class="h">{{.Hour}}</span>
+  <span class="hbar" role="img" aria-label="{{.Label}}">{{if .Low}}<span class="low" style="width: 100%"></span>{{else}}<span class="pos" style="width: {{printf "%.1f" .Pos}}%"></span><span class="neu" style="width: {{printf "%.1f" .Neu}}%"></span><span class="neg" style="width: {{printf "%.1f" .Neg}}%"></span>{{end}}</span>{{end}}
+
+{{/* La flecha de lo que se despliega en Programas: pide el detalle con la
+sección cambiada en "abrir", así sigue abierta después del refresco de 60 s.
+El id deja el foco en la flecha y hx-sync corta un refresco en vuelo. Se
+cierra con </summary> en quien la usa. */}}
+{{define "pf-summary"}}<summary id="pf-{{.Key}}" hx-get="{{.Fold.Href}}" hx-sync="#programas:replace" hx-target="#programas" hx-swap="outerHTML">{{end}}
+
+{{/* Mensajes de la franja elegida en Participación o en Sentimiento. */}}
+{{define "prog-franja"}}{{with .}}<section id="franja-det" class="sdet" aria-labelledby="franja-det-h">
+    <div class="chead"><h3 id="franja-det-h">{{.Title}}</h3><button type="button" class="btn btn-s cerrar" hx-get="{{.Close}}" hx-sync="#programas:replace" hx-target="#programas" hx-swap="outerHTML">Cerrar</button></div>
+    {{if .Tabs}}<div class="vbtns" role="group" aria-label="Qué mensajes ver">{{range .Tabs}}<button type="button" class="seg" hx-get="{{.Href}}" hx-sync="#programas:replace" hx-target="#programas" hx-swap="outerHTML" aria-pressed="{{.On}}">{{.Label}}</button>{{end}}</div>{{end}}
+    {{if .Empty}}<p class="muted">{{.Empty}}</p>{{else}}{{template "fold-msgs" .List}}{{end}}
+  </section>{{end}}{{end}}
+
+{{/* Preguntas del resumen de Claude: con más de un mensaje, se despliegan. */}}
+{{define "prog-items"}}<ul class="qlist">{{range .}}<li>
+  {{if .Key}}<details class="plegable qg"{{if .Fold.Open}} open{{end}}>{{template "pf-summary" .}}<strong>{{.Text}}</strong> <span class="muted">· {{.Count}}</span></summary>
+    {{template "fold-msgs" .List}}
+  </details>{{else}}<div><strong>{{.Text}}</strong> <span class="muted">· {{.Count}}</span></div>
+  {{range .Examples}}<div class="muted"><strong>{{.Author}}</strong> · {{.Hour}}: {{.Text}}</div>{{end}}{{end}}
+</li>{{end}}</ul>{{end}}
+
+{{/* Chat del programa: plegado; abierto, con el formulario de filtros (sin JS
+propio: htmx manda el formulario al enviar o al cambiar un select) y los
+mensajes en orden de hora con sus tags. */}}
+{{define "prog-chat"}}<div id="chat-programa" class="inner">
+  <details class="plegable pchat"{{if .Fold.Open}} open{{end}}>
+    <summary id="pf-chat" hx-get="{{.Fold.Href}}" hx-sync="#programas:replace" hx-target="#programas" hx-swap="outerHTML"><strong>Chat del programa ({{plural .N "mensaje" "mensajes"}})</strong></summary>
+    {{with .View}}
+    <form id="f-chat" class="chatf" action="/programas" method="get" hx-get="/parcial/programas" hx-target="#programas" hx-swap="outerHTML" hx-sync="#programas:replace" role="search" aria-label="Buscar en el chat">
+      {{range $.Hidden}}<input type="hidden" name="{{.Name}}" value="{{.Value}}">{{end}}
+      <label class="field" for="c-buscar"><span class="lbl">Buscar</span><input id="c-buscar" class="inp" type="search" name="buscar" value="{{$.Buscar}}" maxlength="100" placeholder="Texto o autor"></label>
+      <label class="field" for="c-cat"><span class="lbl">Categoría</span><select id="c-cat" class="sel" name="cat" hx-get="/parcial/programas" hx-trigger="change" hx-include="#f-chat" hx-sync="#programas:replace" hx-target="#programas" hx-swap="outerHTML">{{range $.Cats}}<option value="{{.ID}}"{{if .Selected}} selected{{end}}>{{.Name}}</option>{{end}}</select></label>
+      {{if $.Sents}}<label class="field" for="c-senti"><span class="lbl">Sentimiento</span><select id="c-senti" class="sel" name="senti" hx-get="/parcial/programas" hx-trigger="change" hx-include="#f-chat" hx-sync="#programas:replace" hx-target="#programas" hx-swap="outerHTML">{{range $.Sents}}<option value="{{.ID}}"{{if .Selected}} selected{{end}}>{{.Name}}</option>{{end}}</select></label>{{end}}
+      {{if $.Temas}}<label class="field" for="c-tema"><span class="lbl">Tema</span><select id="c-tema" class="sel" name="tema" hx-get="/parcial/programas" hx-trigger="change" hx-include="#f-chat" hx-sync="#programas:replace" hx-target="#programas" hx-swap="outerHTML">{{range $.Temas}}<option value="{{.ID}}"{{if .Selected}} selected{{end}}>{{.Name}}</option>{{end}}</select></label>{{end}}
+      <button type="submit" class="btn btn-s">Buscar</button>
+      {{if $.Filtered}}<button type="button" class="btn btn-s" hx-get="{{$.Clear}}" hx-sync="#programas:replace" hx-target="#programas" hx-swap="outerHTML">Limpiar</button>{{end}}
+    </form>
+    <p class="muted">{{miles .Matched}} de {{plural .Total "mensaje" "mensajes"}} · en orden de hora. Mientras el chat está abierto la pantalla no se actualiza sola: buscá de nuevo para ver lo nuevo.</p>
+    <ul class="qlist chatl">{{range .Rows}}<li>
+      <div class="meta"><span class="hora">{{.Hour}}</span> · <strong>{{.Author}}</strong></div>
+      <div>{{.Text}}</div>
+      <div class="tags"><span class="badge {{.Cat}}">{{.CatLabel}}</span>{{if .Sent}}<span class="badge"><span class="sw {{.SentClass}}" aria-hidden="true"></span> {{.SentLabel}}</span>{{end}}{{with .Group}}<span class="badge grupo" title="Grupo de preguntas de Claude">{{.}}</span>{{end}}{{range .Topics}}<span class="badge tema">{{.}}</span>{{end}}</div>
+    </li>{{else}}<li class="muted">Ningún mensaje con esos filtros.</li>{{end}}</ul>
+    {{if $.MoreHref}}<button type="button" class="btn btn-s" hx-get="{{$.MoreHref}}" hx-sync="#programas:replace" hx-target="#programas" hx-swap="outerHTML">Ver más mensajes</button>{{end}}
+    {{with $.Capped}}<p class="muted">{{.}}</p>{{end}}
+    {{end}}
+  </details>
+</div>{{end}}
 
 {{/* Lo que compara el programa con sus emisiones de las últimas 4 semanas. */}}
 {{define "historia"}}
