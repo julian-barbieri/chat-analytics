@@ -1,10 +1,10 @@
 # Spec: En riesgo a los 7 días
 
-- **Estado:** borrador
+- **Estado:** aprobada
 - **Tipo:** mejora
 - **Rama:** `feat/en-riesgo-7-dias`
 - **Origen:** pedido del usuario en el chat (2026-11-11): "que esos participantes que están en riesgo sean +7 y no +14 días".
-- **Aprobada por / fecha:** —
+- **Aprobada por / fecha:** Julian Barbieri, 2026-11-11
 
 ## Contexto
 
