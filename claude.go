@@ -147,7 +147,8 @@ const claudeTimeout = 5 * time.Minute
 
 func NewClaude(cfg ClaudeConfig) *Claude {
 	return &Claude{Key: cfg.Key, BaseURL: cfg.BaseURL, Model: cfg.Model, HTTP: &http.Client{
-		Timeout: claudeTimeout,
+		Timeout:   claudeTimeout,
+		Transport: newTransport(),
 		// Sin seguir redirecciones: reenviarían x-api-key a otro host. Un 30x cae en statusErr.
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 	}}
