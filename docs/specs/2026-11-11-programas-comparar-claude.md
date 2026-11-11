@@ -1,10 +1,10 @@
 # Spec: Programas: comparar que se vea, barras de ancho fijo y preguntas y categorías de Claude
 
-- **Estado:** borrador
+- **Estado:** aprobada
 - **Tipo:** bug
 - **Rama:** `fix/programas-comparar-claude`
 - **Origen:** mensaje del usuario con capturas (2026-11-11): los botones de "Comparar con" no hacen nada, la barra de un programa recién empezado ocupa todo el ancho y Preguntas / Temas salen "por reglas".
-- **Aprobada por / fecha:** —
+- **Aprobada por / fecha:** Julian Barbieri, 2026-11-11
 
 ## Contexto
 
