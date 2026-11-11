@@ -264,6 +264,23 @@ tr.sel td { background: var(--ia-bg); }
 .sdet { margin-top: 12px; }
 .sdet .vbtns { margin: 8px 0 4px; }
 .fmsgs { margin-top: 4px; }
+/* Programas: cada barra de participación y cada fila de sentimiento es un link a su franja. */
+.pchart a { cursor: pointer; outline: none; }
+.pchart a:focus-visible .bar, .pchart a.sel .bar { stroke: var(--text-primary); stroke-width: 2px; vector-effect: non-scaling-stroke; }
+/* Una franja sin mensajes tiene barra de alto 0: el foco y la elegida se marcan en toda la columna. */
+.pchart a:focus-visible .hit, .pchart a.sel .hit { fill: var(--grid); }
+.sfilas a.sfila { display: flex; flex: 1; align-items: center; gap: 8px; min-height: 44px; color: inherit; text-decoration: none; border-radius: 3px; }
+.sfilas a.sfila:hover .hbar { opacity: .8; }
+.sfilas a.sfila:focus-visible, .sfilas a.sel { outline: 2px solid var(--text-primary); outline-offset: 1px; }
+.sfilas a.sel .h { color: var(--text-primary); font-weight: 600; }
+.tsolo { padding: 11px 0; }
+/* Chat del programa: filtros en una fila que se parte y la lista con scroll propio. */
+.chatf { display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-end; margin: 8px 0; }
+.chatf .inp { width: 220px; max-width: 100%; }
+.chatl { max-height: 640px; overflow-y: auto; }
+.chatl .hora { font-variant-numeric: tabular-nums; }
+.chatl .tags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+.chatl .sw { width: 8px; height: 8px; }
 .pchart .corte { stroke: var(--text-muted); stroke-width: 1; opacity: .5; }
 /* Franja de programas debajo del gráfico: el nombre se corta con … y el
    completo va en el title y en la lista de abajo. */

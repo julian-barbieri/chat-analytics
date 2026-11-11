@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -371,6 +372,11 @@ func mayAsk(text string) bool {
 // programsQuery son los filtros de la pantalla, ya validados.
 type programsQuery struct {
 	Dia, Canal, Tramo, Comparar string
+	// Del detalle (readDetail): lo plegado abierto, la franja elegida y los
+	// filtros del chat.
+	Abrir, Sent, Desde, Buscar, Cat, Senti, Tema string
+	Franja                                       int64
+	Pag                                          int
 }
 
 func (q programsQuery) values() url.Values {
@@ -384,6 +390,17 @@ func (q programsQuery) values() url.Values {
 	if q.Comparar != "" && q.Comparar != cmpNone {
 		v.Set("comparar", q.Comparar)
 	}
+	for k, val := range map[string]string{"abrir": q.Abrir, "buscar": q.Buscar, "cat": q.Cat, "senti": q.Senti, "tema": q.Tema, "sent": q.Sent, "desde": q.Desde} {
+		if val != "" {
+			v.Set(k, val)
+		}
+	}
+	if q.Pag > 0 {
+		v.Set("pag", strconv.Itoa(q.Pag))
+	}
+	if q.Franja > 0 {
+		v.Set("franja", strconv.FormatInt(q.Franja, 10))
+	}
 	return v
 }
 
@@ -391,8 +408,14 @@ func (q programsQuery) values() url.Values {
 func (q programsQuery) Page() string    { return "/programas?" + q.values().Encode() }
 func (q programsQuery) Partial() string { return "/parcial/programas?" + q.values().Encode() }
 
-// WithTramo es la misma pantalla con otro programa elegido.
-func (q programsQuery) WithTramo(key string) programsQuery { q.Tramo = key; return q }
+// WithTramo es la misma pantalla con otro programa elegido: lo desplegado,
+// la franja y los filtros del chat son del programa anterior y se olvidan.
+func (q programsQuery) WithTramo(key string) programsQuery {
+	if key == q.Tramo {
+		return q
+	}
+	return programsQuery{Dia: q.Dia, Canal: q.Canal, Tramo: key, Comparar: q.Comparar}
+}
 
 // WithComparar es la misma pantalla con otro modo de "Comparar con".
 func (q programsQuery) WithComparar(mode string) programsQuery { q.Comparar = mode; return q }
@@ -436,6 +459,7 @@ func programChannels(snap Snapshot, samples []LiveSample) []ChannelStatus {
 // defecto (hoy, todos los canales).
 func readPrograms(v url.Values, channels []ChannelStatus) programsQuery {
 	q := programsQuery{Tramo: v.Get("tramo"), Comparar: compareParam(v.Get("comparar"))}
+	readDetail(v, &q)
 	q.Dia, _ = dayRange(v.Get("dia"), time.Now())
 	for _, c := range channels {
 		if c.ID == v.Get("canal") && c.ID != "" {
@@ -506,7 +530,7 @@ func (s *Server) programsData(v url.Values) map[string]any {
 		pick = defaultProgram(rows)
 	}
 	data := map[string]any{
-		"Q": q, "Channels": opts, "Rows": rows, "Multi": len(days) > 1, "Refresh": q.Dia == "hoy",
+		"Q": q, "Channels": opts, "Rows": rows, "Multi": len(days) > 1, "Refresh": q.Dia == "hoy" && !q.isOpen("chat"),
 		"Title": programsTitle(q.Dia, days), "Updated": now, "Pick": "",
 		"Days": []ChannelOption{{"hoy", "Hoy", q.Dia == "hoy"}, {"ayer", "Ayer", q.Dia == "ayer"}, {"7d", "Últimos 7 días", q.Dia == "7d"}},
 	}
@@ -520,6 +544,11 @@ func (s *Server) programsData(v url.Values) map[string]any {
 	case gone:
 		data["Detail"] = ProgramDetail{}
 	case pick >= 0:
+		// El refresco de 60 s no arrastra una franja que no es del tramo.
+		if !validSlot(q.Franja, rows[pick].Seg, now) {
+			q.Franja, q.Desde, q.Sent = 0, "", ""
+			data["Q"] = q
+		}
 		data["Pick"] = rows[pick].Key
 		data["Detail"] = s.programDetail(rows[pick].ProgramSeg, programMessages(msgs, rows[pick].ProgramSeg, titles), rows[pick].Analysis, snap, now, q)
 	}
@@ -585,6 +614,11 @@ type ProgramDetail struct {
 	// History compara el programa con sus emisiones de las últimas 4 semanas;
 	// nil en un tramo sin programa.
 	History *ProgramHistory
+	// Chat es "Chat del programa", al final; Slot, los mensajes de la franja
+	// elegida, abajo de Participación (SlotIn "part") o de Sentimiento ("sent").
+	Chat   ProgramChat
+	Slot   *SlotDetail
+	SlotIn string
 }
 
 // ProgramHistory son las secciones de Programas que comparan emisiones.
@@ -607,6 +641,9 @@ type SentRow struct {
 	Hour, Label   string
 	Pos, Neu, Neg float64
 	Low           bool
+	Start         time.Time
+	Href, ID      string // pide los mensajes de la franja; vacíos en el promedio
+	Sel           bool
 }
 
 // programDetail arma el detalle de un tramo con sus mensajes ya filtrados.
@@ -614,6 +651,13 @@ type SentRow struct {
 // "Ayer", un programa que cruza la medianoche se corta a las 00:00).
 func (s *Server) programDetail(ps ProgramSeg, msgs []Message, a *ClaudeAnalysis, snap Snapshot, now time.Time, q programsQuery) ProgramDetail {
 	sg := ps.Seg
+	// Todos los links del detalle (también "Comparar con") llevan este tramo
+	// aunque se haya elegido solo o por la clave de otro pedazo, y una franja
+	// que no es del tramo no viaja en ninguno.
+	q.Tramo = ps.Key
+	if !validSlot(q.Franja, sg, now) {
+		q.Franja, q.Desde, q.Sent = 0, "", ""
+	}
 	csvQ := url.Values{"tramo": {ps.Key}}
 	if q.Dia != "" {
 		csvQ.Set("dia", q.Dia)
@@ -677,7 +721,7 @@ func (s *Server) programDetail(ps ProgramSeg, msgs []Message, a *ClaudeAnalysis,
 	// Las franjas van antes que los botones: sin % no hay con qué comparar.
 	slots, typical, byPct, pad := s.programSlots(ps, msgs, ems, now)
 	if len(slots) > 0 {
-		cmp, opts, why := compareSetup(ems, sg.Start, q.WithTramo(ps.Key), byPct)
+		cmp, opts, why := compareSetup(ems, sg.Start, q, byPct)
 		d.Part = programParticipation(slots, typical, byPct, pad, snap.Videos, cmp)
 		if sg.Program != "" {
 			d.Part["Compare"], d.Part["CmpWhy"], d.Part["Summary"] = opts, why, EmissionSummary(ems, sg.Start)
@@ -686,13 +730,24 @@ func (s *Server) programDetail(ps ProgramSeg, msgs []Message, a *ClaudeAnalysis,
 			}
 		}
 	}
+	var labels, sentLabels map[string]MessageLabel
+	var groups map[string]BatchGroup
 	if s.analyst != nil {
-		labels := s.st.Labels(messageIDs(msgs))
-		s.programSentiment(&d, ps, msgs, labels, now)
-		if s.claudeActive(snap) && len(labels) > 0 {
-			s.programClaudeCards(&d, msgs, labels)
+		all := s.st.Labels(messageIDs(msgs))
+		sentLabels = all // las pestañas de la franja, como las filas de Sentimiento
+		s.programSentiment(&d, ps, msgs, all, now)
+		if s.claudeActive(snap) && len(all) > 0 {
+			labels = all
+			groups = s.programClaudeCards(&d, msgs, labels)
 		}
 	}
+	programSlotLinks(&d, slots, msgs, sentLabels, q)
+	programFoldLists(&d, a, msgs, labels, q)
+	var topics []ClaudeGroup
+	if d.Claude != nil {
+		topics = a.Result.Topics
+	}
+	d.Chat = programChatSection(msgs, labels, groups, topics, q)
 	if sg.Program != "" {
 		d.History = s.programHistory(ps, ems, from, now)
 	}
@@ -702,14 +757,15 @@ func (s *Server) programDetail(ps ProgramSeg, msgs []Message, a *ClaudeAnalysis,
 // programClaudeCards arma Preguntas y Categorías del detalle con las
 // etiquetas de las tandas (ADR 0009, 0010): los grupos de preguntas, como en
 // En vivo pero sin marcar respondidas, y las categorías de catRowsWith.
-func (s *Server) programClaudeCards(d *ProgramDetail, msgs []Message, labels map[string]MessageLabel) {
+func (s *Server) programClaudeCards(d *ProgramDetail, msgs []Message, labels map[string]MessageLabel) map[string]BatchGroup {
 	var gids []string
 	for _, l := range labels {
 		if l.Group != "" {
 			gids = append(gids, l.Group)
 		}
 	}
-	rows, n := questionGroups(msgs, labels, s.st.Groups(gids), s.answers.Answered)
+	groups := s.st.Groups(gids)
+	rows, n := questionGroups(msgs, labels, groups, s.answers.Answered)
 	d.QClaude = true
 	d.QHeader = plural(n, "pregunta", "preguntas") + " · " + plural(len(rows), "grupo", "grupos")
 	for _, r := range rows {
@@ -717,6 +773,7 @@ func (s *Server) programClaudeCards(d *ProgramDetail, msgs []Message, labels map
 	}
 	d.Cats, d.CatsPending = catRowsWith(msgs, labels)
 	d.CatsClaude = true
+	return groups
 }
 
 // CompareOption es un botón de "Comparar con". Off: no hay con qué comparar.
@@ -1068,7 +1125,7 @@ func (s *Server) programSentiment(d *ProgramDetail, ps ProgramSeg, msgs []Messag
 		}
 		b := sentStack(sl)
 		p := sentPct(sl)
-		d.SentRows = append(d.SentRows, SentRow{Hour: sl.Start.Local().Format("15:04"), Label: b.Label, Low: b.Low, Pos: p.Pos, Neu: p.Neu, Neg: p.Neg})
+		d.SentRows = append(d.SentRows, SentRow{Hour: sl.Start.Local().Format("15:04"), Label: b.Label, Low: b.Low, Pos: p.Pos, Neu: p.Neu, Neg: p.Neg, Start: sl.Start})
 		all.Pos, all.Neu, all.Neg = all.Pos+sl.Pos, all.Neu+sl.Neu, all.Neg+sl.Neg
 	}
 	// Lo más nuevo arriba, como los gráficos; el promedio suma los conteos de
@@ -1195,7 +1252,9 @@ func (s *Server) programDetailPartial(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	final := finalAnalysis(ps, finals)
-	s.render(w, "programa-detalle", s.programDetail(ps, msgs, final, snap, now, programsQuery{Dia: dia, Comparar: compareParam(q.Get("comparar"))}))
+	pq := programsQuery{Dia: dia, Comparar: compareParam(q.Get("comparar"))}
+	readDetail(q, &pq)
+	s.render(w, "programa-detalle", s.programDetail(ps, msgs, final, snap, now, pq))
 }
 
 // exportProgram es GET /export.csv?tramo=…&dia=…: los mensajes de un programa
