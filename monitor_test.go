@@ -11488,9 +11488,38 @@ func TestProgramCompareNoPct(t *testing.T) {
 	}
 }
 
+// TestExpectedLength (CA1 de programas-largo-esperado): con menos de
+// minEmissions emisiones anteriores no hay largo esperado y el eje usa
+// minProgramAxis; con minEmissions o más, la mediana como siempre.
+func TestExpectedLength(t *testing.T) {
+	start := noonToday().Add(-2 * time.Hour)
+	emission := func(daysAgo int, dur time.Duration) Emission {
+		from := start.AddDate(0, 0, -daysAgo)
+		return Emission{Day: dayStart(from), Segs: []Segment{{Start: from, End: from.Add(dur)}}}
+	}
+	today := emission(0, 30*time.Minute) // la de hoy no cuenta
+	cases := []struct {
+		name string
+		ems  []Emission
+		want time.Duration
+	}{
+		{"sin emisiones", []Emission{today}, minProgramAxis},
+		{"una de 9 h", []Emission{emission(1, 9*time.Hour), today}, minProgramAxis},
+		{"dos de 3 h", []Emission{emission(1, 3*time.Hour), emission(2, 3*time.Hour), today}, minProgramAxis},
+		{"tres: la mediana", []Emission{emission(1, 2*time.Hour), emission(2, 9*time.Hour), emission(3, 3*time.Hour), today}, 3 * time.Hour},
+		{"tres cortas: 1 h como mínimo", []Emission{emission(1, 20*time.Minute), emission(2, 30*time.Minute), emission(3, 40*time.Minute)}, minProgramAxis},
+	}
+	for _, c := range cases {
+		if got := expectedLength(c.ems, start); got != c.want {
+			t.Errorf("%s: %v, quiero %v", c.name, got, c.want)
+		}
+	}
+}
+
 // TestProgramParticipationAxis (CA3): un programa al aire se dibuja sobre su
-// largo esperado (la mediana de sus emisiones anteriores, 1 h como mínimo),
-// así cada franja tiene el mismo ancho; uno cerrado, sobre su largo real.
+// largo esperado (la mediana de sus emisiones anteriores, 1 h como mínimo y
+// solo con minEmissions emisiones o más), así cada franja tiene el mismo
+// ancho; uno cerrado, sobre su largo real.
 func TestProgramParticipationAxis(t *testing.T) {
 	now := noonToday()
 	day := dayStart(now)
@@ -11503,23 +11532,27 @@ func TestProgramParticipationAxis(t *testing.T) {
 	cases := []struct {
 		name, prog string
 		start      time.Time
-		history    []run // salidas de cada uno de los 3 días anteriores (nil: sin historia)
+		history    []run // salidas de cada uno de los días anteriores (nil: sin historia)
 		want, end  string
 		real       int // franjas reales: un <title> y un rect.hit por cada una
 		px         int // ancho fijo: 28 px por posición, con las vacías
+		days       int // días anteriores con history (0: 3)
 	}{
 		// LA TARDE lleva 2 h (10:00 a 12:00: 25 franjas); con emisiones de 3 h, el eje es de 3 h:
 		// 11 franjas vacías a la izquierda, con el fin esperado en el borde.
-		{"al aire con historia", "LA TARDE", day.Add(10 * time.Hour), []run{{0, 3 * time.Hour}}, `<svg viewBox="-11 0 36 100"`, "13:00", 25, 1008},
+		{"al aire con historia", "LA TARDE", day.Add(10 * time.Hour), []run{{0, 3 * time.Hour}}, `<svg viewBox="-11 0 36 100"`, "13:00", 25, 1008, 0},
 		// Sin historia y más de 1 h al aire: lo transcurrido, como antes.
-		{"al aire sin historia", "LA TARDE", day.Add(10 * time.Hour), nil, `<svg viewBox="0 0 25 100"`, "", 25, 700},
+		{"al aire sin historia", "LA TARDE", day.Add(10 * time.Hour), nil, `<svg viewBox="0 0 25 100"`, "", 25, 700, 0},
 		// Recién empezado y sin historia: 1 h como mínimo.
-		{"recién empezado", "NUEVO", now.Add(-10 * time.Minute), nil, `<svg viewBox="-9 0 12 100"`, now.Add(50 * time.Minute).Local().Format("15:04"), 3, 336},
+		{"recién empezado", "NUEVO", now.Add(-10 * time.Minute), nil, `<svg viewBox="-9 0 12 100"`, now.Add(50 * time.Minute).Local().Format("15:04"), 3, 336, 0},
 		// Sale dos veces por día: cuenta la salida que empieza a la misma hora (1 h 30), no el día entero.
 		{"dos salidas por día", "NUEVO", now.Add(-10 * time.Minute), []run{{-10 * time.Hour, time.Hour}, {0, 90 * time.Minute}},
-			`<svg viewBox="-15 0 18 100"`, now.Add(80 * time.Minute).Local().Format("15:04"), 3, 504},
+			`<svg viewBox="-15 0 18 100"`, now.Add(80 * time.Minute).Local().Format("15:04"), 3, 504, 0},
 		// Cerrado: su largo real aunque las anteriores duren más.
-		{"cerrado", "LA MAÑANA", day.Add(8 * time.Hour), []run{{0, 3 * time.Hour}}, `<svg viewBox="0 0 24 100"`, "", 24, 672},
+		{"cerrado", "LA MAÑANA", day.Add(8 * time.Hour), []run{{0, 3 * time.Hour}}, `<svg viewBox="0 0 24 100"`, "", 24, 672, 0},
+		// CA2 (programas-largo-esperado): una sola emisión anterior de 9 h no
+		// define el eje: lo transcurrido, sin franjas vacías.
+		{"al aire con una sola emisión", "LA TARDE", day.Add(10 * time.Hour), []run{{0, 9 * time.Hour}}, `<svg viewBox="0 0 25 100"`, "", 25, 700, 1},
 	}
 	for _, c := range cases {
 		st, srv := programServer(t, now, false)
@@ -11530,7 +11563,11 @@ func TestProgramParticipationAxis(t *testing.T) {
 			st.SetVideos("Radio Test", append(st.Status().Videos, Video{ID: vid, Title: testTitle + c.prog, ChannelID: "UC1", Channel: "Radio Test", LiveStatus: "live"}))
 			st.Add(chatRun("nuevo", vid, c.prog, c.start, time.Minute, 5))
 		}
-		for d := 1; d <= 3; d++ {
+		days := c.days
+		if days == 0 {
+			days = 3
+		}
+		for d := 1; d <= days; d++ {
 			for k, r := range c.history {
 				start := c.start.AddDate(0, 0, -d).Add(r.off)
 				addLive(st, fmt.Sprintf("h%d-%d", d, k), c.prog, start, start.Add(r.dur))
@@ -11556,6 +11593,12 @@ func TestProgramParticipationAxis(t *testing.T) {
 		}
 		if c.end != "" && !strings.Contains(body, `<span class="end" style="left: 0.00%">`+c.end+`</span>`) {
 			t.Errorf("%s: falta el rótulo del fin esperado %s", c.name, c.end)
+		}
+		// Sin fin esperado, padChart no corre: no suma su texto al aria (CA2 de
+		// programas-largo-esperado). El rótulo class="end" no sirve para esto:
+		// también lo usa el gráfico de sentimiento.
+		if c.end == "" && strings.Contains(body, "lo que suele durar el programa") {
+			t.Errorf("%s: muestra un fin esperado y no debería", c.name)
 		}
 	}
 }
