@@ -38,6 +38,7 @@ type Store struct {
 	cpath     string // gasto del día en Claude (datos.claude.json)
 	bpath     string // tandas de Claude con las etiquetas por mensaje (datos.etiquetas.jsonl)
 	vdpath    string // último dato de cada video (datos.videos.jsonl), para la pantalla Comentarios
+	lkpath    string // serie de likes por video (datos.likes.jsonl)
 	msgs      []Message
 	analyses  []ClaudeAnalysis
 	batches   []ClaudeBatch
@@ -47,6 +48,8 @@ type Store struct {
 	spend     claudeDay
 	claude    ClaudeStatus
 	viewers   []ViewerSample
+	likes     []LikeSample
+	lastLike  map[string]LikeSample  // la última muestra guardada de cada video
 	archive   map[string]VideoRecord // por ID: el último dato visto
 	saved     map[string]time.Time   // cuándo se escribió por última vez cada video en vdpath
 	lives     []LiveSample
@@ -147,6 +150,7 @@ func OpenStore(path string) (*Store, error) {
 	s := &Store{path: path, quota: base + ".cuota.json", vpath: base + ".espectadores.jsonl", lpath: base + ".vivos.jsonl",
 		apath: base + ".analisis.jsonl", cpath: base + ".claude.json", bpath: base + ".etiquetas.jsonl",
 		vdpath: base + ".videos.jsonl", archive: map[string]VideoRecord{}, saved: map[string]time.Time{},
+		lkpath: base + ".likes.jsonl", lastLike: map[string]LikeSample{},
 		seen: map[string]bool{}, labels: map[string]MessageLabel{},
 		sent: map[sentKey]*SentSlot{}, groups: map[string]BatchGroup{}}
 	if b, err := os.ReadFile(s.quota); err == nil {
@@ -190,6 +194,15 @@ func OpenStore(path string) (*Store, error) {
 	s.lives = lives
 	if err := s.loadVideos(cutoff); err != nil {
 		return nil, err
+	}
+	likes, err := loadJSONL(s.lkpath, func(l LikeSample) bool { return l.VideoID != "" && !l.At.Before(cutoff) })
+	if err != nil {
+		return nil, err
+	}
+	sort.SliceStable(likes, func(i, j int) bool { return likes[i].At.Before(likes[j].At) })
+	s.likes = likes
+	for _, l := range likes {
+		s.lastLike[l.VideoID] = l
 	}
 	// La retención se cuenta desde el mensaje más viejo analizado (los del
 	// tramo empiezan segmentLead antes de From), no desde la hora del análisis.
@@ -789,6 +802,9 @@ func (s *Store) AddVideos(at time.Time, vids []Video) {
 	var add []VideoRecord
 	for _, v := range vids {
 		r := videoRecord(v, at)
+		// Un short lo sigue siendo aunque esta revisión no lo sepa (la lista de
+		// shorts se pide cada shortsEvery y no se guarda).
+		r.Short = r.Short || s.archive[v.ID].Short
 		s.archive[v.ID] = r
 		if last, ok := s.saved[v.ID]; !ok || !at.Before(last.Add(videoSaveEvery)) {
 			s.saved[v.ID] = at
@@ -843,5 +859,98 @@ func (s *Store) Comments(since time.Time) []Message {
 			out = append(out, m)
 		}
 	}
+	return out
+}
+
+// LikeSample es el contador de likes de un video en una revisión.
+type LikeSample struct {
+	VideoID string
+	At      time.Time
+	Likes   int64
+}
+
+// Un vivo guarda una muestra de likes en cada revisión en que cambia (para
+// repartirlos por programa); un video o un short, a lo sumo una cada
+// likeSaveEvery: suben despacio y la curva no necesita más.
+const likeSaveEvery = 30 * time.Minute
+
+// AddLikes guarda el contador de likes de cada video de una revisión. Sale del
+// mismo pedido de videos: no cuesta cuota. Sin likes (ocultos o cero), nada.
+func (s *Store) AddLikes(at time.Time, vids []Video) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var add []LikeSample
+	for _, v := range vids {
+		if v.Likes <= 0 {
+			continue
+		}
+		last, ok := s.lastLike[v.ID]
+		if ok && (last.Likes == v.Likes || v.LiveStatus != "live" && at.Before(last.At.Add(likeSaveEvery))) {
+			continue
+		}
+		l := LikeSample{VideoID: v.ID, At: at, Likes: v.Likes}
+		s.lastLike[v.ID] = l
+		add = append(add, l)
+	}
+	if len(add) == 0 {
+		return
+	}
+	s.likes = append(s.likes, add...)
+	// Si no se puede abrir el archivo, las muestras quedan igual en memoria.
+	f, err := os.OpenFile(s.lkpath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	enc := json.NewEncoder(f)
+	for _, l := range add {
+		enc.Encode(l)
+	}
+}
+
+// Likes devuelve una copia de las muestras de un video desde since.
+func (s *Store) Likes(id string, since time.Time) []LikeSample {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var out []LikeSample
+	for _, l := range s.likes {
+		if l.VideoID == id && !l.At.Before(since) {
+			out = append(out, l)
+		}
+	}
+	return out
+}
+
+// LikesSince devuelve una copia de las muestras desde since, por video y en
+// orden de hora.
+func (s *Store) LikesSince(since time.Time) map[string][]LikeSample {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	out := map[string][]LikeSample{}
+	for _, l := range s.likes {
+		if !l.At.Before(since) {
+			out[l.VideoID] = append(out[l.VideoID], l)
+		}
+	}
+	return out
+}
+
+// MissingVideos son los videos con comentarios guardados que no están en el
+// archivo (de antes de que existiera o que salieron de la revisión): el
+// worker los pide para que Comentarios no muestre filas sin título.
+func (s *Store) MissingVideos() []string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	seen := map[string]bool{}
+	var out []string
+	for _, m := range s.msgs {
+		if m.Source == "comentario" && !seen[m.VideoID] {
+			seen[m.VideoID] = true
+			if _, ok := s.archive[m.VideoID]; !ok {
+				out = append(out, m.VideoID)
+			}
+		}
+	}
+	sort.Strings(out)
 	return out
 }

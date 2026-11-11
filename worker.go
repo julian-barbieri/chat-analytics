@@ -48,6 +48,11 @@ var (
 // var para que los tests la cambien.
 var extraUploadsEvery = 30 * time.Minute
 
+// shortsEvery: cada cuánto se piden las listas de shorts y los videos que
+// faltan en el archivo; shortsFirst, la primera vez después de arrancar, para
+// no sumar pedidos a los del arranque.
+var shortsEvery, shortsFirst = 30 * time.Minute, time.Minute
+
 // extraUploads son los videos grabados (ni en vivo ni programados) de los
 // canales extra de una revisión con sus subidas: se conservan hasta la
 // próxima, así no desaparecen de la lista entre medio.
@@ -277,6 +282,75 @@ func principal(channels []*channelState) string {
 	return ""
 }
 
+// markShorts marca los videos que están en las listas de shorts.
+func markShorts(vids []Video, shorts map[string]bool) {
+	for i := range vids {
+		vids[i].Short = vids[i].Short || shorts[vids[i].ID]
+	}
+}
+
+// noShortsList dice si YouTube contestó que la lista no existe (un canal sin
+// shorts): no tiene sentido volver a pedirla por los mismos videos.
+func noShortsList(err error) bool {
+	msg := err.Error()
+	return strings.Contains(msg, "HTTP 404") || strings.Contains(msg, "playlistNotFound")
+}
+
+// reviewShorts pide la lista de shorts de los canales que tienen videos que
+// todavía no se clasificaron (en general, solo cuando subieron algo) y los
+// videos con comentarios que faltan en el archivo (una sola vez cada uno,
+// aunque YouTube no lo devuelva: por ejemplo, si se borró). Todo con spend.
+func reviewShorts(yt *YouTube, st *Store, spend func(func() error) error, infos []ChannelInfo, shorts, classified, asked map[string]bool) {
+	current := st.Status().Videos
+	for _, c := range infos {
+		var pending []string
+		for _, v := range current {
+			if v.ChannelID == c.ID && v.LiveStatus == "none" && v.StartedAt.IsZero() && !classified[v.ID] {
+				pending = append(pending, v.ID)
+			}
+		}
+		if len(pending) == 0 {
+			continue
+		}
+		var ids []string
+		if err := spend(func() (err error) { ids, err = yt.ChannelShorts(c.Uploads); return err }); err != nil {
+			// La lista no está documentada: si falla, quedan como videos comunes.
+			log.Printf("aviso: shorts de %s: %v", c.Title, err)
+			if !noShortsList(err) {
+				continue // se reintenta en shortsEvery
+			}
+			// Un canal sin shorts puede no tener la lista: no se pide más
+			// hasta que suba otra cosa.
+		}
+		for _, id := range ids {
+			shorts[id] = true
+		}
+		for _, id := range pending {
+			classified[id] = true
+		}
+	}
+	var missing []string
+	for _, id := range st.MissingVideos() {
+		if !asked[id] {
+			missing = append(missing, id)
+		}
+	}
+	if len(missing) == 0 {
+		return
+	}
+	var vids []Video
+	if err := spend(func() (err error) { vids, err = yt.Videos(missing); return err }); err != nil {
+		log.Printf("videos que faltan: %v", err)
+		return
+	}
+	for _, id := range missing {
+		asked[id] = true
+	}
+	markShorts(vids, shorts)
+	st.AddLikes(time.Now(), vids)
+	st.AddVideos(time.Now(), vids)
+}
+
 // RunWorker corre en una sola goroutine, así el cliente no se comparte, hasta
 // que se cancela ctx (con context.Background(), para siempre). Al cancelarlo
 // corta sus streaming y no vuelve hasta que terminan, para que nadie siga
@@ -289,6 +363,10 @@ func RunWorker(ctx context.Context, yt *YouTube, st *Store, cfg WorkerConfig) {
 		nextComments  time.Time
 		nextExtra     time.Time                         // próxima revisión de las subidas de los canales extra
 		extraKept     []Video                           // sus grabados de la última vez (extraUploads)
+		nextShorts    = time.Now().Add(shortsFirst)     // próxima revisión de shorts y de videos que faltan
+		shortIDs      = map[string]bool{}               // de las listas UUSH: lo que se sabe hasta reiniciar
+		classified    = map[string]bool{}               // videos que ya estaban cuando se pidió la lista de su canal
+		askedMissing  = map[string]bool{}               // faltantes ya pedidos: no se repiten hasta reiniciar
 		groupLast     = map[string]time.Time{}          // última acción de chat de cada grupo (chatGroup)
 		lastComments  = time.Now().Add(-48 * time.Hour) // primera pasada: últimas 48 h
 		knownComments = map[string]int64{}
@@ -537,10 +615,12 @@ func RunWorker(ctx context.Context, yt *YouTube, st *Store, cfg WorkerConfig) {
 				if title == "" {
 					title = st.Status().Channel
 				}
+				markShorts(vids, shortIDs)
 				st.SetVideos(title, vids)
-				// Los espectadores y los vivos de cada canal vienen en el mismo
-				// pedido de videos: las series no cuestan cuota.
+				// Los espectadores, los likes y los vivos de cada canal vienen en
+				// el mismo pedido de videos: las series no cuestan cuota.
 				st.AddViewers(time.Now(), vids)
+				st.AddLikes(time.Now(), vids)
 				st.AddLives(time.Now(), vids)
 				st.AddVideos(time.Now(), vids)
 				lives = nil
@@ -582,6 +662,22 @@ func RunWorker(ctx context.Context, yt *YouTube, st *Store, cfg WorkerConfig) {
 			if err != nil && !errors.As(err, new(lookupFailed)) {
 				log.Printf("videos: %v", err)
 				nextVideos = now.Add(30 * time.Second) // reintento rápido
+			}
+		}
+
+		// Shorts de cada canal y videos con comentarios que no están en el
+		// archivo, cada shortsEvery: 1 unidad por canal y 1 cada 50 faltantes.
+		// Como la búsqueda rápida: nunca en el tick de la revisión completa.
+		if !reviewed && !now.Before(nextShorts) && st.Units() < cfg.Budget {
+			var infos []ChannelInfo
+			for _, c := range channels {
+				if c.resolved {
+					infos = append(infos, c.info)
+				}
+			}
+			if len(infos) > 0 {
+				nextShorts = now.Add(shortsEvery)
+				reviewShorts(yt, st, spend, infos, shortIDs, classified, askedMissing)
 			}
 		}
 

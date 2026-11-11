@@ -173,6 +173,7 @@ func prepare(cfg config) (*prepared, error) {
 		base + ".analisis.jsonl":     "datos.analisis.jsonl",
 		base + ".etiquetas.jsonl":    "datos.etiquetas.jsonl",
 		base + ".videos.jsonl":       "datos.videos.jsonl",
+		base + ".likes.jsonl":        "datos.likes.jsonl",
 	} {
 		copied, err := copyFile(src, filepath.Join(dir, dst))
 		if err != nil {

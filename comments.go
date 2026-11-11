@@ -22,14 +22,16 @@ type VideoRecord struct {
 	ChannelID, Channel string
 	PublishedAt        time.Time
 	Views, Comments    int64
-	Live               bool // fue (o es) un vivo
+	Live               bool  // fue (o es) un vivo
+	Short              bool  `json:",omitempty"` // está en la lista de shorts del canal
+	Likes              int64 `json:",omitempty"`
 }
 
 // videoRecord es el dato de un video de una revisión. Live: fue o es un vivo
 // (está en curso, programado o tiene inicio real).
 func videoRecord(v Video, at time.Time) VideoRecord {
 	return VideoRecord{Seen: at, ID: v.ID, Title: v.Title, ChannelID: v.ChannelID, Channel: v.Channel, PublishedAt: v.PublishedAt,
-		Views: v.Views, Comments: v.Comments, Live: v.LiveStatus != "none" || !v.StartedAt.IsZero()}
+		Views: v.Views, Comments: v.Comments, Live: v.LiveStatus != "none" || !v.StartedAt.IsZero(), Short: v.Short, Likes: v.Likes}
 }
 
 // commentsPageSize: comentarios por página en el detalle de un video.
@@ -40,11 +42,13 @@ type option struct{ ID, Name string }
 
 // Listas cerradas de la pantalla; el primero de cada una es el valor por defecto.
 var (
-	commentPeriods = []option{{"30d", "30 días"}, {"7d", "7 días"}, {"pub", "Desde la publicación"}}
-	commentTypes   = []option{{"grabados", "Grabados"}, {"vivos", "Vivos"}, {"todos", "Todos"}}
-	commentOrders  = []option{{"periodo", "Comentarios en el período"}, {"ratio", "Comentarios cada 1.000 vistas"}, {"quejas", "% de quejas"}, {"fecha", "Publicación"}}
-	commentDests   = []option{{"likes", "Más likes"}, {"respuestas", "Más respuestas"}, {"quejas", "Quejas"}}
-	videoOrders    = []option{{"likes", "Más likes"}, {"respuestas", "Más respuestas"}, {"recientes", "Más recientes"}, {"viejos", "Más viejos"}}
+	commentPeriods = []option{{"30d", "Últimos 30 días"}, {"7d", "Últimos 7 días"}, {"pub", "Publicados en 30 días"}}
+	// Los vivos no entran: sus likes van por programa en Programas.
+	commentTypes  = []option{{"todos", "Todos"}, {"videos", "Videos"}, {"shorts", "Shorts"}}
+	commentOrders = []option{{"periodo", "Comentarios en el período"}, {"likes", "Más likes"}, {"likesratio", "Likes c/1.000 vistas"},
+		{"ratio", "Comentarios c/1.000 vistas"}, {"quejas", "% de quejas"}, {"fecha", "Publicación"}}
+	commentDests = []option{{"likes", "Más likes"}, {"respuestas", "Más respuestas"}, {"quejas", "Quejas"}}
+	videoOrders  = []option{{"likes", "Más likes"}, {"respuestas", "Más respuestas"}, {"recientes", "Más recientes"}, {"viejos", "Más viejos"}}
 )
 
 // Los IDs de video de YouTube son de 11 caracteres de este alfabeto; se
@@ -176,6 +180,8 @@ func choices(opts []option, cur string, q CommentsQuery, set func(*CommentsQuery
 // CommentsView es la pantalla de resumen.
 type CommentsView struct {
 	Q                                    CommentsQuery
+	Since                                time.Time // primer día de la ventana
+	PubSince                             time.Time // primer día de "publicados en 30 días", para la aclaración
 	Total, People, WithComments, InScope int
 	OpenQuestions                        int
 	ComplaintPct                         float64
@@ -186,6 +192,17 @@ type CommentsView struct {
 	Authors                              []AuthorRow
 	Rows                                 []CommentVideoRow
 	Questions, Featured                  []CommentItem
+	LikesNew                             int64
+	LikesPer1000                         string
+	Kinds                                []KindRow
+}
+
+// KindRow es una fila de la tarjeta "Videos y shorts".
+type KindRow struct {
+	Name, Kind             string
+	N                      int
+	Views, Likes, Comments int64
+	Per1000                string
 }
 
 // CommentDay es una barra de "Comentarios por día".
@@ -194,6 +211,7 @@ type CommentDay struct {
 	N       int
 	Pub     []string // títulos de los videos publicados ese día
 	Weekend bool
+	Likes   int64
 }
 
 // AuthorRow es una persona de "Quiénes más comentan".
@@ -212,6 +230,13 @@ type CommentVideoRow struct {
 	Per1000            string
 	ratio              float64
 	ComplaintPct       float64
+	Short              bool
+	Likes              int64
+	LikesP             string
+	LikesPer1000       string
+	likesRatio         float64
+	likesNew           int64 // LikesP sin formato
+	likesKnown         bool  // se sabe LikesP
 }
 
 // CommentItem es un comentario con su categoría y su video, para las listas.
@@ -244,16 +269,16 @@ func (s commentScope) record(id string) VideoRecord {
 }
 
 func (s commentScope) in(r VideoRecord) bool {
-	if s.q.Canal != "" && r.ChannelID != s.q.Canal {
+	if s.q.Canal != "" && r.ChannelID != s.q.Canal || r.Live {
 		return false
 	}
 	switch s.q.Tipo {
-	case "vivos":
-		return r.Live
-	case "todos":
-		return true
+	case "videos":
+		return !r.Short
+	case "shorts":
+		return r.Short
 	}
-	return !r.Live
+	return true
 }
 
 func (s commentScope) item(m Message, cat string) CommentItem {
@@ -280,22 +305,30 @@ func withDefaults(q CommentsQuery) CommentsQuery {
 	return q
 }
 
-// CommentsSummary arma la pantalla de resumen. Con "desde la publicación"
+// CommentsSummary arma la pantalla de resumen. Con "publicados en 30 días"
 // cuentan todos los comentarios guardados de los videos publicados en los
-// últimos 30 días; si no, los comentarios del período.
-func CommentsSummary(msgs []Message, vids []VideoRecord, q CommentsQuery, now time.Time) CommentsView {
+// últimos 30 días; si no, los comentarios del período. likes son las
+// muestras de cada video (Store.LikesSince), en orden de hora.
+func CommentsSummary(msgs []Message, vids []VideoRecord, likes map[string][]LikeSample, q CommentsQuery, now time.Time) CommentsView {
 	q = withDefaults(q)
 	sc := newScope(vids, q)
 	since, n := commentWindow(q.Periodo, now)
-	v := CommentsView{Q: q}
+	v := CommentsView{Q: q, Since: since}
+	v.PubSince, _ = commentWindow("pub", now)
 
 	var period []Message
-	stored := map[string]int{}
+	stored, storedAll := map[string]int{}, map[string]int{}
+	all := q
+	all.Tipo = "todos"
+	scAll := newScope(vids, all)
 	for _, m := range msgs {
 		if m.Source != "comentario" {
 			continue
 		}
 		r := sc.record(m.VideoID)
+		if scAll.in(r) {
+			storedAll[m.VideoID]++
+		}
 		if !sc.in(r) {
 			continue
 		}
@@ -347,9 +380,28 @@ func CommentsSummary(msgs []Message, vids []VideoRecord, q CommentsQuery, now ti
 			pubs[d] = append(pubs[d], r.Title)
 		}
 	}
+	v.Rows = commentRows(sc, vids, stored, byVideo, likes, since, q)
+	v.InScope = len(v.Rows)
+	dayLikes := map[time.Time]int64{}
+	var likesSum, viewsSum int64
+	for _, row := range v.Rows {
+		if row.likesKnown {
+			v.LikesNew += row.likesNew
+		}
+		if row.Likes > 0 && row.Views > 0 {
+			likesSum, viewsSum = likesSum+row.Likes, viewsSum+row.Views
+		}
+		if q.Periodo == "pub" && row.Published.Before(since) {
+			continue
+		}
+		addDayLikes(dayLikes, likes[row.ID], row.Published, since)
+	}
+	v.LikesPer1000 = per1000(likesSum, viewsSum)
+	v.Kinds = commentKinds(scAll, vids, storedAll, likes, since)
+
 	for i := range n {
 		d := since.AddDate(0, 0, i)
-		v.Days = append(v.Days, CommentDay{Day: d, N: counts[d], Pub: pubs[d], Weekend: weekend(d)})
+		v.Days = append(v.Days, CommentDay{Day: d, N: counts[d], Pub: pubs[d], Weekend: weekend(d), Likes: dayLikes[d]})
 	}
 
 	v.Cats, v.CatTotal = catRows(period), len(period)
@@ -366,9 +418,6 @@ func CommentsSummary(msgs []Message, vids []VideoRecord, q CommentsQuery, now ti
 	})
 	v.Authors = v.Authors[:min(len(v.Authors), 8)]
 
-	v.Rows = commentRows(sc, vids, stored, byVideo, since, q)
-	v.InScope = len(v.Rows)
-
 	sortItems(v.Questions, "likes")
 	v.Questions = v.Questions[:min(len(v.Questions), 10)]
 	sortItems(v.Featured, q.Dest)
@@ -378,13 +427,23 @@ func CommentsSummary(msgs []Message, vids []VideoRecord, q CommentsQuery, now ti
 
 // commentRows es la tabla de videos: los del alcance publicados en la
 // ventana o con comentarios guardados.
-func commentRows(sc commentScope, vids []VideoRecord, stored map[string]int, byVideo map[string][]Message, since time.Time, q CommentsQuery) []CommentVideoRow {
+func commentRows(sc commentScope, vids []VideoRecord, stored map[string]int, byVideo map[string][]Message, likes map[string][]LikeSample, since time.Time, q CommentsQuery) []CommentVideoRow {
 	var rows []CommentVideoRow
 	seen := map[string]bool{}
 	add := func(r VideoRecord) {
 		seen[r.ID] = true
 		row := CommentVideoRow{ID: r.ID, Title: r.Title, Channel: r.Channel, Published: r.PublishedAt, Views: r.Views, Total: r.Comments,
-			Stored: stored[r.ID], InPeriod: len(byVideo[r.ID]), Per1000: "—"}
+			Stored: stored[r.ID], InPeriod: len(byVideo[r.ID]), Per1000: "—", Short: r.Short, Likes: r.Likes, LikesP: "—", LikesPer1000: "—"}
+		if n := len(likes[r.ID]); row.Likes == 0 && n > 0 {
+			row.Likes = likes[r.ID][n-1].Likes
+		}
+		if n, ok := periodLikes(r.PublishedAt, row.Likes, likes[r.ID], since); ok && (q.Periodo != "pub" || !r.PublishedAt.Before(since)) {
+			row.LikesP, row.likesNew, row.likesKnown = miles(n), n, true
+		}
+		if row.Likes > 0 && r.Views > 0 {
+			row.likesRatio = float64(row.Likes) * 1000 / float64(r.Views)
+			row.LikesPer1000 = decimal(row.likesRatio)
+		}
 		complaints := 0
 		for _, m := range byVideo[r.ID] {
 			switch Classify(m.Text) {
@@ -425,6 +484,14 @@ func commentRows(sc commentScope, vids []VideoRecord, stored map[string]int, byV
 	sort.SliceStable(rows, func(i, j int) bool {
 		a, b := rows[i], rows[j]
 		switch q.Orden {
+		case "likes":
+			if a.Likes != b.Likes {
+				return a.Likes > b.Likes
+			}
+		case "likesratio":
+			if a.likesRatio != b.likesRatio {
+				return a.likesRatio > b.likesRatio
+			}
 		case "ratio":
 			if a.ratio != b.ratio {
 				return a.ratio > b.ratio
@@ -444,6 +511,90 @@ func commentRows(sc commentScope, vids []VideoRecord, stored map[string]int, byV
 		return a.ID < b.ID
 	})
 	return rows
+}
+
+// periodLikes son los likes que ganó un video desde since: todos si se
+// publicó después; si no, lo que subió el contador desde la última muestra
+// anterior a since (o desde la primera del período, si empezó a mirarse
+// después). Sin muestras ni contador, no se sabe.
+func periodLikes(pub time.Time, latest int64, ls []LikeSample, since time.Time) (int64, bool) {
+	if latest == 0 && len(ls) == 0 {
+		return 0, false
+	}
+	if !pub.IsZero() && !pub.Before(since) {
+		return latest, true
+	}
+	if len(ls) == 0 {
+		return 0, false
+	}
+	base := ls[0].Likes
+	for _, l := range ls {
+		if !l.At.Before(since) {
+			break
+		}
+		base = l.Likes
+	}
+	return max(0, latest-base), true
+}
+
+// addDayLikes suma a cada día lo que subió el contador. La primera muestra
+// de un video publicado dentro de la ventana cuenta entera: en su día si llegó
+// poco después de publicado (likeCurveLead) y, si no (por ejemplo, el primer
+// día con la serie), en el día de la publicación, para que el día en que se
+// empezó a guardar no junte los likes de todo el mes. Si se publicó antes, la
+// primera muestra es la base.
+func addDayLikes(days map[time.Time]int64, ls []LikeSample, pub, since time.Time) {
+	inWindow := !pub.IsZero() && !pub.Before(since)
+	var prev int64
+	for i, l := range ls {
+		d, at := l.Likes-prev, l.At
+		if i == 0 {
+			switch {
+			case !inWindow:
+				d = 0
+			case l.At.Sub(pub) > likeCurveLead:
+				at = pub
+			}
+		}
+		if d > 0 && !at.Before(since) {
+			days[dayStart(at)] += d
+		}
+		prev = l.Likes
+	}
+}
+
+// commentKinds es la tarjeta "Videos y shorts": los videos del canal y del
+// período (los que irían en la tabla con Tipo "todos"), separados, sin importar
+// el filtro de tipo, para compararlos. Los likes caen a la última muestra como
+// en la tabla; los likes c/1.000 vistas, de los que tienen likes.
+func commentKinds(sc commentScope, vids []VideoRecord, stored map[string]int, samples map[string][]LikeSample, since time.Time) []KindRow {
+	kinds := []KindRow{{Name: "Video", Kind: "video"}, {Name: "Short", Kind: "short"}}
+	var likes, views [2]int64
+	for _, r := range vids {
+		if !sc.in(r) || stored[r.ID] == 0 && r.PublishedAt.Before(since) {
+			continue
+		}
+		i := 0
+		if r.Short {
+			i = 1
+		}
+		l := r.Likes
+		if n := len(samples[r.ID]); l == 0 && n > 0 {
+			l = samples[r.ID][n-1].Likes
+		}
+		k := &kinds[i]
+		k.N++
+		k.Views += r.Views
+		k.Likes += l
+		k.Comments += r.Comments
+		if l > 0 && r.Views > 0 {
+			likes[i], views[i] = likes[i]+l, views[i]+r.Views
+		}
+	}
+	for i := range kinds {
+		kinds[i].Per1000 = per1000(likes[i], views[i])
+	}
+	return kinds
 }
 
 // sortItems ordena comentarios: más likes, más respuestas, más recientes o
@@ -503,10 +654,13 @@ type CommentsDetail struct {
 	List               []CommentItem
 	Shown, Page, Pages int
 	PrevPage, NextPage int
+	LikesPer1000       string
+	LikeCurve          []CommentBucket
+	LikesFrom          time.Time
 }
 
 // CommentsVideo arma el detalle de un video; false si no tiene comentarios guardados.
-func CommentsVideo(msgs []Message, vids []VideoRecord, q CommentsQuery, now time.Time) (CommentsDetail, bool) {
+func CommentsVideo(msgs []Message, vids []VideoRecord, likes []LikeSample, q CommentsQuery, now time.Time) (CommentsDetail, bool) {
 	q = withDefaults(q)
 	sc := newScope(vids, q)
 	r := sc.record(q.Video)
@@ -520,7 +674,13 @@ func CommentsVideo(msgs []Message, vids []VideoRecord, q CommentsQuery, now time
 	if q.Video == "" || len(all) == 0 {
 		return CommentsDetail{Q: q}, false
 	}
-	d := CommentsDetail{Q: q, Video: r, Total: len(all)}
+	d := CommentsDetail{Q: q, Video: r, Total: len(all), LikesPer1000: "—"}
+	if n := len(likes); d.Video.Likes == 0 && n > 0 {
+		d.Video.Likes = likes[n-1].Likes
+	}
+	if d.Video.Likes > 0 && r.Views > 0 {
+		d.LikesPer1000 = decimal(float64(d.Video.Likes) * 1000 / float64(r.Views))
+	}
 	people := map[string]bool{}
 	complaints := 0
 	for _, m := range all {
@@ -544,14 +704,9 @@ func CommentsVideo(msgs []Message, vids []VideoRecord, q CommentsQuery, now time
 			d.Curve = append(d.Curve, CommentBucket{Label: e.label})
 		}
 		for _, m := range all {
-			h := m.At.Sub(r.PublishedAt).Hours()
-			for i, e := range curveEdges {
-				if h < e.to {
-					d.Curve[i].N++
-					break
-				}
-			}
+			d.Curve[curveBucket(m.At.Sub(r.PublishedAt))].N++
 		}
+		d.LikeCurve, d.LikesFrom = likeCurve(likes, r.PublishedAt)
 		if h, ok := halfTime(all, r.PublishedAt); ok {
 			d.HalfHours = humanHours(h)
 		}
@@ -586,6 +741,44 @@ func CommentsVideo(msgs []Message, vids []VideoRecord, q CommentsQuery, now time
 	from := (d.Page - 1) * commentsPageSize
 	d.List = list[from:min(len(list), from+commentsPageSize)]
 	return d, true
+}
+
+// curveBucket es el tramo de curveEdges de una edad.
+func curveBucket(age time.Duration) int {
+	h := age.Hours()
+	for i, e := range curveEdges {
+		if h < e.to {
+			return i
+		}
+	}
+	return len(curveEdges) - 1
+}
+
+// likeCurveLead: si la primera muestra de likes llegó hasta acá después de
+// publicado el video, cuenta entera en su tramo; si no, es la base y la curva
+// dice desde cuándo (from).
+const likeCurveLead = 2 * time.Hour
+
+// likeCurve son los likes que ganó un video en cada tramo desde la publicación.
+func likeCurve(ls []LikeSample, pub time.Time) (curve []CommentBucket, from time.Time) {
+	if len(ls) == 0 {
+		return nil, time.Time{}
+	}
+	for _, e := range curveEdges {
+		curve = append(curve, CommentBucket{Label: e.label})
+	}
+	var prev int64
+	for i, l := range ls {
+		if i == 0 && l.At.Sub(pub) > likeCurveLead {
+			prev, from = l.Likes, l.At
+			continue
+		}
+		if n := l.Likes - prev; n > 0 {
+			curve[curveBucket(l.At.Sub(pub))].N += int(n)
+		}
+		prev = l.Likes
+	}
+	return curve, from
 }
 
 // foldText es el texto para buscar: minúsculas y sin tildes.

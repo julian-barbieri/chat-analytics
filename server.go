@@ -26,11 +26,12 @@ var templatesFS embed.FS
 var staticFS embed.FS
 
 var tmpl = template.Must(template.New("").Funcs(template.FuncMap{
-	"hora":    func(t time.Time) string { return t.Local().Format("15:04") },
-	"fecha":   func(t time.Time) string { return t.Local().Format("02/01 15:04") },
-	"miles":   miles,
-	"decimal": decimal,
-	"plural":  plural,
+	"hora":     func(t time.Time) string { return t.Local().Format("15:04") },
+	"fecha":    func(t time.Time) string { return t.Local().Format("02/01 15:04") },
+	"fechaDia": func(t time.Time) string { return t.Local().Format("02/01") },
+	"miles":    miles,
+	"decimal":  decimal,
+	"plural":   plural,
 }).ParseFS(templatesFS, "templates/*.html"))
 
 var categories = []string{CatPregunta, CatQueja, CatElogio, CatInsulto, CatSpam, CatOtro}
