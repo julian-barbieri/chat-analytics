@@ -1,6 +1,6 @@
 # Spec: Preguntas de Programas con "Ver N más"
 
-- **Estado:** aprobada
+- **Estado:** implementada
 - **Tipo:** mejora
 - **Rama:** `feat/programas-preguntas-plegadas`
 - **Origen:** pedido del usuario: "en Programas, en Preguntas, hay veces que se ven muchas preguntas y queda muy larga la sección".
@@ -27,22 +27,22 @@ plegado en "Ver N más", con el estado abierto conservado como en En vivo.
 
 ## Criterios de aceptación
 
-- [ ] CA1: con más de 5 grupos, se ven los 5 primeros (mismo orden de `questionGroups`)
+- [x] CA1: con más de 5 grupos, se ven los 5 primeros (mismo orden de `questionGroups`)
   fuera del plegado y el resto dentro de un `<details>` cerrado con "Ver N más" (N = grupos
   restantes) — `TestProgramQuestionsMore`.
-- [ ] CA2: con `abrir=maspreguntas` el `<details>` sale `open` y su `<summary>` tiene
+- [x] CA2: con `abrir=maspreguntas` el `<details>` sale `open` y su `<summary>` tiene
   `id="pf-maspreguntas"` y un `hx-get` que lo cierra (sin `maspreguntas` en `abrir`) —
   `TestProgramQuestionsMore`.
-- [ ] CA3: los grupos plegados de 2 o más mensajes siguen desplegándose (`qg6`…`qg30`,
+- [x] CA3: los grupos plegados de 2 o más mensajes siguen desplegándose (`qg6`…`qg30`,
   hoy en `programFoldLists`); un `qgN` abierto dentro del plegado se ve con sus mensajes
   si además está `maspreguntas` — `TestProgramQuestionsMore`.
-- [ ] CA4: con 5 grupos o menos no aparece "Ver" ni el `<details>` extra; los tests
+- [x] CA4: con 5 grupos o menos no aparece "Ver" ni el `<details>` extra; los tests
   existentes (`TestProgramDetailClaudeQuestions`, `TestProgramFolds`) siguen en verde.
-- [ ] CA5: `abrir=maspreguntas` está en la lista cerrada `programFolds`; un valor que no
+- [x] CA5: `abrir=maspreguntas` está en la lista cerrada `programFolds`; un valor que no
   está no se refleja (ya cubierto por `readDetail`, se suma al test).
 - [ ] CA6: vista previa: Programas con un tramo de muchas preguntas, claro/oscuro y ancho
   de celular; abrir "Ver N más", esperar el refresco de 60 s (con Hoy) y que siga abierto.
-- [ ] Gates de `CLAUDE.md` → "Definición de terminado" en verde.
+- [x] Gates de `CLAUDE.md` → "Definición de terminado" en verde.
 
 ## Diseño propuesto
 

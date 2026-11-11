@@ -596,7 +596,9 @@ type ProgramDetail struct {
 	// tandas y las categorías de Claude (programClaudeCards).
 	QClaude, CatsClaude bool
 	QHeader             string
-	QGroups             []QGRow
+	QGroups             []QGRow // los qgTop primeros, a la vista
+	QRest               []QGRow // el resto, plegado en "Ver N más"
+	QMore               Fold    // el plegado del resto (maspreguntas)
 	Cats                []CatRow
 	CatsPending         int
 	Supers              []SuperRow

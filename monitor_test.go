@@ -12290,3 +12290,109 @@ func TestProgramSupers(t *testing.T) {
 		}
 	}
 }
+
+// TestProgramQuestionsMore (programas-preguntas-plegadas): con más de qgTop
+// grupos de las tandas, la tarjeta Preguntas de Programas muestra los
+// primeros y pliega el resto en "Ver N más", como En vivo.
+func TestProgramQuestionsMore(t *testing.T) {
+	now := noonToday()
+	day := dayStart(now)
+	st, srv := programServer(t, now, true)
+	man := func(i int) time.Time { return day.Add(8*time.Hour + time.Duration(i)*time.Minute) }
+	var ls []MessageLabel
+	var gs []BatchGroup
+	// g0 con 4 mensajes (man0-3), g1…g7 con 2 cada uno (man4-17): el orden de
+	// questionGroups queda g0, g7, g6, g5, g4 | g3, g2, g1.
+	for g := range 8 {
+		gs = append(gs, BatchGroup{ID: fmt.Sprintf("UC1|1|%d", g), Program: "LA MAÑANA", Text: fmt.Sprintf("¿Pregunta del grupo %d?", g)})
+	}
+	for i := range 25 {
+		l := MessageLabel{ID: fmt.Sprintf("man%d", i), VideoID: "v1", At: man(i), Program: "LA MAÑANA", Sentiment: "neutro", Cat: CatElogio}
+		switch {
+		case i < 4:
+			l.Cat, l.Group = CatPregunta, gs[0].ID
+		case i < 18:
+			l.Cat, l.Group = CatPregunta, gs[1+(i-4)/2].ID
+		}
+		ls = append(ls, l)
+	}
+	st.AddBatch(ClaudeBatch{At: man(26), ChannelID: "UC1", From: man(0), To: man(24), Labels: ls, NewGroups: gs})
+	key := segmentKey("UC1", Segment{VideoID: "v1", Program: "LA MAÑANA", Start: day.Add(8 * time.Hour)})
+	h := srv.Routes()
+	base := "/parcial/programas?dia=hoy&tramo=" + url.QueryEscape(key)
+
+	card := func(body string) (top, rest string) {
+		i := strings.Index(body, "<h3>Preguntas")
+		if i < 0 {
+			t.Fatal("falta la tarjeta de preguntas")
+		}
+		c := body[i:]
+		end := strings.Index(c, "Agrupadas por Claude")
+		if end < 0 {
+			t.Fatalf("falta el pie de los grupos de Claude en:\n%s", c)
+		}
+		c = c[:end]
+		j := strings.Index(c, `<summary id="pf-maspreguntas"`)
+		if j < 0 {
+			return c, ""
+		}
+		return c[:j], c[j:]
+	}
+
+	closed := getBody(h, base)
+	top, rest := card(closed)
+	if rest == "" {
+		t.Fatalf("falta el plegado de más preguntas en:\n%s", top)
+	}
+	for _, g := range []int{0, 7, 6, 5, 4} {
+		if w := fmt.Sprintf("¿Pregunta del grupo %d?", g); !strings.Contains(top, w) {
+			t.Errorf("a la vista: falta %q", w)
+		}
+	}
+	for _, g := range []int{3, 2, 1} {
+		w := fmt.Sprintf("¿Pregunta del grupo %d?", g)
+		if strings.Contains(top, w) || !strings.Contains(rest, w) {
+			t.Errorf("%q tiene que ir plegada", w)
+		}
+	}
+	if !strings.Contains(rest, "Ver 3 más</summary>") || !strings.Contains(rest, "abrir=maspreguntas") {
+		t.Errorf("summary del plegado:\n%s", rest)
+	}
+	if strings.Contains(top, `<details class="plegable" open>`) {
+		t.Error("cerrado: el plegado no tiene que salir abierto")
+	}
+	if !strings.Contains(rest, `id="pf-qg6"`) || strings.Contains(closed, "mensaje man 8<") {
+		t.Error("cerrado: el sexto grupo tiene su flecha (qg6) y no arma la lista")
+	}
+
+	open := getBody(h, base+"&abrir=maspreguntas,qg6,xyz")
+	top, rest = card(open)
+	if !strings.Contains(top, `<details class="plegable" open>`) {
+		t.Errorf("abierto: el plegado tiene que salir open en:\n%s", top)
+	}
+	if !strings.Contains(rest, "mensaje man 8<") || !strings.Contains(rest, "mensaje man 9<") {
+		t.Error("abierto: qg6 con sus mensajes dentro del plegado")
+	}
+	// El summary cierra el plegado y deja qg6 abierto.
+	i := strings.Index(rest, "hx-get=\"")
+	if i < 0 {
+		t.Fatalf("abierto: el summary del plegado no tiene hx-get en:\n%s", rest)
+	}
+	href := rest[i : strings.Index(rest[i+8:], "\"")+i+8]
+	if strings.Contains(href, "maspreguntas") || !strings.Contains(href, "qg6") {
+		t.Errorf("abierto: el summary tiene que cerrar el plegado: %s", href)
+	}
+	if strings.Contains(open, "xyz") {
+		t.Error("se reflejó una sección inválida")
+	}
+
+	// Con 5 grupos o menos no hay plegado.
+	_, few, _ := claudeProgramServer(t, now)
+	body := getBody(few.Routes(), base)
+	if !strings.Contains(body, "¿Cómo se llama el tema?") || !strings.Contains(body, "2 grupos") {
+		t.Fatal("con 2 grupos: falta la tarjeta con sus grupos")
+	}
+	if strings.Contains(body, "pf-maspreguntas") || strings.Contains(body, "más</summary>") {
+		t.Error("con 2 grupos no va el plegado")
+	}
+}
