@@ -221,7 +221,7 @@ func main() {
 		titles, infos = append(titles, info.Title), append(infos, info)
 	}
 	title := strings.Join(titles, ", ")
-	vids, err := yt.ChannelVideos(infos, *videos, extra)
+	vids, err := yt.ChannelVideos(infos, *videos, extra, false)
 	check(err)
 
 	var msgs []Message

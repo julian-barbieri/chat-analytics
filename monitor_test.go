@@ -136,7 +136,7 @@ func TestFlowAgainstFakeAPI(t *testing.T) {
 		t.Fatalf("LookupChannel(@otra): %v %+v", err, ch2)
 	}
 	title, title2, up2 := ch1.Title, ch2.Title, ch2.Uploads
-	vids, err := yt.ChannelVideos([]ChannelInfo{ch1, ch2}, 5, []string{"v1"})
+	vids, err := yt.ChannelVideos([]ChannelInfo{ch1, ch2}, 5, []string{"v1"}, false)
 	if err != nil || len(vids) != 3 || vids[0].ID != "v2" || vids[0].LiveChatID != "chat1" || vids[0].Concurrent != 40 ||
 		vids[1].ID != "v3" || vids[1].Channel != "Otra Radio" || vids[2].ID != "v1" {
 		t.Fatalf("ChannelVideos: %v %+v", err, vids)
@@ -5938,7 +5938,7 @@ func TestDashboardTabs(t *testing.T) {
 	st.SetChannels([]ChannelStatus{{ID: "UC1", Name: "Radio Test", Live: true}})
 	st.SetVideos("Radio Test", []Video{{ID: "v1", Title: "🔴RADIO TEST en VIVO | LA MAÑANA", ChannelID: "UC1", Channel: "Radio Test", LiveStatus: "live"}})
 	h := (&Server{st: st, budget: 9000}).Routes()
-	tabs := []struct{ href, label string }{{"/", "En vivo"}, {"/programas", "Programas"}, {"/canales", "Canales"}}
+	tabs := []struct{ href, label string }{{"/", "En vivo"}, {"/programas", "Programas"}, {"/comentarios", "Comentarios"}, {"/canales", "Canales"}}
 	link := regexp.MustCompile(`<a href="([^"]*)"( aria-current="page")?>([^<]*)</a>`)
 	for _, cur := range tabs {
 		t.Run(cur.label, func(t *testing.T) {
@@ -5971,8 +5971,9 @@ func TestDashboardTabs(t *testing.T) {
 					t.Errorf("pestaña %q: aria-current %v", tabs[k].label, on)
 				}
 			}
-			// Fuera de la navegación ningún link se marca como la pantalla actual.
-			if n := len(regexp.MustCompile(`<a [^>]*aria-current=`).FindAllString(body, -1)); n != 1 {
+			// Fuera de la navegación ningún link se marca como la pantalla actual
+			// (los filtros de Comentarios marcan el valor elegido con aria-current="true").
+			if n := len(regexp.MustCompile(`<a [^>]*aria-current="page"`).FindAllString(body, -1)); n != 1 {
 				t.Errorf("%d links con aria-current, quería 1", n)
 			}
 		})
@@ -6878,22 +6879,23 @@ func TestEstimateQuota(t *testing.T) {
 	}{
 		{"1 canal, por defecto, sin historial", 1, 0, []ChatGroup{day24}, 1440, []int{5000}, 7440, true,
 			"Entra en el día. Quedan 60 unidades antes de que se pause el chat"},
-		{"2 canales sin historial", 2, 0, []ChatGroup{day24}, 1920, []int{5000}, 7920, false, "No entra: faltan 420 unidades"},
-		{"2 canales con 6 cortes por día", 2, 6, []ChatGroup{day24}, 1920, []int{5000}, 8160, false, "No entra: faltan 660 unidades"},
+		{"2 canales sin historial", 2, 0, []ChatGroup{day24}, 2016, []int{5000}, 8216, false, "No entra: faltan 716 unidades"},
+		{"2 canales con 6 cortes por día", 2, 6, []ChatGroup{day24}, 2016, []int{5000}, 8456, false, "No entra: faltan 956 unidades"},
 		{"por canal (CA2.7 de canales-continuos)", 2, 0, []ChatGroup{
 			{PeakEvery: 2 * time.Minute, OffEvery: 5 * time.Minute, PeakHours: 13, OffHours: 11},
 			{PeakEvery: 3 * time.Minute, OffEvery: 5 * time.Minute, PeakHours: 13, OffHours: 5},
-		}, 1920, []int{2610, 1600}, 7130, true, "Entra en el día. Quedan 370 unidades antes de que se pause el chat"},
+		}, 2016, []int{2610, 1600}, 7426, true, "Entra en el día. Quedan 74 unidades antes de que se pause el chat"},
 		{"un canal en pausa no lee chat", 2, 0, []ChatGroup{day24, {PeakEvery: time.Minute, OffEvery: time.Minute, PeakHours: 13, OffHours: 11, Paused: true}},
-			1920, []int{5000, 0}, 7920, false, "No entra: faltan 420 unidades"},
+			2016, []int{5000, 0}, 8216, false, "No entra: faltan 716 unidades"},
 		{"un canal cada 30 s y otro en pausa (CA2.7 de la 012)", 2, 0, []ChatGroup{
 			{PeakEvery: 30 * time.Second, OffEvery: time.Minute, PeakHours: 13, OffHours: 11},
 			{PeakEvery: 30 * time.Second, OffEvery: time.Minute, PeakHours: 13, OffHours: 11, Paused: true},
-		}, 1920, []int{11100, 0}, 14020, false, "No entra: faltan 6.520 unidades"},
+		}, 2016, []int{11100, 0}, 14316, false, "No entra: faltan 6.816 unidades"},
 	}
 	for _, c := range cases {
 		q := EstimateQuota(c.channels, c.cuts, c.groups, 9000)
-		if q.Videos != c.videos || q.Comments != 1000 || fmt.Sprint(q.Chat) != fmt.Sprint(c.chat) || q.Total != c.total ||
+		// Cada canal extra suma sus subidas (96) y sus comentarios (200): pantalla Comentarios.
+		if q.Videos != c.videos || q.Comments != 1000+200*(c.channels-1) || fmt.Sprint(q.Chat) != fmt.Sprint(c.chat) || q.Total != c.total ||
 			q.Fits != c.fits || q.Text != c.text || q.Limit != 7500 || q.Fast != int(c.cuts*40) {
 			t.Errorf("%s: %+v", c.name, q)
 		}
@@ -6972,14 +6974,14 @@ func TestChannelsPageWithoutSettings(t *testing.T) {
 			"Cómo sale: " + airsPerShow, "Cómo sale: " + airsUnknown, "sin historial",
 			"cada 1 min en el pico (07 a 20 h) y cada 3 min fuera, por turnos entre todos los vivos",
 			"Qué pasa cuando termina un programa", "cada 1 min durante 20 min y después cada 3 min", "a lo sumo 40 unidades",
-			"Cuota de YouTube con esta configuración", "<strong>7.920</strong>", "No entra: faltan 420 unidades", "Usadas hoy: 37",
-			`<div class="qbar" role="img" aria-label="Cuota estimada por día: 7.920 unidades de 10.000`, `style="left: 75.00%"`, `style="left: 90.00%"`,
-			`style="width: 19.20%"`, `style="width: 10.00%"`, `style="width: 50.00%"`,
+			"Cuota de YouTube con esta configuración", "<strong>8.216</strong>", "No entra: faltan 716 unidades", "Usadas hoy: 37",
+			`<div class="qbar" role="img" aria-label="Cuota estimada por día: 8.216 unidades de 10.000`, `style="left: 75.00%"`, `style="left: 90.00%"`,
+			`style="width: 20.16%"`, `style="width: 12.00%"`, `style="width: 50.00%"`,
 			"Por ahora los canales y los intervalos se cambian con -canal, -chat-seg-pico y -chat-seg (ver README)",
 			`hx-get="/parcial/canales/estado" hx-trigger="every 5s"`,
 		}},
 		{"un canal", "/canales", false, []string{"<strong>7.440</strong>", "Entra en el día. Quedan 60 unidades antes de que se pause el chat"}},
-		{"estado", "/parcial/canales/estado", true, []string{"<h3>Radio B</h3>", "<h3>Radio C</h3>", "<strong>7.920</strong>", "Usadas hoy: 37"}},
+		{"estado", "/parcial/canales/estado", true, []string{"<h3>Radio B</h3>", "<h3>Radio C</h3>", "<strong>8.216</strong>", "Usadas hoy: 37"}},
 	}
 	for _, c := range cases {
 		w := httptest.NewRecorder()
@@ -7645,7 +7647,7 @@ func TestChannelsPage(t *testing.T) {
 		`hx-confirm="¿Quitar Radio B? Lo guardado queda hasta que venza (30 días)."`,
 		"Los cambios se aplican sin reiniciar el monitor", `hx-get="/parcial/canales/form"`, ">Descartar</button>",
 		`hx-post="/canales"`, ">Guardar cambios</button>", `hx-get="/parcial/canales/cuota"`, `hx-include="#canales-form"`,
-		`hx-get="/parcial/canales/estado" hx-trigger="every 5s"`, "<strong>11.100</strong>", "No entra: faltan 3.600 unidades", "subí algún intervalo",
+		`hx-get="/parcial/canales/estado" hx-trigger="every 5s"`, "<strong>11.988</strong>", "No entra: faltan 4.488 unidades", "subí algún intervalo",
 		"Resolviendo…", "no se encontró el canal @mala", "Chat en pausa",
 	} {
 		if !strings.Contains(body, s) {
@@ -7677,7 +7679,7 @@ func TestChannelsPage(t *testing.T) {
 	// La barra con lo elegido, sin guardar; un valor que no vale se ignora.
 	q := "/parcial/canales/cuota?canal=%40radiob&pico=300&fuera=600&canal=UCC&pico=90&fuera=420&canal=%40nueva&pico=45&fuera=600&canal=%40mala&pico=300&fuera=600"
 	cuota := getLocal(h, q)
-	for _, s := range []string{`id="canales-cuota"`, "<strong>7.210</strong>", "Entra en el día. Quedan 290 unidades",
+	for _, s := range []string{`id="canales-cuota"`, "<strong>8.098</strong>", "No entra: faltan 598 unidades",
 		`id="cuota-0" hx-swap-oob="true"`, "Cuota estimada de este chat: 1.110 unidades por día (sin historial)"} {
 		if !strings.Contains(cuota, s) {
 			t.Errorf("cuota: falta %q\n%s", s, cuota)
@@ -8321,8 +8323,9 @@ func TestChannelsQuotaLooseLives(t *testing.T) {
 	snap := srv.st.Status()
 	srv.st.SetVideos(snap.Channel, append(snap.Videos, Video{ID: "x1", ChannelID: "UCX", Channel: "Otra", Title: "Otra en VIVO", LiveStatus: "live", LiveChatID: "cx1"}))
 	body := getLocal(srv.Routes(), "/canales")
-	// 11.100 de los cuatro canales + 5.000 del vivo suelto (cada 1 min en el pico y 3 fuera, 24 h).
-	for _, want := range []string{"<strong>16.100</strong>", "Vivos sueltos de -vivos · 5.000", "No entra: faltan 8.600 unidades"} {
+	// 11.988 de los cuatro canales (con las subidas y los comentarios de los tres extra) + 5.000 del
+	// vivo suelto (cada 1 min en el pico y 3 fuera, 24 h).
+	for _, want := range []string{"<strong>16.988</strong>", "Vivos sueltos de -vivos · 5.000", "No entra: faltan 9.488 unidades"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("falta %q", want)
 		}

@@ -80,6 +80,7 @@ func (s *Server) Routes() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /{$}", s.page)
 	mux.HandleFunc("GET /programas", s.programsPage)
+	mux.HandleFunc("GET /comentarios", s.commentsPage)
 	mux.HandleFunc("GET /canales", s.channelsPage)
 	mux.HandleFunc("GET /parcial/resumen", s.summary)
 	mux.HandleFunc("GET /parcial/vivo", s.liveSection)
@@ -88,6 +89,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /parcial/vivo/analisis", s.liveAnalysis)
 	mux.HandleFunc("GET /parcial/programas", s.programsPartial)
 	mux.HandleFunc("GET /parcial/programas/detalle", s.programDetailPartial)
+	mux.HandleFunc("GET /parcial/comentarios", s.commentsPartial)
 	mux.HandleFunc("GET /parcial/canales/estado", s.channelsState)
 	mux.HandleFunc("GET /parcial/canales/form", s.channelsForm)
 	mux.HandleFunc("GET /parcial/canales/cuota", s.channelsQuota)
@@ -2250,6 +2252,10 @@ func decimalFine(f float64) string {
 func (s *Server) export(w http.ResponseWriter, r *http.Request) {
 	if key := r.URL.Query().Get("tramo"); key != "" {
 		s.exportProgram(w, key, r.URL.Query().Get("dia"))
+		return
+	}
+	if id := r.URL.Query().Get("video"); id != "" {
+		s.exportVideo(w, id)
 		return
 	}
 	snap := s.st.Snapshot()

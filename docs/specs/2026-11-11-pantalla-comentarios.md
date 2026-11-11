@@ -1,6 +1,6 @@
 # Spec: pantalla Comentarios
 
-- **Estado:** aprobada
+- **Estado:** implementada
 - **Tipo:** mejora
 - **Rama:** `feat/pantalla-comentarios`
 - **Origen:** pedido del usuario (2026-11-11); diseño de referencia en https://claude.ai/artifact/SkDNihHmNVFNcyQjDtwM3t. Decisión: cubrir las subidas de **todos** los canales configurados.
@@ -20,17 +20,17 @@ Una cuarta pantalla, **Comentarios** (`GET /comentarios`, entre Programas y Cana
 
 ## Criterios de aceptación
 
-- [ ] CA1: `ChannelVideos` devuelve también las últimas `-videos` subidas de cada canal extra cuando se le pide (`uploadsAll`). Con canales extra en la revisión normal sigue el comportamiento de hoy. — `TestChannelVideosExtraUploads`
-- [ ] CA2: el worker revisa las subidas de los canales extra cada `extraUploadsEvery` (30 min) y no en cada revisión de 3 min. Los comentarios de esos videos se piden solo si cambió `commentCount` (`knownComments`). — `TestWorkerExtraUploadsEvery` (cuenta pedidos a `playlistItems` contra la API falsa)
-- [ ] CA3: `datos.videos.jsonl` guarda el último dato visto de cada video (ID, título, canal, publicación, vistas, comentarios, si fue vivo). Retención de 30 días desde la última vez que se vio, tmp + `os.Rename` al abrir, nunca dentro de `datos.jsonl`. — `TestVideoArchiveRetention`
-- [ ] CA4: `CommentsSummary` (función pura, `comments.go`) da, para un canal (o todos), un período (7 d, 30 d, desde la publicación) y un tipo (grabados / vivos terminados): comentarios, personas distintas, videos con comentarios, preguntas con `Replies == 0`, % de quejas, comentarios por día con los días de publicación, categorías por `Classify`, `TopWords`, `TopAuthors`, filas de videos (vistas, comentarios guardados, del período, c/1.000 vistas, preguntas) y destacados (más likes, más respuestas, quejas). — `TestCommentsSummary` (tabla de casos)
-- [ ] CA5: `CommentsVideo` arma el detalle: curva por franja de horas desde la publicación con la mediana del canal, categorías y lista con `buscar`, `cat`, `orden` (`likes|respuestas|recientes|viejos`), `sinresp` y `pag` (de a 50), con listas cerradas para todos los valores. — `TestCommentsVideo`
-- [ ] CA6: la pestaña aparece en las cuatro pantallas en el orden En vivo, Programas, Comentarios, Canales. `GET /comentarios` y `GET /comentarios?video=ID` responden 200 con datos y con el store vacío, y un parámetro fuera de la lista no se refleja en el HTML. — `TestCommentsPage`
-- [ ] CA7: `GET /export.csv?video=ID` baja solo los comentarios de ese video con `csvHeader`. — `TestExportVideo`
-- [ ] CA8: `EstimateQuota` y la barra de Canales suman las subidas de los canales extra (48 por canal por día) y una estimación de sus comentarios. — `TestEstimateQuota` actualizado
-- [ ] CA9: `tools/preview` copia `datos.videos.jsonl`. — test de `tools/preview`
+- [x] CA1: `ChannelVideos` devuelve también las últimas `-videos` subidas de cada canal extra cuando se le pide (`uploadsAll`). Con canales extra en la revisión normal sigue el comportamiento de hoy. — `TestChannelVideosExtraUploads`
+- [x] CA2: el worker revisa las subidas de los canales extra cada `extraUploadsEvery` (30 min) y no en cada revisión de 3 min. Los comentarios de esos videos se piden solo si cambió `commentCount` (`knownComments`). — `TestWorkerExtraUploadsEvery` (cuenta pedidos a `playlistItems` contra la API falsa) y `TestWorkerExtraComments` (los comentarios de un grabado extra no se vuelven a pedir entre revisiones de subidas)
+- [x] CA3: `datos.videos.jsonl` guarda el último dato visto de cada video (ID, título, canal, publicación, vistas, comentarios, si fue vivo). Retención de 30 días desde la última vez que se vio, tmp + `os.Rename` al abrir, nunca dentro de `datos.jsonl`. — `TestVideoArchiveRetention`
+- [x] CA4: `CommentsSummary` (función pura, `comments.go`) da, para un canal (o todos), un período (7 d, 30 d, desde la publicación) y un tipo (grabados / vivos terminados): comentarios, personas distintas, videos con comentarios, preguntas con `Replies == 0`, % de quejas, comentarios por día con los días de publicación, categorías por `Classify`, `TopWords`, `TopAuthors`, filas de videos (vistas, comentarios guardados, del período, c/1.000 vistas, preguntas) y destacados (más likes, más respuestas, quejas). — `TestCommentsSummary` (tabla de casos)
+- [x] CA5: `CommentsVideo` arma el detalle: curva por franja de horas desde la publicación con la mediana del canal, categorías y lista con `buscar`, `cat`, `orden` (`likes|respuestas|recientes|viejos`), `sinresp` y `pag` (de a 50), con listas cerradas para todos los valores. — `TestCommentsVideo`
+- [x] CA6: la pestaña aparece en las cuatro pantallas en el orden En vivo, Programas, Comentarios, Canales. `GET /comentarios` y `GET /comentarios?video=ID` responden 200 con datos y con el store vacío, y un parámetro fuera de la lista no se refleja en el HTML. — `TestCommentsPage`
+- [x] CA7: `GET /export.csv?video=ID` baja solo los comentarios de ese video con `csvHeader`. — `TestCommentsPage` (parte "CA7", con un ID inválido que da 400)
+- [x] CA8: `EstimateQuota` y la barra de Canales suman las subidas de los canales extra (48 por canal por día) y una estimación de sus comentarios. — `TestEstimateQuota` actualizado
+- [x] CA9: `tools/preview` copia `datos.videos.jsonl`. — test de `tools/preview`
 - [ ] CA10: README (cuota y pantalla) y `AGENTS.md` (mapa, rutas y datos) actualizados. Verificado en el navegador con la vista previa: claro, oscuro y ancho de celular.
-- [ ] Gates de `CLAUDE.md` → "Definición de terminado" en verde.
+- [x] Gates de `CLAUDE.md` → "Definición de terminado" en verde.
 
 ## Diseño propuesto
 
