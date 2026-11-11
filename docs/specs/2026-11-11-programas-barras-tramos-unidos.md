@@ -1,10 +1,10 @@
 # Spec: Programas: barras de ancho fijo y programa partido por un corte en una sola fila
 
-- **Estado:** borrador
+- **Estado:** aprobada
 - **Tipo:** bug
 - **Rama:** `fix/programas-barras-tramos-unidos`
 - **Origen:** mensaje del usuario con capturas (2026-11-11).
-- **Aprobada por / fecha:** —
+- **Aprobada por / fecha:** Julian Barbieri, 2026-11-11
 
 ## Contexto
 
