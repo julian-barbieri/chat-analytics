@@ -42,6 +42,52 @@ var (
 	workerTick = time.Second
 )
 
+// Cada cuánto se revisan las subidas de los canales extra, para los
+// comentarios de sus videos grabados (pantalla Comentarios): 1 unidad por
+// canal cada vez, 48 por día, en lugar de 480 si fuera en cada revisión. Es
+// var para que los tests la cambien.
+var extraUploadsEvery = 30 * time.Minute
+
+// extraUploads son los videos grabados (ni en vivo ni programados) de los
+// canales extra de una revisión con sus subidas: se conservan hasta la
+// próxima, así no desaparecen de la lista entre medio.
+func extraUploads(vids []Video, chs []ChannelInfo) []Video {
+	if len(chs) < 2 {
+		return nil
+	}
+	var out []Video
+	for _, v := range vids {
+		if v.LiveStatus == "none" && v.ChannelID != chs[0].ID && hasChannel(chs[1:], v.ChannelID) {
+			out = append(out, v)
+		}
+	}
+	return out
+}
+
+// withExtraUploads suma a una revisión sin subidas de los extra los grabados
+// guardados de los canales que siguen configurados y no vinieron en vids.
+func withExtraUploads(vids, kept []Video, chs []ChannelInfo) []Video {
+	in := map[string]bool{}
+	for _, v := range vids {
+		in[v.ID] = true
+	}
+	for _, v := range kept {
+		if !in[v.ID] && len(chs) > 1 && hasChannel(chs[1:], v.ChannelID) {
+			vids = append(vids, v)
+		}
+	}
+	return vids
+}
+
+func hasChannel(chs []ChannelInfo, id string) bool {
+	for _, c := range chs {
+		if c.ID == id {
+			return true
+		}
+	}
+	return false
+}
+
 // Unidades por hora de un vivo en tiempo real continuo, para estimar cuánto alcanza la cuota.
 const realTimeUnitsPerHour = 1800
 
@@ -241,6 +287,8 @@ func RunWorker(ctx context.Context, yt *YouTube, st *Store, cfg WorkerConfig) {
 		version       = -1            // de cfg.Settings: si cambia, se aplica en el tick
 		nextVideos    time.Time
 		nextComments  time.Time
+		nextExtra     time.Time                         // próxima revisión de las subidas de los canales extra
+		extraKept     []Video                           // sus grabados de la última vez (extraUploads)
 		groupLast     = map[string]time.Time{}          // última acción de chat de cada grupo (chatGroup)
 		lastComments  = time.Now().Add(-48 * time.Hour) // primera pasada: últimas 48 h
 		knownComments = map[string]int64{}
@@ -474,9 +522,15 @@ func RunWorker(ctx context.Context, yt *YouTube, st *Store, cfg WorkerConfig) {
 				}
 				var vids []Video
 				if len(infos) > 0 {
+					all := len(infos) > 1 && !now.Before(nextExtra)
 					var err error
-					if vids, err = yt.ChannelVideos(infos, cfg.Videos, cfg.Extra); err != nil {
+					if vids, err = yt.ChannelVideos(infos, cfg.Videos, cfg.Extra, all); err != nil {
 						return err
+					}
+					if all {
+						nextExtra, extraKept = now.Add(extraUploadsEvery), extraUploads(vids, infos)
+					} else {
+						vids = withExtraUploads(vids, extraKept, infos)
 					}
 				}
 				title := principal(channels)
@@ -488,6 +542,7 @@ func RunWorker(ctx context.Context, yt *YouTube, st *Store, cfg WorkerConfig) {
 				// pedido de videos: las series no cuestan cuota.
 				st.AddViewers(time.Now(), vids)
 				st.AddLives(time.Now(), vids)
+				st.AddVideos(time.Now(), vids)
 				lives = nil
 				current := map[string]bool{}
 				for _, v := range vids {

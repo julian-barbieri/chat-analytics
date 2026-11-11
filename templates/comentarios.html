@@ -1,0 +1,155 @@
+{{template "head" .}}
+{{template "comentarios-cuerpo" .}}
+{{template "foot" .}}
+
+{{/* Pantalla Comentarios: el resumen se refresca cada 60 s (los comentarios llegan cada 10 min); el detalle de un video no, para no pisar el formulario. Los filtros son links que reemplazan #comentarios. */}}
+{{define "comentarios-cuerpo"}}
+<div id="comentarios" class="vivo"{{if not .IsDetail}} hx-get="{{.Q.Partial}}" hx-trigger="every 60s" hx-swap="outerHTML"{{end}}>
+{{if .IsDetail}}{{if .Found}}{{template "comentarios-video" .}}{{else}}
+<section class="card">
+  <p><a href="{{.Q.Back.Page}}" hx-get="{{.Q.Back.Partial}}" hx-target="#comentarios" hx-swap="outerHTML" hx-push-url="{{.Q.Back.Page}}">← Todos los videos</a></p>
+  <p>Ese video no tiene comentarios guardados. Los comentarios se guardan 30 días.</p>
+</section>{{end}}
+{{else}}{{template "comentarios-resumen" .}}{{end}}
+</div>
+{{end}}
+
+{{define "cfiltro"}}<a class="seg" href="{{.Page}}" hx-get="{{.Partial}}" hx-target="#comentarios" hx-swap="outerHTML" hx-push-url="{{.Page}}"{{if .On}} aria-current="true"{{end}}>{{.Name}}</a>{{end}}
+
+{{define "cchart"}}<div class="pmarks" aria-hidden="true">{{range .Pubs}}<span style="left: {{printf "%.2f" .Left}}%" title="{{.Title}}">▲</span>{{end}}</div>
+  <div class="pchart">
+    <svg viewBox="0 0 {{.W}} 100" preserveAspectRatio="none" role="img" aria-label="{{.Aria}}">
+      {{range .Bars}}<g><title>{{.Label}}</title><rect class="hit" x="{{.X}}" y="0" width="{{.W}}" height="100"></rect><rect class="bar{{if .Class}} {{.Class}}{{end}}" x="{{.X}}" y="{{.Y}}" width="{{.W}}" height="{{.H}}"></rect></g>{{end}}
+      <line class="base" x1="0" x2="{{.W}}" y1="100" y2="100"></line>
+    </svg>
+  </div>
+  <div class="pticks" aria-hidden="true">{{range .Ticks}}<span style="left: {{printf "%.2f" .Left}}%">{{.Label}}</span>{{end}}</div>{{end}}
+
+{{define "citem"}}<li>
+  <div class="meta"><strong>{{.Author}}</strong><span>{{fecha .At}}</span><span class="badge {{.Cat}}">{{.Cat}}</span></div>
+  <div>{{.Text}}</div>
+  <div class="meta"><span>{{miles .Likes}} likes · {{miles .Replies}} respuestas</span>{{if .VideoTitle}}<span>·</span><span>{{.VideoTitle}}</span>{{end}}</div>
+</li>{{end}}
+
+{{define "comentarios-resumen"}}
+<section class="card" aria-label="Filtros">
+  <div class="cfiltros">
+    <div class="field"><span class="lbl">Canal</span><div class="chips">{{range .Channels}}{{template "cfiltro" .}}{{end}}</div></div>
+    <div class="field"><span class="lbl">Período</span><div class="chips">{{range .Periods}}{{template "cfiltro" .}}{{end}}</div></div>
+    <div class="field"><span class="lbl">Videos</span><div class="chips">{{range .Types}}{{template "cfiltro" .}}{{end}}</div></div>
+  </div>
+</section>
+
+{{if .Empty}}<section class="card"><p>Todavía no hay comentarios guardados. El monitor los baja cada 10 minutos de los últimos videos de cada canal (de los canales extra, cada 30 minutos).</p></section>{{else}}
+
+<div class="tiles">{{range .Tiles}}<div class="inner tile"><div class="l">{{.Label}}</div><div class="v">{{.Value}}</div><div class="muted">{{.Note}}</div></div>{{end}}</div>
+
+<section class="card cchart" aria-labelledby="cdias-h">
+  <div class="chead"><h2 id="cdias-h">Comentarios por día</h2><span class="muted">▲ días con videos publicados (pasá el mouse para ver cuáles)</span></div>
+  {{template "cchart" .Chart}}
+  <div class="leyenda"><span class="leg"><span class="sw pos" aria-hidden="true"></span>Comentarios</span><span class="leg"><span class="sw neu" aria-hidden="true"></span>Fin de semana</span></div>
+</section>
+
+<div class="grid2">
+  <section class="card" aria-labelledby="ccat-h">
+    <div class="chead"><h2 id="ccat-h">Categorías</h2><span class="muted">{{plural .View.CatTotal "comentario" "comentarios"}}</span></div>
+    <div class="cstack" role="img" aria-label="{{range $i, $c := .View.Cats}}{{if $i}}, {{end}}{{$c.Label}} {{printf "%.0f" $c.Share}} %{{end}}">{{range .View.Cats}}{{if .N}}<span class="seg {{.Key}}" style="width: {{printf "%.1f" .Share}}%"></span>{{end}}{{end}}</div>
+    <div class="cats">{{range .View.Cats}}<div class="catline" title="{{.Label}}: {{.N}}">{{template "catrow" .}}</div>{{end}}</div>
+    <p class="muted">Por reglas simples, igual que el CSV.</p>
+  </section>
+  <section class="card" aria-labelledby="cpal-h">
+    <h2 id="cpal-h">De qué hablan</h2>
+    {{if .View.Words}}<div class="words">{{range .View.Words}}<span>{{.Key}} <span class="muted">{{.N}}</span></span>{{end}}</div>{{else}}<p class="muted">Sin comentarios en el período.</p>{{end}}
+    <h3 class="sub">Quiénes más comentan</h3>
+    {{if .View.Authors}}<table>
+      <thead><tr><th scope="col">Persona</th><th scope="col" class="n">Comentarios</th><th scope="col" class="n">Videos</th></tr></thead>
+      <tbody>{{range .View.Authors}}<tr><td>{{.Name}}</td><td class="n">{{miles .N}}</td><td class="n">{{miles .Videos}}</td></tr>{{end}}</tbody>
+    </table>{{end}}
+  </section>
+</div>
+
+<section class="card" aria-labelledby="cvid-h">
+  <div class="chead"><h2 id="cvid-h">Videos</h2><div class="chips">{{range .Orders}}{{template "cfiltro" .}}{{end}}</div></div>
+  {{if .View.Rows}}<div class="tablewrap">
+  <table class="cvideos">
+    <thead><tr><th scope="col">Video</th><th scope="col">Canal</th><th scope="col">Publicado</th><th scope="col" class="n">Vistas</th><th scope="col" class="n">Comentarios</th><th scope="col" class="n">Del período</th><th scope="col" class="n" title="Comentarios según YouTube cada 1.000 vistas">c/1.000 vistas</th><th scope="col" class="n">Preguntas</th><th scope="col" class="n">Quejas</th></tr></thead>
+    <tbody>{{range .View.Rows}}{{$v := $.Q.ToVideo .ID}}<tr>
+      <td class="t"><a href="{{$v.Page}}" hx-get="{{$v.Partial}}" hx-target="#comentarios" hx-swap="outerHTML" hx-push-url="{{$v.Page}}">{{.Title}}</a></td>
+      <td>{{.Channel}}</td>
+      <td>{{if .Published.IsZero}}—{{else}}{{fecha .Published}}{{end}}</td>
+      <td class="n">{{miles .Views}}</td>
+      <td class="n" title="Guardados; YouTube cuenta {{miles .Total}}">{{miles .Stored}}</td>
+      <td class="n cnum">{{miles .InPeriod}}</td>
+      <td class="n">{{.Per1000}}</td>
+      <td class="n">{{miles .Questions}}</td>
+      <td class="n">{{printf "%.0f" .ComplaintPct}} %</td>
+    </tr>{{end}}</tbody>
+  </table></div>
+  <p class="muted">«Comentarios» son los guardados (los últimos 30 días); «Del período», los del filtro de arriba. Tocá un video para ver el detalle.</p>
+  {{else}}<p class="muted">No hay videos con estos filtros.</p>{{end}}
+</section>
+
+<div class="grid2">
+  <section class="card" aria-labelledby="cpreg-h">
+    <div class="chead"><h2 id="cpreg-h">Preguntas sin respuesta</h2><span class="muted">Por likes · sin respuestas en el hilo cuando se guardaron</span></div>
+    {{if .View.Questions}}<ul class="feed vfeed">{{range .View.Questions}}{{template "citem" .}}{{end}}</ul>{{else}}<p class="muted">No hay preguntas sin respuestas en el período.</p>{{end}}
+  </section>
+  <section class="card" aria-labelledby="cdest-h">
+    <div class="chead"><h2 id="cdest-h">Comentarios destacados</h2><div class="chips">{{range .Dests}}{{template "cfiltro" .}}{{end}}</div></div>
+    {{if .View.Featured}}<ul class="feed vfeed">{{range .View.Featured}}{{template "citem" .}}{{end}}</ul>{{else}}<p class="muted">Nada para mostrar en el período.</p>{{end}}
+  </section>
+</div>
+<p class="muted">Los likes y las respuestas son los que tenía cada comentario cuando el monitor lo guardó (en general, minutos después de publicarse): no se actualizan después, así que una pregunta puede haber sido contestada más tarde.</p>
+{{end}}
+{{end}}
+
+{{define "comentarios-video"}}{{$d := .Detail}}
+<section class="card">
+  <p><a href="{{.Q.Back.Page}}" hx-get="{{.Q.Back.Partial}}" hx-target="#comentarios" hx-swap="outerHTML" hx-push-url="{{.Q.Back.Page}}">← Todos los videos</a></p>
+  <div class="chead">
+    <h2>{{$d.Video.Title}}</h2>
+    <div class="actions">
+      <a class="btn btn-s" href="https://www.youtube.com/watch?v={{$d.Video.ID}}" target="_blank" rel="noopener">Abrir en YouTube</a>
+      <a class="btn btn-s" href="/export.csv?video={{$d.Video.ID}}">Descargar CSV de este video</a>
+    </div>
+  </div>
+  <p class="muted">{{with $d.Video.Channel}}{{.}} · {{end}}{{if not $d.Video.PublishedAt.IsZero}}publicado el {{fecha $d.Video.PublishedAt}} · {{end}}{{miles $d.Video.Views}} vistas{{if $d.Video.Live}} · vivo{{end}}</p>
+  <div class="tiles">{{range .Tiles}}<div class="inner tile"><div class="l">{{.Label}}</div><div class="v">{{.Value}}</div><div class="muted">{{.Note}}</div></div>{{end}}</div>
+</section>
+
+<div class="grid2">
+  <section class="card cchart ccurve" aria-labelledby="ccurva-h">
+    <div class="chead"><h2 id="ccurva-h">Cómo llegaron los comentarios</h2><span class="muted">Desde la publicación</span></div>
+    {{if $d.Curve}}{{template "cchart" .Curve}}
+    {{with $d.HalfHours}}<p class="psum">La mitad de los comentarios llegó en {{.}}.</p>{{end}}
+    {{with $d.ChannelHalf}}<p class="muted">En los otros videos del canal (mediana): {{.}}.</p>{{end}}
+    {{else}}<p class="muted">No se sabe cuándo se publicó este video.</p>{{end}}
+  </section>
+  <section class="card" aria-labelledby="cvcat-h">
+    <div class="chead"><h2 id="cvcat-h">Categorías</h2><span class="muted">{{plural $d.Total "comentario" "comentarios"}}</span></div>
+    <div class="cstack" role="img" aria-label="{{range $i, $c := $d.Cats}}{{if $i}}, {{end}}{{$c.Label}} {{printf "%.0f" $c.Share}} %{{end}}">{{range $d.Cats}}{{if .N}}<span class="seg {{.Key}}" style="width: {{printf "%.1f" .Share}}%"></span>{{end}}{{end}}</div>
+    <div class="cats">{{range $d.Cats}}<div class="catline" title="{{.Label}}: {{.N}}">{{template "catrow" .}}</div>{{end}}</div>
+  </section>
+</div>
+
+<section class="card" aria-labelledby="clista-h">
+  <div class="chead"><h2 id="clista-h">Comentarios</h2><span class="muted">{{plural $d.Shown "comentario" "comentarios"}}{{if gt $d.Pages 1}} · página {{$d.Page}} de {{$d.Pages}}{{end}}</span></div>
+  <form id="cfiltro" class="chatf" action="/comentarios" hx-get="/parcial/comentarios" hx-target="#comentarios" hx-swap="outerHTML">
+    <input type="hidden" name="video" value="{{.Q.Video}}">
+    {{with .Q.Canal}}<input type="hidden" name="canal" value="{{.}}">{{end}}
+    <input type="hidden" name="periodo" value="{{.Q.Periodo}}"><input type="hidden" name="tipo" value="{{.Q.Tipo}}">
+    <input type="hidden" name="orden" value="{{.Q.Orden}}"><input type="hidden" name="dest" value="{{.Q.Dest}}">
+    <label class="field" for="c-buscar"><span class="lbl">Buscar</span><input id="c-buscar" class="inp" type="search" name="buscar" value="{{.Q.Buscar}}" maxlength="100" placeholder="palabra o frase"></label>
+    <label class="field" for="c-cat"><span class="lbl">Categoría</span><select id="c-cat" class="sel" name="cat">{{range .CatOpts}}<option value="{{.ID}}"{{if eq .ID $.Q.Cat}} selected{{end}}>{{.Name}}</option>{{end}}</select></label>
+    <label class="field" for="c-orden"><span class="lbl">Orden</span><select id="c-orden" class="sel" name="vorden">{{range .VOrders}}<option value="{{.ID}}"{{if eq .ID $.Q.VOrden}} selected{{end}}>{{.Name}}</option>{{end}}</select></label>
+    <label class="check"><input type="checkbox" name="sinresp" value="1"{{if .Q.SinResp}} checked{{end}}> Solo sin respuestas</label>
+    <button class="btn btn-s" type="submit">Filtrar</button>
+  </form>
+  {{if $d.List}}<ul class="feed">{{range $d.List}}{{template "citem" .}}{{end}}</ul>{{else}}<p class="muted">Ningún comentario con estos filtros.</p>{{end}}
+  <p class="muted">Likes y respuestas de cuando se guardó cada comentario.</p>
+  {{if gt $d.Pages 1}}<div class="actions">
+    {{if gt $d.Page 1}}{{$p := .Q.ToPage $d.PrevPage}}<a class="btn btn-s" href="{{$p.Page}}" hx-get="{{$p.Partial}}" hx-target="#comentarios" hx-swap="outerHTML" hx-push-url="{{$p.Page}}">Anteriores</a>{{end}}
+    {{if lt $d.Page $d.Pages}}{{$p := .Q.ToPage $d.NextPage}}<a class="btn btn-s" href="{{$p.Page}}" hx-get="{{$p.Partial}}" hx-target="#comentarios" hx-swap="outerHTML" hx-push-url="{{$p.Page}}">Siguientes</a>{{end}}
+  </div>{{end}}
+</section>
+{{end}}

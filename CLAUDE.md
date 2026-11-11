@@ -9,8 +9,8 @@ privacidad, clasificador, concurrencia) están en `AGENTS.md` y se importan acá
 
 `yt-monitor`: bot que **no escribe en YouTube** y monitorea comentarios y chat en vivo de
 canales de YouTube (piloto de Alphamedia con Radio Rivadavia). Dos modos con el mismo
-binario: informe puntual (`go run .`) y continuo con dashboard htmx de tres pantallas:
-En vivo, Programas y Canales (`-dashboard :8080`).
+binario: informe puntual (`go run .`) y continuo con dashboard htmx de cuatro pantallas:
+En vivo, Programas, Comentarios y Canales (`-dashboard :8080`).
 No publica, no modera, no usa OAuth. El dashboard escribe en tres puntos, solo desde la PC
 del monitor (`sameOrigin` + `localRequest`): la configuración de canales e intervalos de la
 pantalla Canales, incluida la tarjeta de Claude (`datos.canales.json`, ADR 0005 y 0009), pedir un análisis a Claude (cola)
@@ -173,7 +173,7 @@ solo, `/factory`.
   toca el dashboard o lo que muestra): `go run ./tools/preview -datos <checkout
   principal>/datos.jsonl` levanta la rama en `http://localhost:8081` con una copia
   temporal de los datos (`datos.jsonl`, `datos.cuota.json`, `datos.espectadores.jsonl`,
-  `datos.vivos.jsonl`, `datos.analisis.jsonl` y `datos.etiquetas.jsonl`; no `datos.claude.json` ni
+  `datos.vivos.jsonl`, `datos.videos.jsonl`, `datos.analisis.jsonl` y `datos.etiquetas.jsonl`; no `datos.claude.json` ni
   `datos.canales.json`) y una API simulada; `go run ./tools/preview -cortar` la corta y
   borra la copia. Siempre se corta antes de cerrar la tarea.
 - Modelo y esfuerzo fijos en el frontmatter de cada agente (no heredan la sesión):

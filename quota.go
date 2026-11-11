@@ -16,6 +16,11 @@ const (
 	videoChecksDay   = 480   // una revisión de videos cada 3 min
 	commentsPerDay   = 1000  // el techo de comentarios que usan el README y AGENTS.md
 	chatUnitsPerRead = 5
+	// Por cada canal extra, para la pantalla Comentarios: sus subidas cada
+	// extraUploadsEvery (48 listas por día, más hasta 48 de un pedido de videos
+	// de más) y sus comentarios, que dependen de cuánto comenten.
+	extraUploadsDay  = 96
+	extraCommentsDay = 200
 )
 
 // ChatGroup son vivos que se leen por turnos con los mismos intervalos: en
@@ -38,11 +43,13 @@ type QuotaEstimate struct {
 }
 
 // EstimateQuota suma lo que gasta un día: videos (3 + 1 por canal extra cada
-// 3 min), comentarios, la búsqueda rápida por los cortes observados y el chat
-// de cada grupo (5 unidades por lectura, una por intervalo).
+// 3 min, más las subidas de los extra cada 30 min), comentarios (más los de
+// los videos de los extra), la búsqueda rápida por los cortes observados y el
+// chat de cada grupo (5 unidades por lectura, una por intervalo).
 func EstimateQuota(channels int, cutsPerDay float64, groups []ChatGroup, budget int) QuotaEstimate {
-	q := QuotaEstimate{Videos: videoChecksDay * (2 + max(channels, 1)), Comments: commentsPerDay, Budget: budget,
-		Limit: budget - reserveForComments}
+	extra := max(channels, 1) - 1
+	q := QuotaEstimate{Videos: videoChecksDay*(2+max(channels, 1)) + extraUploadsDay*extra, Comments: commentsPerDay + extraCommentsDay*extra,
+		Budget: budget, Limit: budget - reserveForComments}
 	q.Fast = int(math.Round(cutsPerDay * float64(fastUnitsPerCut())))
 	q.Total = q.Videos + q.Comments + q.Fast
 	for _, g := range groups {

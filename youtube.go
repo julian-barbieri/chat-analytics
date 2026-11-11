@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -154,13 +155,16 @@ func (y *YouTube) RecentVideoIDs(playlist string, n int) ([]string, error) {
 
 // ChannelVideos devuelve los vivos de los canales, los videos pedidos a mano
 // (extra) y los últimos n subidos del primer canal, sin repetir y en ese orden.
+// Con all suma también los últimos n subidos de los otros canales (1 unidad
+// por canal), para la pantalla Comentarios: el worker lo pide cada
+// extraUploadsEvery y no en cada revisión.
 // Si la API no manda snippet.channelId, el canal de cada video sale de la
 // lista en la que apareció (no cuesta cuota); los de extra quedan sin canal.
 // Los vivos que transmiten las 24 horas se publicaron hace días y quedan fuera de
 // los últimos n subidos: por eso se buscan también en la lista automática de
 // vivos de cada canal. De los otros canales solo quedan los vivos en curso o
 // programados, así no se gasta cuota en comentarios de videos viejos.
-func (y *YouTube) ChannelVideos(channels []ChannelInfo, n int, extra []string) ([]Video, error) {
+func (y *YouTube) ChannelVideos(channels []ChannelInfo, n int, extra []string, all bool) ([]Video, error) {
 	ups, err := y.RecentVideoIDs(channels[0].Uploads, n)
 	if err != nil {
 		return nil, err
@@ -196,6 +200,17 @@ func (y *YouTube) ChannelVideos(channels []ChannelInfo, n int, extra []string) (
 	}
 	add(extra, false, -1)
 	add(ups, false, 0)
+	if all {
+		for i, c := range channels[1:] {
+			// Si falla la lista de un canal, se sigue con lo demás: es lo de menos.
+			more, err := y.RecentVideoIDs(c.Uploads, n)
+			if err != nil {
+				log.Printf("aviso: subidas de %s: %v", c.Title, err)
+				continue
+			}
+			add(more, false, i+1)
+		}
+	}
 	vids, err := y.Videos(ids)
 	out := vids[:0]
 	for _, v := range vids {

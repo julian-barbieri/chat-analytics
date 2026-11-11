@@ -37,6 +37,7 @@ type Store struct {
 	apath     string // análisis de Claude (datos.analisis.jsonl), aparte de los mensajes
 	cpath     string // gasto del día en Claude (datos.claude.json)
 	bpath     string // tandas de Claude con las etiquetas por mensaje (datos.etiquetas.jsonl)
+	vdpath    string // último dato de cada video (datos.videos.jsonl), para la pantalla Comentarios
 	msgs      []Message
 	analyses  []ClaudeAnalysis
 	batches   []ClaudeBatch
@@ -46,6 +47,8 @@ type Store struct {
 	spend     claudeDay
 	claude    ClaudeStatus
 	viewers   []ViewerSample
+	archive   map[string]VideoRecord // por ID: el último dato visto
+	saved     map[string]time.Time   // cuándo se escribió por última vez cada video en vdpath
 	lives     []LiveSample
 	channels  []ChannelStatus
 	pending   []ChannelStatus // de la configuración, sin resolver todavía
@@ -143,6 +146,7 @@ func OpenStore(path string) (*Store, error) {
 	base := strings.TrimSuffix(path, ".jsonl")
 	s := &Store{path: path, quota: base + ".cuota.json", vpath: base + ".espectadores.jsonl", lpath: base + ".vivos.jsonl",
 		apath: base + ".analisis.jsonl", cpath: base + ".claude.json", bpath: base + ".etiquetas.jsonl",
+		vdpath: base + ".videos.jsonl", archive: map[string]VideoRecord{}, saved: map[string]time.Time{},
 		seen: map[string]bool{}, labels: map[string]MessageLabel{},
 		sent: map[sentKey]*SentSlot{}, groups: map[string]BatchGroup{}}
 	if b, err := os.ReadFile(s.quota); err == nil {
@@ -184,6 +188,9 @@ func OpenStore(path string) (*Store, error) {
 		return nil, err
 	}
 	s.lives = lives
+	if err := s.loadVideos(cutoff); err != nil {
+		return nil, err
+	}
 	// La retención se cuenta desde el mensaje más viejo analizado (los del
 	// tramo empiezan segmentLead antes de From), no desde la hora del análisis.
 	analyses, err := loadJSONL(s.apath, func(a ClaudeAnalysis) bool { return !a.From.Add(-segmentLead).Before(cutoff) })
@@ -742,6 +749,97 @@ func (s *Store) LastChatOf(ids map[string]bool, n int) []Message {
 	var out []Message
 	for i := len(s.msgs) - 1; i >= 0 && len(out) < n; i-- {
 		if m := s.msgs[i]; ids[m.VideoID] && m.Source == "chat" {
+			out = append(out, m)
+		}
+	}
+	return out
+}
+
+// Un video aparece en cada revisión (cada 3 min): en datos.videos.jsonl se
+// escribe cuando es nuevo y después a lo sumo una vez por videoSaveEvery. Al
+// abrir queda una línea por video.
+const videoSaveEvery = time.Hour
+
+// loadVideos carga el último dato de cada video visto en los últimos 30 días
+// (son datos de la API) y deja el archivo con una línea por video.
+func (s *Store) loadVideos(cutoff time.Time) error {
+	recs, err := loadJSONL(s.vdpath, func(v VideoRecord) bool { return v.ID != "" && !v.Seen.Before(cutoff) })
+	if err != nil {
+		return err
+	}
+	for _, v := range recs {
+		if old, ok := s.archive[v.ID]; !ok || !v.Seen.Before(old.Seen) {
+			s.archive[v.ID] = v
+		}
+	}
+	for id, v := range s.archive {
+		s.saved[id] = v.Seen
+	}
+	if len(recs) == len(s.archive) {
+		return nil
+	}
+	return rewriteJSONL(s.vdpath, s.videoArchive())
+}
+
+// AddVideos guarda el último dato de cada video de una revisión. Sale del
+// mismo pedido de videos: no cuesta cuota.
+func (s *Store) AddVideos(at time.Time, vids []Video) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var add []VideoRecord
+	for _, v := range vids {
+		r := videoRecord(v, at)
+		s.archive[v.ID] = r
+		if last, ok := s.saved[v.ID]; !ok || !at.Before(last.Add(videoSaveEvery)) {
+			s.saved[v.ID] = at
+			add = append(add, r)
+		}
+	}
+	if len(add) == 0 {
+		return
+	}
+	// Si no se puede abrir el archivo, el dato queda igual en memoria.
+	f, err := os.OpenFile(s.vdpath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	enc := json.NewEncoder(f)
+	for _, r := range add {
+		enc.Encode(r)
+	}
+}
+
+// VideoArchive devuelve una copia del último dato de cada video, del más
+// nuevo al más viejo.
+func (s *Store) VideoArchive() []VideoRecord {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.videoArchive()
+}
+
+func (s *Store) videoArchive() []VideoRecord {
+	out := make([]VideoRecord, 0, len(s.archive))
+	for _, v := range s.archive {
+		out = append(out, v)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if !out[i].PublishedAt.Equal(out[j].PublishedAt) {
+			return out[i].PublishedAt.After(out[j].PublishedAt)
+		}
+		return out[i].ID < out[j].ID
+	})
+	return out
+}
+
+// Comments devuelve una copia de los comentarios desde since: la pantalla
+// Comentarios no copia el chat.
+func (s *Store) Comments(since time.Time) []Message {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var out []Message
+	for _, m := range s.msgs {
+		if m.Source == "comentario" && !m.At.Before(since) {
 			out = append(out, m)
 		}
 	}
