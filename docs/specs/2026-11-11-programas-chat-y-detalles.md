@@ -1,10 +1,10 @@
 # Spec: chat completo, franjas clickeables y temas/preguntas desplegables en Programas
 
-- **Estado:** borrador
+- **Estado:** aprobada
 - **Tipo:** mejora
 - **Rama:** `feat/programas-chat-y-detalles`
 - **Origen:** pedido del usuario (2026-11-11)
-- **Aprobada por / fecha:** —
+- **Aprobada por / fecha:** Julian Barbieri, 2026-11-11
 
 ## Contexto
 
