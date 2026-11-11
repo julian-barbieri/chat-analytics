@@ -94,7 +94,7 @@ func TestFlowAgainstFakeAPI(t *testing.T) {
 			w.Write([]byte(`{"items":[` + strings.Join(out, ",") + `]}`))
 		case "/videos":
 			items := map[string]string{
-				"v1": `{"id":"v1","snippet":{"title":"Entrevista","channelId":"C","channelTitle":"Radio Test","publishedAt":"` + now + `","liveBroadcastContent":"none"},"statistics":{"viewCount":"10","commentCount":"2"}}`,
+				"v1": `{"id":"v1","snippet":{"title":"Entrevista","channelId":"C","channelTitle":"Radio Test","publishedAt":"` + now + `","liveBroadcastContent":"none"},"statistics":{"viewCount":"10","likeCount":"3","commentCount":"2"}}`,
 				"v2": `{"id":"v2","snippet":{"title":"🔴RADIO TEST en VIVO | LA MAÑANA","channelId":"C","channelTitle":"Radio Test","publishedAt":"` + old + `","liveBroadcastContent":"live"},"statistics":{"viewCount":"100","commentCount":"0"},"liveStreamingDetails":{"activeLiveChatId":"chat1","concurrentViewers":"40","actualStartTime":"` + started.Format(time.RFC3339) + `"}}`,
 				"v3": `{"id":"v3","snippet":{"title":"La tarde de Otra","channelId":"UC2","channelTitle":"Otra Radio","publishedAt":"` + now + `","liveBroadcastContent":"live"},"statistics":{"viewCount":"5","commentCount":"0"},"liveStreamingDetails":{"activeLiveChatId":"chat2","concurrentViewers":"7"}}`,
 				"v4": `{"id":"v4","snippet":{"title":"Vivo de ayer","channelId":"UC2","channelTitle":"Otra Radio","publishedAt":"` + old + `","liveBroadcastContent":"none"},"statistics":{"viewCount":"50","commentCount":"9"}}`,
@@ -144,6 +144,10 @@ func TestFlowAgainstFakeAPI(t *testing.T) {
 	// El ID del canal viene en snippet, la misma parte que ya se pide: no cuesta cuota.
 	if vids[0].ChannelID != "C" || vids[1].ChannelID != "UC2" || vids[2].ChannelID != "C" {
 		t.Errorf("ChannelID = %q, %q, %q", vids[0].ChannelID, vids[1].ChannelID, vids[2].ChannelID)
+	}
+	// Los likes vienen en statistics, la misma parte que ya se pide: no cuestan cuota.
+	if vids[2].Likes != 3 || vids[0].Likes != 0 {
+		t.Errorf("Likes = %d, %d", vids[2].Likes, vids[0].Likes)
 	}
 	// El inicio del vivo viene en la misma parte que ya se pide: no cuesta cuota.
 	if !vids[0].StartedAt.Equal(started) {
@@ -5938,7 +5942,7 @@ func TestDashboardTabs(t *testing.T) {
 	st.SetChannels([]ChannelStatus{{ID: "UC1", Name: "Radio Test", Live: true}})
 	st.SetVideos("Radio Test", []Video{{ID: "v1", Title: "🔴RADIO TEST en VIVO | LA MAÑANA", ChannelID: "UC1", Channel: "Radio Test", LiveStatus: "live"}})
 	h := (&Server{st: st, budget: 9000}).Routes()
-	tabs := []struct{ href, label string }{{"/", "En vivo"}, {"/programas", "Programas"}, {"/comentarios", "Comentarios"}, {"/canales", "Canales"}}
+	tabs := []struct{ href, label string }{{"/", "En vivo"}, {"/programas", "Programas"}, {"/comentarios", "Comentarios y likes"}, {"/canales", "Canales"}}
 	link := regexp.MustCompile(`<a href="([^"]*)"( aria-current="page")?>([^<]*)</a>`)
 	for _, cur := range tabs {
 		t.Run(cur.label, func(t *testing.T) {

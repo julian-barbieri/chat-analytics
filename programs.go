@@ -220,6 +220,10 @@ type ProgramRow struct {
 	OnAir                           bool
 	QByClaude                       bool            // Questions cuenta las etiquetas de Claude
 	Analysis                        *ClaudeAnalysis // el análisis final de la 009, si hay
+	Likes                           int64           // los que ganó el vivo durante el programa
+	HasLikes                        bool            // hay al menos dos muestras en algún pedazo
+	LikesPer1000                    string          // cada 1.000 espectadores promedio
+	Swatch                          string          // su color en el gráfico de likes del día, si se muestra
 }
 
 // programRows cuenta los mensajes de cada tramo en una sola pasada. Cada
@@ -518,6 +522,18 @@ func (s *Server) programsData(v url.Values) map[string]any {
 		labels = s.st.Labels(messageIDs(msgs))
 	}
 	rows := programRows(segs, msgs, analyses, titles, labels)
+	// Una hora antes: la última muestra previa es la base del primer programa.
+	// Una sola pasada por la serie, no una por vivo.
+	likes, viewers := s.st.LikesSince(from.Add(-time.Hour)), map[string][]ViewerSample{}
+	for id := range likes {
+		if !ids[id] {
+			delete(likes, id)
+		}
+	}
+	for id := range ids {
+		viewers[id] = s.st.Viewers(id, from)
+	}
+	programLikes(rows, likes, viewers)
 	pick := -1
 	for i, r := range rows {
 		if q.Tramo != "" && r.HasKey(q.Tramo) {
@@ -533,6 +549,13 @@ func (s *Server) programsData(v url.Values) map[string]any {
 		"Q": q, "Channels": opts, "Rows": rows, "Multi": len(days) > 1, "Refresh": q.Dia == "hoy" && !q.isOpen("chat"),
 		"Title": programsTitle(q.Dia, days), "Updated": now, "Pick": "",
 		"Days": []ChannelOption{{"hoy", "Hoy", q.Dia == "hoy"}, {"ayer", "Ayer", q.Dia == "ayer"}, {"7d", "Últimos 7 días", q.Dia == "7d"}},
+	}
+	// El gráfico de likes del día: con un solo canal y un solo día.
+	if len(chans) == 1 && len(days) == 1 && len(rows) > 0 {
+		data["LikesChart"] = likesDayChart(rows, likes, days[0], now)
+		for i := range rows {
+			rows[i].Swatch = swatch(i)
+		}
 	}
 	if len(rows) == 0 {
 		data["Empty"] = "Todavía no hay programas guardados para ese día."
@@ -1328,4 +1351,133 @@ func compareParam(v string) string {
 		}
 	}
 	return cmpNone
+}
+
+// inSegment dice si t cae en el tramo (al aire, sin fin).
+func inSegment(t time.Time, sg Segment) bool {
+	return !t.Before(sg.Start) && (sg.State == SegLive || !t.After(sg.End))
+}
+
+// segmentLikes son los likes que ganó el vivo durante el tramo: YouTube da un
+// solo contador por vivo, así que es la última muestra del tramo menos el
+// valor al empezar. Un vivo guarda una muestra solo cuando el contador cambia,
+// así que ese valor es la última muestra hasta el inicio (o, si no hay, la
+// primera del tramo). Sin muestras dentro del tramo no se sabe.
+func segmentLikes(samples []LikeSample, sg Segment) (int64, bool) {
+	var base, last LikeSample
+	hasBase, n := false, 0
+	for _, l := range samples {
+		if l.VideoID != sg.VideoID {
+			continue
+		}
+		if !l.At.After(sg.Start) {
+			base, hasBase = l, true
+		}
+		if inSegment(l.At, sg) {
+			if !hasBase && n == 0 {
+				base = l
+			}
+			last = l
+			n++
+		}
+	}
+	if n == 0 {
+		return 0, false
+	}
+	return max(0, last.Likes-base.Likes), true
+}
+
+// avgViewers es el promedio de espectadores del vivo durante el tramo.
+func avgViewers(vs []ViewerSample, sg Segment) int64 {
+	var sum, n int64
+	for _, v := range vs {
+		if v.VideoID == sg.VideoID && inSegment(v.At, sg) {
+			sum, n = sum+v.Viewers, n+1
+		}
+	}
+	if n == 0 {
+		return 0
+	}
+	return sum / n
+}
+
+// per1000 es n cada 1.000 vistas (o espectadores), con un decimal; "—" sin datos.
+func per1000(n, views int64) string {
+	if n <= 0 || views <= 0 {
+		return "—"
+	}
+	return decimal(float64(n) * 1000 / float64(views))
+}
+
+// programLikes completa los likes de cada fila con las muestras de sus vivos.
+func programLikes(rows []ProgramRow, likes map[string][]LikeSample, viewers map[string][]ViewerSample) {
+	for i := range rows {
+		r := &rows[i]
+		var sum, views, n int64
+		for _, pg := range r.pieces() {
+			if l, ok := segmentLikes(likes[pg.VideoID], pg); ok {
+				sum, r.HasLikes = sum+l, true
+			}
+			if v := avgViewers(viewers[pg.VideoID], pg); v > 0 {
+				views, n = views+v, n+1
+			}
+		}
+		r.Likes = sum
+		if n > 0 {
+			r.LikesPer1000 = per1000(sum, views/n)
+		} else {
+			r.LikesPer1000 = "—"
+		}
+	}
+}
+
+// swatch es la clase del color de la fila i en el gráfico de likes (se repiten de a 5).
+func swatch(i int) string { return fmt.Sprintf("s%d", i%5+1) }
+
+// likesSlot: el gráfico de likes del día va en franjas de 30 min.
+const likesSlot = 30 * time.Minute
+
+// likesDayChart son los likes que ganaron los vivos de las filas en cada
+// franja de 30 min del día, con el color del programa al aire (s1–s5).
+func likesDayChart(rows []ProgramRow, likes map[string][]LikeSample, day, now time.Time) CommentChart {
+	n := int(24 * time.Hour / likesSlot)
+	ns, labels, classes := make([]int, n), make([]string, n), make([]string, n)
+	seen := map[string]bool{}
+	for _, r := range rows {
+		for _, pg := range r.pieces() {
+			if seen[pg.VideoID] {
+				continue
+			}
+			seen[pg.VideoID] = true
+			ls := likes[pg.VideoID]
+			for i := 1; i < len(ls); i++ {
+				k := int(ls[i].At.Sub(day) / likesSlot)
+				if d := ls[i].Likes - ls[i-1].Likes; d > 0 && k >= 0 && k < n && ls[i].At.After(day) {
+					ns[k] += int(d)
+				}
+			}
+		}
+	}
+	for k := range n {
+		t := day.Add(time.Duration(k) * likesSlot)
+		labels[k] = t.Local().Format("15:04") + "–" + t.Add(likesSlot).Local().Format("15:04")
+		for i, r := range rows {
+			for _, pg := range r.pieces() {
+				if inSegment(t, pg) && t.Before(now) {
+					classes[k] = swatch(i)
+					labels[k] += " · " + programLabel(r.Seg.Program)
+				}
+			}
+		}
+	}
+	c := barChart(ns, labels, classes, "like", "likes")
+	for h := 0; h < 24; h += 6 {
+		c.Ticks = append(c.Ticks, Tick{Left: float64(h) * 100 / 24, Label: fmt.Sprintf("%02d:00", h)})
+	}
+	total := 0
+	for _, x := range ns {
+		total += x
+	}
+	c.Aria = "Likes del vivo cada 30 minutos del día: " + miles(total) + " en total"
+	return c
 }

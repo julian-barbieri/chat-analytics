@@ -20,6 +20,7 @@
   <div class="pchart">
     <svg viewBox="0 0 {{.W}} 100" preserveAspectRatio="none" role="img" aria-label="{{.Aria}}">
       {{range .Bars}}<g><title>{{.Label}}</title><rect class="hit" x="{{.X}}" y="0" width="{{.W}}" height="100"></rect><rect class="bar{{if .Class}} {{.Class}}{{end}}" x="{{.X}}" y="{{.Y}}" width="{{.W}}" height="{{.H}}"></rect></g>{{end}}
+      {{with .Likes}}<path class="likesl" d="{{.}}"></path>{{end}}
       <line class="base" x1="0" x2="{{.W}}" y1="100" y2="100"></line>
     </svg>
   </div>
@@ -36,8 +37,9 @@
   <div class="cfiltros">
     <div class="field"><span class="lbl">Canal</span><div class="chips">{{range .Channels}}{{template "cfiltro" .}}{{end}}</div></div>
     <div class="field"><span class="lbl">Período</span><div class="chips">{{range .Periods}}{{template "cfiltro" .}}{{end}}</div></div>
-    <div class="field"><span class="lbl">Videos</span><div class="chips">{{range .Types}}{{template "cfiltro" .}}{{end}}</div></div>
+    <div class="field"><span class="lbl">Tipo</span><div class="chips">{{range .Types}}{{template "cfiltro" .}}{{end}}</div></div>
   </div>
+  <p class="muted">«Publicados en 30 días»: solo los videos y shorts publicados desde el {{fechaDia .View.PubSince}}, con todos sus comentarios y likes, lleguen el día que lleguen. Los likes de los vivos están por programa en Programas. Las publicaciones de la pestaña Comunidad no se pueden leer con la API de YouTube.</p>
 </section>
 
 {{if .Empty}}<section class="card"><p>Todavía no hay comentarios guardados. El monitor los baja cada 10 minutos de los últimos videos de cada canal (de los canales extra, cada 30 minutos).</p></section>{{else}}
@@ -45,18 +47,29 @@
 <div class="tiles">{{range .Tiles}}<div class="inner tile"><div class="l">{{.Label}}</div><div class="v">{{.Value}}</div><div class="muted">{{.Note}}</div></div>{{end}}</div>
 
 <section class="card cchart" aria-labelledby="cdias-h">
-  <div class="chead"><h2 id="cdias-h">Comentarios por día</h2><span class="muted">▲ días con videos publicados (pasá el mouse para ver cuáles)</span></div>
+  <div class="chead"><h2 id="cdias-h">Comentarios y likes por día</h2><span class="muted">▲ días con videos publicados (pasá el mouse para ver cuáles) · cada serie con su escala</span></div>
   {{template "cchart" .Chart}}
-  <div class="leyenda"><span class="leg"><span class="sw pos" aria-hidden="true"></span>Comentarios</span><span class="leg"><span class="sw neu" aria-hidden="true"></span>Fin de semana</span></div>
+  <div class="leyenda"><span class="leg"><span class="sw pos" aria-hidden="true"></span>Comentarios</span><span class="leg"><span class="sw neu" aria-hidden="true"></span>Fin de semana</span>{{if .Chart.Likes}}<span class="leg"><span class="sw lk" aria-hidden="true"></span>Likes nuevos (el día con más: {{.Chart.LMax}})</span>{{end}}</div>
 </section>
 
 <div class="grid2">
+  <section class="card" aria-labelledby="ckind-h">
+    <h2 id="ckind-h">Videos y shorts</h2>
+    <div class="tablewrap"><table>
+      <thead><tr><th scope="col">Tipo</th><th scope="col" class="n" title="Videos del canal y del período, sin importar el filtro de tipo">En el período</th><th scope="col" class="n">Vistas</th><th scope="col" class="n">Likes</th><th scope="col" class="n">Comentarios</th><th scope="col" class="n">Likes c/1.000 vistas</th></tr></thead>
+      <tbody>{{range .View.Kinds}}<tr><td><span class="kind {{.Kind}}">{{.Name}}</span></td><td class="n">{{miles .N}}</td><td class="n">{{miles .Views}}</td><td class="n">{{miles .Likes}}</td><td class="n">{{miles .Comments}}</td><td class="n">{{.Per1000}}</td></tr>{{end}}</tbody>
+    </table></div>
+    <p class="muted">Likes y comentarios según YouTube en la última revisión. Los shorts salen de la lista de shorts de cada canal.</p>
+  </section>
   <section class="card" aria-labelledby="ccat-h">
     <div class="chead"><h2 id="ccat-h">Categorías</h2><span class="muted">{{plural .View.CatTotal "comentario" "comentarios"}}</span></div>
     <div class="cstack" role="img" aria-label="{{range $i, $c := .View.Cats}}{{if $i}}, {{end}}{{$c.Label}} {{printf "%.0f" $c.Share}} %{{end}}">{{range .View.Cats}}{{if .N}}<span class="seg {{.Key}}" style="width: {{printf "%.1f" .Share}}%"></span>{{end}}{{end}}</div>
     <div class="cats">{{range .View.Cats}}<div class="catline" title="{{.Label}}: {{.N}}">{{template "catrow" .}}</div>{{end}}</div>
     <p class="muted">Por reglas simples, igual que el CSV.</p>
   </section>
+</div>
+
+<div class="grid2">
   <section class="card" aria-labelledby="cpal-h">
     <h2 id="cpal-h">De qué hablan</h2>
     {{if .View.Words}}<div class="words">{{range .View.Words}}<span>{{.Key}} <span class="muted">{{.N}}</span></span>{{end}}</div>{{else}}<p class="muted">Sin comentarios en el período.</p>{{end}}
@@ -69,15 +82,19 @@
 </div>
 
 <section class="card" aria-labelledby="cvid-h">
-  <div class="chead"><h2 id="cvid-h">Videos</h2><div class="chips">{{range .Orders}}{{template "cfiltro" .}}{{end}}</div></div>
+  <div class="chead"><h2 id="cvid-h">Videos y shorts</h2><div class="chips">{{range .Orders}}{{template "cfiltro" .}}{{end}}</div></div>
   {{if .View.Rows}}<div class="tablewrap">
   <table class="cvideos">
-    <thead><tr><th scope="col">Video</th><th scope="col">Canal</th><th scope="col">Publicado</th><th scope="col" class="n">Vistas</th><th scope="col" class="n">Comentarios</th><th scope="col" class="n">Del período</th><th scope="col" class="n" title="Comentarios según YouTube cada 1.000 vistas">c/1.000 vistas</th><th scope="col" class="n">Preguntas</th><th scope="col" class="n">Quejas</th></tr></thead>
+    <thead><tr><th scope="col">Video</th><th scope="col">Tipo</th><th scope="col">Canal</th><th scope="col">Publicado</th><th scope="col" class="n">Vistas</th><th scope="col" class="n">Likes</th><th scope="col" class="n" title="Lo que subió el contador de likes en el período">Likes del período</th><th scope="col" class="n" title="Likes según YouTube cada 1.000 vistas">Likes c/1.000</th><th scope="col" class="n">Comentarios</th><th scope="col" class="n">Del período</th><th scope="col" class="n" title="Comentarios según YouTube cada 1.000 vistas">c/1.000 vistas</th><th scope="col" class="n">Preguntas</th><th scope="col" class="n">Quejas</th></tr></thead>
     <tbody>{{range .View.Rows}}{{$v := $.Q.ToVideo .ID}}<tr>
       <td class="t"><a href="{{$v.Page}}" hx-get="{{$v.Partial}}" hx-target="#comentarios" hx-swap="outerHTML" hx-push-url="{{$v.Page}}">{{.Title}}</a></td>
+      <td>{{if .Short}}<span class="kind short">Short</span>{{else}}<span class="kind">Video</span>{{end}}</td>
       <td>{{.Channel}}</td>
       <td>{{if .Published.IsZero}}—{{else}}{{fecha .Published}}{{end}}</td>
       <td class="n">{{miles .Views}}</td>
+      <td class="n">{{if .Likes}}{{miles .Likes}}{{else}}—{{end}}</td>
+      <td class="n">{{.LikesP}}</td>
+      <td class="n">{{.LikesPer1000}}</td>
       <td class="n" title="Guardados; YouTube cuenta {{miles .Total}}">{{miles .Stored}}</td>
       <td class="n cnum">{{miles .InPeriod}}</td>
       <td class="n">{{.Per1000}}</td>
@@ -85,7 +102,7 @@
       <td class="n">{{printf "%.0f" .ComplaintPct}} %</td>
     </tr>{{end}}</tbody>
   </table></div>
-  <p class="muted">«Comentarios» son los guardados (los últimos 30 días); «Del período», los del filtro de arriba. Tocá un video para ver el detalle.</p>
+  <p class="muted">«Comentarios» son los guardados (los últimos 30 días); «Del período», los del filtro de arriba. «Likes del período» es lo que subió el contador de YouTube; «—» si todavía no hay muestras. Tocá un video para ver el detalle.</p>
   {{else}}<p class="muted">No hay videos con estos filtros.</p>{{end}}
 </section>
 
@@ -105,7 +122,7 @@
 
 {{define "comentarios-video"}}{{$d := .Detail}}
 <section class="card">
-  <p><a href="{{.Q.Back.Page}}" hx-get="{{.Q.Back.Partial}}" hx-target="#comentarios" hx-swap="outerHTML" hx-push-url="{{.Q.Back.Page}}">← Todos los videos</a></p>
+  <p><a href="{{.Q.Back.Page}}" hx-get="{{.Q.Back.Partial}}" hx-target="#comentarios" hx-swap="outerHTML" hx-push-url="{{.Q.Back.Page}}">← Todos los videos y shorts</a></p>
   <div class="chead">
     <h2>{{$d.Video.Title}}</h2>
     <div class="actions">
@@ -113,7 +130,7 @@
       <a class="btn btn-s" href="/export.csv?video={{$d.Video.ID}}">Descargar CSV de este video</a>
     </div>
   </div>
-  <p class="muted">{{with $d.Video.Channel}}{{.}} · {{end}}{{if not $d.Video.PublishedAt.IsZero}}publicado el {{fecha $d.Video.PublishedAt}} · {{end}}{{miles $d.Video.Views}} vistas{{if $d.Video.Live}} · vivo{{end}}</p>
+  <p class="muted">{{with $d.Video.Channel}}{{.}} · {{end}}{{if not $d.Video.PublishedAt.IsZero}}publicado el {{fecha $d.Video.PublishedAt}} · {{end}}{{miles $d.Video.Views}} vistas{{if $d.Video.Short}} · short{{end}}{{if $d.Video.Live}} · vivo{{end}}</p>
   <div class="tiles">{{range .Tiles}}<div class="inner tile"><div class="l">{{.Label}}</div><div class="v">{{.Value}}</div><div class="muted">{{.Note}}</div></div>{{end}}</div>
 </section>
 
@@ -125,6 +142,15 @@
     {{with $d.ChannelHalf}}<p class="muted">En los otros videos del canal (mediana): {{.}}.</p>{{end}}
     {{else}}<p class="muted">No se sabe cuándo se publicó este video.</p>{{end}}
   </section>
+  <section class="card cchart ccurve" aria-labelledby="clikes-h">
+    <div class="chead"><h2 id="clikes-h">Cómo llegaron los likes</h2><span class="muted">Desde la publicación</span></div>
+    {{with .LikeCurve}}{{template "cchart" .}}
+    {{if not $d.LikesFrom.IsZero}}<p class="muted">Los likes se guardan desde el {{fecha $d.LikesFrom}}: lo de antes no está repartido.</p>{{end}}
+    {{else}}<p class="muted">Todavía no hay muestras de likes de este video. Se guardan en cada revisión, como mucho cada 30 minutos.</p>{{end}}
+  </section>
+</div>
+
+<div class="grid2">
   <section class="card" aria-labelledby="cvcat-h">
     <div class="chead"><h2 id="cvcat-h">Categorías</h2><span class="muted">{{plural $d.Total "comentario" "comentarios"}}</span></div>
     <div class="cstack" role="img" aria-label="{{range $i, $c := $d.Cats}}{{if $i}}, {{end}}{{$c.Label}} {{printf "%.0f" $c.Share}} %{{end}}">{{range $d.Cats}}{{if .N}}<span class="seg {{.Key}}" style="width: {{printf "%.1f" .Share}}%"></span>{{end}}{{end}}</div>

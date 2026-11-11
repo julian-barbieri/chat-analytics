@@ -4,7 +4,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{{if eq .Tab "programas"}}Programas{{else if eq .Tab "comentarios"}}Comentarios{{else if eq .Tab "canales"}}Canales{{else}}En vivo{{end}} · Monitor de YouTube{{if .Channel}} · {{.Channel}}{{end}}</title>
+<title>{{if eq .Tab "programas"}}Programas{{else if eq .Tab "comentarios"}}Comentarios y likes{{else if eq .Tab "canales"}}Canales{{else}}En vivo{{end}} · Monitor de YouTube{{if .Channel}} · {{.Channel}}{{end}}</title>
 <script src="/static/htmx.min.js"></script>
 <style>
 :root {
@@ -420,6 +420,12 @@ a.seg { display: inline-flex; align-items: center; text-decoration: none; }
 a.seg[aria-current="true"] { background: var(--text-primary); color: var(--surface-1); border-color: var(--text-primary); }
 .cchart svg { display: block; width: 100%; height: 200px; overflow: visible; }
 .bar.finde { fill: var(--sent-neu); }
+.likesl { fill: none; stroke: var(--series-2); stroke-width: 2; stroke-linejoin: round; vector-effect: non-scaling-stroke; pointer-events: none; }
+.sw.lk { background: var(--series-2); height: 3px; }
+.sw.s1 { background: var(--series-1); } .sw.s2 { background: var(--series-2); } .sw.s3 { background: var(--series-3); } .sw.s4 { background: var(--series-4); } .sw.s5 { background: var(--series-5); }
+.bar.s1 { fill: var(--series-1); } .bar.s2 { fill: var(--series-2); } .bar.s3 { fill: var(--series-3); } .bar.s4 { fill: var(--series-4); } .bar.s5 { fill: var(--series-5); }
+.kind { display: inline-block; font-size: 12px; font-weight: 600; border-radius: 4px; padding: 1px 6px; background: var(--ia-bg); color: var(--ia-text); }
+.kind.short { background: var(--warn-bg); color: var(--warn-text); }
 .cchart .pticks span:last-child { transform: translateX(-100%); }
 .ccurve .pticks { height: 32px; }
 .ccurve .pticks span { white-space: normal; width: 8%; text-align: center; line-height: 1.2; }
@@ -440,7 +446,7 @@ a.seg[aria-current="true"] { background: var(--text-primary); color: var(--surfa
   <nav class="tabs" aria-label="Secciones">
     <a href="/"{{if eq .Tab "vivo"}} aria-current="page"{{end}}>En vivo</a>
     <a href="/programas"{{if eq .Tab "programas"}} aria-current="page"{{end}}>Programas</a>
-    <a href="/comentarios"{{if eq .Tab "comentarios"}} aria-current="page"{{end}}>Comentarios</a>
+    <a href="/comentarios"{{if eq .Tab "comentarios"}} aria-current="page"{{end}}>Comentarios y likes</a>
     <a href="/canales"{{if eq .Tab "canales"}} aria-current="page"{{end}}>Canales</a>
   </nav>
 </header>

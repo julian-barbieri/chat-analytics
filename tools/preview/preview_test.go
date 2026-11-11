@@ -334,6 +334,7 @@ func TestPreviewStartup(t *testing.T) {
 		writeFile(t, filepath.Join(src, "datos.etiquetas.jsonl"), `{"ChannelID":"UCsintetico","To":"2026-10-30T10:00:00Z","Labels":[{"ID":"m1","Sentiment":"neutro","Cat":"otro"}]}`+"\n")
 		// Los videos también (pantalla Comentarios).
 		writeFile(t, filepath.Join(src, "datos.videos.jsonl"), `{"Seen":"2026-10-30T10:00:00Z","ID":"grabado1111","Title":"Grabado sintético"}`+"\n")
+		writeFile(t, filepath.Join(src, "datos.likes.jsonl"), `{"VideoID":"grabado1111","At":"2026-10-30T10:00:00Z","Likes":5}`+"\n")
 		writeFile(t, filepath.Join(src, "datos.claude.json"), `{"Day":"2026-10-30","Micros":999}`)
 		writeFile(t, filepath.Join(src, "datos.canales.json"), `{}`)
 		writeFile(t, filepath.Join(src, "otro.txt"), "no se copia")
@@ -355,10 +356,10 @@ func TestPreviewStartup(t *testing.T) {
 		if runtime.GOOS != "windows" && info.Mode().Perm() != 0o700 {
 			t.Errorf("permisos de la copia %v, quiero 0700", info.Mode().Perm())
 		}
-		if got := strings.Join(entries(t, p.dir), ","); got != "datos.analisis.jsonl,datos.cuota.json,datos.espectadores.jsonl,datos.etiquetas.jsonl,datos.jsonl,datos.videos.jsonl,datos.vivos.jsonl" {
+		if got := strings.Join(entries(t, p.dir), ","); got != "datos.analisis.jsonl,datos.cuota.json,datos.espectadores.jsonl,datos.etiquetas.jsonl,datos.jsonl,datos.likes.jsonl,datos.videos.jsonl,datos.vivos.jsonl" {
 			t.Errorf("copió %s", got)
 		}
-		for _, n := range []string{"datos.jsonl", "datos.cuota.json", "datos.espectadores.jsonl", "datos.vivos.jsonl", "datos.analisis.jsonl", "datos.etiquetas.jsonl", "datos.videos.jsonl"} {
+		for _, n := range []string{"datos.jsonl", "datos.cuota.json", "datos.espectadores.jsonl", "datos.vivos.jsonl", "datos.analisis.jsonl", "datos.etiquetas.jsonl", "datos.videos.jsonl", "datos.likes.jsonl"} {
 			a, _ := os.ReadFile(filepath.Join(src, n))
 			b, _ := os.ReadFile(filepath.Join(p.dir, n))
 			if !bytes.Equal(a, b) {

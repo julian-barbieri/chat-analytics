@@ -39,6 +39,7 @@ func commentVideos(archive []VideoRecord, current []Video, now time.Time) []Vide
 	for _, v := range current {
 		r := videoRecord(v, now)
 		if i, ok := byID[v.ID]; ok {
+			r.Short = r.Short || out[i].Short
 			out[i] = r
 		} else {
 			byID[v.ID] = len(out)
@@ -63,20 +64,24 @@ func (s *Server) commentsData(v url.Values) map[string]any {
 	msgs := s.st.Comments(now.Add(-retention))
 	data := map[string]any{"Q": q, "Empty": len(msgs) == 0, "IsDetail": q.Video != ""}
 	if q.Video != "" {
-		d, ok := CommentsVideo(msgs, vids, q, now)
+		d, ok := CommentsVideo(msgs, vids, s.st.Likes(q.Video, now.Add(-retention)), q, now)
 		data["Detail"], data["Found"] = d, ok
 		data["Tiles"] = []Tile{
 			{"Comentarios", miles(d.Total), "de " + miles(d.Video.Comments) + " según YouTube"},
 			{"Personas", miles(d.People), "distintas"},
 			{"Preguntas", miles(d.Questions), plural(d.Open, "sin respuesta", "sin respuestas")},
 			{"Quejas", pct(d.ComplaintPct), "de los comentarios"},
+			{"Likes del video", miles(d.Video.Likes), likesNote(d)},
 			{"Likes en comentarios", miles(d.Likes), "sumados"},
+		}
+		if d.LikeCurve != nil {
+			data["LikeCurve"] = likeCurveChart(d.LikeCurve)
 		}
 		data["Curve"] = curveChart(d.Curve)
 		data["CatOpts"], data["VOrders"] = catOptions(), videoOrders
 		return data
 	}
-	view := CommentsSummary(msgs, vids, q, now)
+	view := CommentsSummary(msgs, vids, s.st.LikesSince(now.Add(-retention)), q, now)
 	data["View"] = view
 	chans := []Choice{}
 	all := q
@@ -100,6 +105,8 @@ func (s *Server) commentsData(v url.Values) map[string]any {
 	data["Period"] = period
 	data["Tiles"] = []Tile{
 		{"Comentarios", miles(view.Total), period},
+		{"Likes nuevos", miles(view.LikesNew), period},
+		{"Likes c/1.000 vistas", view.LikesPer1000, "de los videos de la tabla"},
 		{"Personas distintas", miles(view.People), "que comentaron"},
 		{"Videos con comentarios", miles(view.WithComments) + " de " + miles(view.InScope), "en la tabla de abajo"},
 		{"Preguntas sin respuesta", miles(view.OpenQuestions), "al momento de guardarlas"},
@@ -127,6 +134,8 @@ type CommentChart struct {
 	Ticks []Tick
 	Pubs  []PubMark
 	Aria  string
+	Likes string // escalones de likes por día, con su propia escala ("" sin likes)
+	LMax  string // el día con más likes, para la leyenda
 }
 
 // PubMark marca un día con videos publicados.
@@ -135,7 +144,7 @@ type PubMark struct {
 	Title string
 }
 
-func barChart(ns []int, labels []string, classes []string) CommentChart {
+func barChart(ns []int, labels []string, classes []string, one, many string) CommentChart {
 	c := CommentChart{W: len(ns) * 10, Max: 1}
 	for _, n := range ns {
 		c.Max = max(c.Max, n)
@@ -143,7 +152,7 @@ func barChart(ns []int, labels []string, classes []string) CommentChart {
 	for i, n := range ns {
 		h := float64(n) * 100 / float64(c.Max)
 		c.Bars = append(c.Bars, Bar{X: float64(i*10 + 1), W: 8, Y: 100 - h, H: h, N: n, Class: classes[i],
-			Label: labels[i] + ": " + plural(n, "comentario", "comentarios")})
+			Label: labels[i] + ": " + plural(n, one, many)})
 	}
 	return c
 }
@@ -158,10 +167,13 @@ func dayChart(days []CommentDay) CommentChart {
 			classes[i] = "finde"
 		}
 	}
-	c := barChart(ns, labels, classes)
+	c := barChart(ns, labels, classes, "comentario", "comentarios")
 	// Lo que se publicó cada día va también en el <title> de su barra: el ▲ de
 	// arriba es aria-hidden y su title solo se ve con el mouse.
 	for i, d := range days {
+		if d.Likes > 0 {
+			c.Bars[i].Label += ", " + plural(int(d.Likes), "like nuevo", "likes nuevos")
+		}
 		if len(d.Pub) > 0 {
 			c.Bars[i].Label += " · publicado: " + strings.Join(d.Pub, " · ")
 		}
@@ -189,7 +201,34 @@ func dayChart(days []CommentDay) CommentChart {
 		total += n
 	}
 	c.Aria = fmt.Sprintf("Comentarios por día en %d días: %s en total, el día con más %s", len(days), miles(total), miles(c.Max))
+	c.Likes, c.LMax = likesSteps(days)
+	if c.Likes != "" {
+		c.Aria += "; likes nuevos por día en línea, el día con más " + c.LMax
+	}
 	return c
+}
+
+// likesSteps es la línea de likes nuevos por día, en escalones (cada valor es
+// del día entero), con su escala desde 0 dentro del mismo SVG de las barras.
+func likesSteps(days []CommentDay) (path, peak string) {
+	var top int64
+	for _, d := range days {
+		top = max(top, d.Likes)
+	}
+	if top == 0 {
+		return "", ""
+	}
+	var b strings.Builder
+	for i, d := range days {
+		y := 100 - float64(d.Likes)*95/float64(top)
+		if i == 0 {
+			fmt.Fprintf(&b, "M0 %.1f", y)
+		} else {
+			fmt.Fprintf(&b, " V%.1f", y)
+		}
+		fmt.Fprintf(&b, " H%d", (i+1)*10)
+	}
+	return b.String(), miles(top)
 }
 
 // curveChart es la curva desde la publicación; cada barra lleva su tramo abajo.
@@ -198,11 +237,29 @@ func curveChart(b []CommentBucket) CommentChart {
 	for i, x := range b {
 		ns[i], labels[i] = x.N, x.Label
 	}
-	c := barChart(ns, labels, classes)
+	c := barChart(ns, labels, classes, "comentario", "comentarios")
 	for i, x := range b {
 		c.Ticks = append(c.Ticks, Tick{Left: (float64(i) + 0.5) * 100 / float64(len(b)), Label: x.Label})
 	}
 	c.Aria = "Comentarios según cuánto después de la publicación llegaron"
+	return c
+}
+
+// likesNote es la nota de la tarjeta de likes del detalle.
+func likesNote(d CommentsDetail) string {
+	if d.LikesPer1000 == "—" {
+		return "YouTube no informa likes"
+	}
+	return d.LikesPer1000 + " c/1.000 vistas"
+}
+
+// likeCurveChart es la curva de likes desde la publicación.
+func likeCurveChart(b []CommentBucket) CommentChart {
+	c := curveChart(b)
+	for i := range c.Bars {
+		c.Bars[i].Label = b[i].Label + ": " + plural(b[i].N, "like", "likes")
+	}
+	c.Aria = "Likes según cuánto después de la publicación llegaron"
 	return c
 }
 

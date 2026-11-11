@@ -279,15 +279,16 @@ func TestVideoArchiveRetention(t *testing.T) {
 	}
 }
 
-// commentsFixture arma dos canales con un grabado cada uno, un vivo terminado
+// commentsFixture arma dos canales con grabados, un short, un vivo terminado
 // y comentarios repartidos en el tiempo.
 func commentsFixture(now time.Time) ([]Message, []VideoRecord) {
 	day := 24 * time.Hour
 	vids := []VideoRecord{
-		{ID: "g1", Title: "Entrevista al ministro", ChannelID: "UC1", Channel: "Radio", PublishedAt: now.Add(-3 * day), Views: 2000, Comments: 6},
-		{ID: "g2", Title: "Editorial", ChannelID: "UC1", Channel: "Radio", PublishedAt: now.Add(-20 * day), Views: 1000, Comments: 2},
+		{ID: "g1", Title: "Entrevista al ministro", ChannelID: "UC1", Channel: "Radio", PublishedAt: now.Add(-3 * day), Views: 2000, Likes: 120, Comments: 6},
+		{ID: "g2", Title: "Editorial", ChannelID: "UC1", Channel: "Radio", PublishedAt: now.Add(-20 * day), Views: 1000, Likes: 40, Comments: 2},
 		{ID: "o1", Title: "Acústico", ChannelID: "UC2", Channel: "Otra", PublishedAt: now.Add(-2 * day), Views: 500, Comments: 1},
 		{ID: "l1", Title: "Vivo de ayer", ChannelID: "UC1", Channel: "Radio", PublishedAt: now.Add(-day), Live: true, Comments: 1},
+		{ID: "s1", Title: "Short del día", ChannelID: "UC1", Channel: "Radio", PublishedAt: now.Add(-day), Views: 4000, Likes: 200, Comments: 1, Short: true},
 	}
 	c := func(id, video, author, text string, ago time.Duration, likes, replies int64) Message {
 		return Message{ID: id, Source: "comentario", VideoID: video, Author: author, Text: text, At: now.Add(-ago), Likes: likes, Replies: replies}
@@ -302,6 +303,7 @@ func commentsFixture(now time.Time) ([]Message, []VideoRecord) {
 		c("c7", "g2", "Eli", "¿Y la parte de tarifas?", 19*day, 3, 0),
 		c("c8", "o1", "Fede", "Qué buena sesión, excelente", day, 9, 1),
 		c("c9", "l1", "Gabi", "¿Lo suben a Spotify?", 20*time.Hour, 2, 0),
+		c("c10", "s1", "Iris", "Genial el cierre", 3*time.Hour, 4, 0),
 		{ID: "m1", Source: "chat", VideoID: "l1", Author: "Hugo", Text: "chat del vivo", At: now.Add(-day)},
 	}
 	return msgs, vids
@@ -318,24 +320,25 @@ func TestCommentsSummary(t *testing.T) {
 		total, people, videos, open, days, rows int
 		firstRow                                string
 	}{
-		// Grabados de todos en 30 días: g1 (5), g2 (2), o1 (1); preguntas sin respuestas: c1, c7.
-		{"30 días, todos", CommentsQuery{Periodo: "30d", Tipo: "grabados"}, 8, 6, 3, 2, 30, 3, "g1"},
-		{"7 días, todos", CommentsQuery{Periodo: "7d", Tipo: "grabados"}, 6, 5, 2, 1, 7, 3, "g1"},
-		{"un canal", CommentsQuery{Canal: "UC2", Periodo: "30d", Tipo: "grabados"}, 1, 1, 1, 0, 30, 1, "o1"},
-		{"vivos terminados", CommentsQuery{Periodo: "30d", Tipo: "vivos"}, 1, 1, 1, 1, 30, 1, "l1"},
-		{"todos los tipos", CommentsQuery{Periodo: "30d", Tipo: "todos"}, 9, 7, 4, 3, 30, 4, "g1"},
-		// Desde la publicación: todos los comentarios guardados de los videos publicados en 30 días.
-		{"desde la publicación", CommentsQuery{Periodo: "pub", Tipo: "grabados"}, 8, 6, 3, 2, 30, 3, "g1"},
+		// Videos de todos en 30 días: g1 (5), g2 (2), o1 (1); preguntas sin respuestas: c1, c7.
+		{"30 días, videos", CommentsQuery{Periodo: "30d", Tipo: "videos"}, 8, 6, 3, 2, 30, 3, "g1"},
+		{"7 días, videos", CommentsQuery{Periodo: "7d", Tipo: "videos"}, 6, 5, 2, 1, 7, 3, "g1"},
+		{"un canal", CommentsQuery{Canal: "UC2", Periodo: "30d", Tipo: "videos"}, 1, 1, 1, 0, 30, 1, "o1"},
+		{"shorts", CommentsQuery{Periodo: "30d", Tipo: "shorts"}, 1, 1, 1, 0, 30, 1, "s1"},
+		// Todos: videos y shorts, nunca los vivos (c9 queda afuera).
+		{"todos los tipos", CommentsQuery{Periodo: "30d", Tipo: "todos"}, 9, 7, 4, 2, 30, 4, "g1"},
+		// Publicados en 30 días: todos los comentarios guardados de los videos publicados en 30 días.
+		{"publicados en 30 días", CommentsQuery{Periodo: "pub", Tipo: "videos"}, 8, 6, 3, 2, 30, 3, "g1"},
 	}
 	for _, c := range cases {
-		v := CommentsSummary(msgs, vids, c.q, now)
+		v := CommentsSummary(msgs, vids, nil, c.q, now)
 		if v.Total != c.total || v.People != c.people || v.WithComments != c.videos || v.OpenQuestions != c.open ||
 			len(v.Days) != c.days || len(v.Rows) != c.rows || (len(v.Rows) > 0 && v.Rows[0].ID != c.firstRow) {
 			t.Errorf("%s: total %d personas %d videos %d preguntas %d días %d filas %d (primera %+v)", c.name,
 				v.Total, v.People, v.WithComments, v.OpenQuestions, len(v.Days), len(v.Rows), v.Rows)
 		}
 	}
-	v := CommentsSummary(msgs, vids, CommentsQuery{Periodo: "30d", Tipo: "grabados", Dest: "likes"}, now)
+	v := CommentsSummary(msgs, vids, nil, CommentsQuery{Periodo: "30d", Tipo: "videos", Dest: "likes"}, now)
 	// 1 queja (c2) de 8.
 	if v.ComplaintPct != 12.5 {
 		t.Errorf("quejas = %v", v.ComplaintPct)
@@ -358,21 +361,21 @@ func TestCommentsSummary(t *testing.T) {
 	if len(v.Cats) == 0 || v.CatTotal != 8 {
 		t.Errorf("categorías = %d sobre %+v", v.CatTotal, v.Cats)
 	}
-	if d := CommentsSummary(msgs, vids, CommentsQuery{Periodo: "30d", Tipo: "grabados", Dest: "respuestas"}, now); d.Featured[0].ID != "c3" || d.Featured[1].ID != "c2" {
+	if d := CommentsSummary(msgs, vids, nil, CommentsQuery{Periodo: "30d", Tipo: "videos", Dest: "respuestas"}, now); d.Featured[0].ID != "c3" || d.Featured[1].ID != "c2" {
 		t.Errorf("más respuestas = %+v", d.Featured)
 	}
-	if d := CommentsSummary(msgs, vids, CommentsQuery{Periodo: "30d", Tipo: "grabados", Dest: "quejas"}, now); len(d.Featured) != 1 || d.Featured[0].ID != "c2" {
+	if d := CommentsSummary(msgs, vids, nil, CommentsQuery{Periodo: "30d", Tipo: "videos", Dest: "quejas"}, now); len(d.Featured) != 1 || d.Featured[0].ID != "c2" {
 		t.Errorf("quejas = %+v", d.Featured)
 	}
-	if d := CommentsSummary(msgs, vids, CommentsQuery{Periodo: "30d", Tipo: "grabados", Orden: "fecha"}, now); d.Rows[0].ID != "o1" {
+	if d := CommentsSummary(msgs, vids, nil, CommentsQuery{Periodo: "30d", Tipo: "videos", Orden: "fecha"}, now); d.Rows[0].ID != "o1" {
 		t.Errorf("orden por fecha = %+v", d.Rows)
 	}
 	// Un comentario de un video que no está en el archivo cuenta en "todos los canales" como grabado.
 	extra := append(msgs, Message{ID: "x1", Source: "comentario", VideoID: "zz", Author: "Iván", Text: "hola", At: now.Add(-time.Hour)})
-	if d := CommentsSummary(extra, vids, CommentsQuery{Periodo: "7d", Tipo: "grabados"}, now); d.Total != 7 {
+	if d := CommentsSummary(extra, vids, nil, CommentsQuery{Periodo: "7d", Tipo: "videos"}, now); d.Total != 7 {
 		t.Errorf("con video desconocido = %d", d.Total)
 	}
-	if d := CommentsSummary(nil, nil, CommentsQuery{Periodo: "30d", Tipo: "grabados"}, now); d.Total != 0 || len(d.Days) != 30 {
+	if d := CommentsSummary(nil, nil, nil, CommentsQuery{Periodo: "30d", Tipo: "videos"}, now); d.Total != 0 || len(d.Days) != 30 {
 		t.Errorf("vacío = %+v", d)
 	}
 }
@@ -381,7 +384,7 @@ func TestCommentsSummary(t *testing.T) {
 func TestCommentsVideo(t *testing.T) {
 	now := noonToday()
 	msgs, vids := commentsFixture(now)
-	d, ok := CommentsVideo(msgs, vids, CommentsQuery{Video: "g1"}, now)
+	d, ok := CommentsVideo(msgs, vids, nil, CommentsQuery{Video: "g1"}, now)
 	if !ok || d.Video.Title != "Entrevista al ministro" || d.Total != 5 || len(d.List) != 5 || d.List[0].ID != "c3" {
 		t.Fatalf("detalle = %v %+v", ok, d)
 	}
@@ -409,12 +412,12 @@ func TestCommentsVideo(t *testing.T) {
 		{"sin respuestas", CommentsQuery{Video: "g1", SinResp: true, VOrden: "viejos"}, "c1", 2},
 	}
 	for _, c := range cases {
-		d, _ := CommentsVideo(msgs, vids, c.q, now)
+		d, _ := CommentsVideo(msgs, vids, nil, c.q, now)
 		if d.Shown != c.n || len(d.List) == 0 || d.List[0].ID != c.first {
 			t.Errorf("%s: %d mensajes, primero %+v", c.name, d.Shown, d.List)
 		}
 	}
-	if _, ok := CommentsVideo(msgs, vids, CommentsQuery{Video: "nada"}, now); ok {
+	if _, ok := CommentsVideo(msgs, vids, nil, CommentsQuery{Video: "nada"}, now); ok {
 		t.Error("un video sin datos no tendría que encontrarse")
 	}
 	// Páginas de commentsPageSize.
@@ -422,7 +425,7 @@ func TestCommentsVideo(t *testing.T) {
 	for i := range commentsPageSize + 3 {
 		many = append(many, Message{ID: "p" + string(rune('a'+i%26)) + strings.Repeat("x", i/26), Source: "comentario", VideoID: "g1", Text: "ok", At: now.Add(-time.Duration(i) * time.Minute)})
 	}
-	if d, _ := CommentsVideo(many, vids, CommentsQuery{Video: "g1", Pag: 2}, now); len(d.List) != 3 || d.Page != 2 || d.Pages != 2 {
+	if d, _ := CommentsVideo(many, vids, nil, CommentsQuery{Video: "g1", Pag: 2}, now); len(d.List) != 3 || d.Page != 2 || d.Pages != 2 {
 		t.Errorf("página 2: %d mensajes, página %d de %d", len(d.List), d.Page, d.Pages)
 	}
 }
@@ -431,9 +434,20 @@ func TestCommentsVideo(t *testing.T) {
 func TestCommentsQuery(t *testing.T) {
 	q := commentsQuery(map[string][]string{"periodo": {"<x>"}, "tipo": {"raro"}, "orden": {"x"}, "dest": {"y"}, "vorden": {"z"},
 		"cat": {"nada"}, "pag": {"-3"}, "buscar": {strings.Repeat("a", 300)}, "sinresp": {"1"}})
-	if q.Periodo != "30d" || q.Tipo != "grabados" || q.Orden != "periodo" || q.Dest != "likes" || q.VOrden != "likes" ||
+	if q.Periodo != "30d" || q.Tipo != "todos" || q.Orden != "periodo" || q.Dest != "likes" || q.VOrden != "likes" ||
 		q.Cat != "" || q.Pag != 1 || len([]rune(q.Buscar)) != 100 || !q.SinResp {
 		t.Errorf("commentsQuery = %+v", q)
+	}
+	// Los tipos de antes caen al defecto: no hay más "vivos" ni "grabados".
+	for _, tipo := range []string{"vivos", "grabados"} {
+		if q := commentsQuery(map[string][]string{"tipo": {tipo}}); q.Tipo != "todos" {
+			t.Errorf("tipo=%s = %q", tipo, q.Tipo)
+		}
+	}
+	for _, o := range []string{"likes", "likesratio"} {
+		if q := commentsQuery(map[string][]string{"orden": {o}}); q.Orden != o {
+			t.Errorf("orden=%s = %q", o, q.Orden)
+		}
 	}
 }
 
@@ -462,24 +476,29 @@ func TestCommentsPage(t *testing.T) {
 	st.Add(msgs)
 	for _, v := range vids {
 		st.AddVideos(now, []Video{{ID: v.ID, Title: v.Title, ChannelID: v.ChannelID, Channel: v.Channel, PublishedAt: v.PublishedAt,
-			Views: v.Views, Comments: v.Comments, LiveStatus: "none", StartedAt: map[bool]time.Time{true: v.PublishedAt}[v.Live]}})
+			Views: v.Views, Likes: v.Likes, Short: v.Short, Comments: v.Comments, LiveStatus: "none", StartedAt: map[bool]time.Time{true: v.PublishedAt}[v.Live]}})
 	}
 	for _, path := range []string{"/", "/programas", "/canales", "/comentarios"} {
 		body := get(path).Body.String()
-		i, j, k := strings.Index(body, ">Programas</a>"), strings.Index(body, ">Comentarios</a>"), strings.Index(body, ">Canales</a>")
+		i, j, k := strings.Index(body, ">Programas</a>"), strings.Index(body, ">Comentarios y likes</a>"), strings.Index(body, ">Canales</a>")
 		if i < 0 || j < i || k < j {
 			t.Errorf("%s: las pestañas no están en orden (%d, %d, %d)", path, i, j, k)
 		}
 	}
 	w := get("/comentarios?periodo=<script>&canal=%3Cb%3E")
 	body := w.Body.String()
-	for _, want := range []string{`aria-current="page">Comentarios`, "Entrevista al ministro", "Preguntas sin respuesta", "¿Dónde está la entrevista completa?", "Ana"} {
+	for _, want := range []string{`aria-current="page">Comentarios y likes`, "Entrevista al ministro", "Preguntas sin respuesta", "¿Dónde está la entrevista completa?", "Ana",
+		"Publicados en 30 días", "publicados desde el " + dayStart(now).AddDate(0, 0, -29).Format("02/01"), "Comunidad", ">Shorts<", "Likes nuevos", "Videos y shorts"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("falta %q", want)
 		}
 	}
 	if strings.Contains(body, "<script>") || strings.Contains(body, "&lt;script&gt;") || strings.Contains(body, "&lt;b&gt;") {
 		t.Error("se reflejó un parámetro fuera de la lista")
+	}
+	// La aclaración de "Publicados en 30 días" tiene su fecha con cualquier período.
+	if body := get("/comentarios?periodo=7d").Body.String(); !strings.Contains(body, "publicados desde el "+dayStart(now).AddDate(0, 0, -29).Format("02/01")) {
+		t.Error("con 7 días, la aclaración no tiene la fecha de los 30 días")
 	}
 	if w := get("/parcial/comentarios?periodo=7d"); w.Code != 200 || !strings.Contains(w.Body.String(), `id="comentarios"`) {
 		t.Errorf("parcial: %d", w.Code)
@@ -507,5 +526,128 @@ func TestCommentsPage(t *testing.T) {
 	}
 	if w := get("/export.csv?video=a%22b"); w.Code != http.StatusBadRequest {
 		t.Errorf("ID inválido: %d", w.Code)
+	}
+}
+
+// commentsLikes son las muestras de likes del fixture (ver TestCommentsLikes).
+func commentsLikes(now time.Time) map[string][]LikeSample {
+	day := 24 * time.Hour
+	s := func(id string, ago time.Duration, n int64) LikeSample {
+		return LikeSample{VideoID: id, At: now.Add(-ago), Likes: n}
+	}
+	return map[string][]LikeSample{
+		"g1": {s("g1", 3*day-time.Hour, 50), s("g1", 2*day, 100), s("g1", time.Hour, 120)},
+		"g2": {s("g2", 20*day-2*time.Hour, 10), s("g2", 10*day, 30), s("g2", day, 40)},
+		"s1": {s("s1", day-time.Hour, 150), s("s1", 2*time.Hour, 200)},
+	}
+}
+
+// TestCommentsLikes (CA8): likes del período, likes c/1.000 vistas, likes
+// nuevos por día, la tarjeta Videos y shorts y los órdenes por likes.
+func TestCommentsLikes(t *testing.T) {
+	now := noonToday()
+	msgs, vids := commentsFixture(now)
+	likes := commentsLikes(now)
+	v := CommentsSummary(msgs, vids, likes, CommentsQuery{Periodo: "30d", Tipo: "todos"}, now)
+	rows := map[string]CommentVideoRow{}
+	for _, r := range v.Rows {
+		rows[r.ID] = r
+	}
+	// Publicados dentro de la ventana: todos sus likes; o1 no tiene dato.
+	for id, want := range map[string]string{"g1": "120", "g2": "40", "s1": "200", "o1": "—"} {
+		if got := rows[id].LikesP; got != want {
+			t.Errorf("likes del período de %s = %q, quería %q", id, got, want)
+		}
+	}
+	if r := rows["g1"]; r.Likes != 120 || r.LikesPer1000 != "60,0" || r.Short {
+		t.Errorf("fila g1 = %+v", r)
+	}
+	if !rows["s1"].Short {
+		t.Error("s1 tendría que figurar como short")
+	}
+	if v.LikesNew != 360 || v.LikesPer1000 != "51,4" {
+		t.Errorf("likes nuevos %d, c/1.000 %q", v.LikesNew, v.LikesPer1000)
+	}
+	// Por día: lo que subió el contador; la primera muestra de un video
+	// publicado dentro de la ventana cuenta entera.
+	want := map[int]int64{9: 10, 19: 20, 26: 50, 27: 50, 28: 160, 29: 70}
+	for i, d := range v.Days {
+		if d.Likes != want[i] {
+			t.Errorf("likes del día %d (%s) = %d, quería %d", i, commentDayLabel(d.Day), d.Likes, want[i])
+		}
+	}
+	// 7 días: g2 se publicó antes; sus likes del período salen de la última muestra previa.
+	v7 := CommentsSummary(msgs, vids, likes, CommentsQuery{Periodo: "7d", Tipo: "todos"}, now)
+	for _, r := range v7.Rows {
+		if r.ID == "g2" && r.LikesP != "10" {
+			t.Errorf("g2 en 7 días = %q, quería 10", r.LikesP)
+		}
+	}
+	if v7.LikesNew != 330 {
+		t.Errorf("likes nuevos en 7 días = %d, quería 330", v7.LikesNew)
+	}
+	if len(v.Kinds) != 2 || v.Kinds[0].Name != "Video" || v.Kinds[0].N != 3 || v.Kinds[0].Likes != 160 || v.Kinds[0].Views != 3500 ||
+		v.Kinds[1].Name != "Short" || v.Kinds[1].N != 1 || v.Kinds[1].Likes != 200 || v.Kinds[1].Per1000 != "50,0" {
+		t.Errorf("videos y shorts = %+v", v.Kinds)
+	}
+	for orden, first := range map[string]string{"likes": "s1", "likesratio": "g1"} {
+		if d := CommentsSummary(msgs, vids, likes, CommentsQuery{Periodo: "30d", Tipo: "todos", Orden: orden}, now); d.Rows[0].ID != first {
+			t.Errorf("orden %s: primero %s, quería %s", orden, d.Rows[0].ID, first)
+		}
+	}
+}
+
+// TestCommentsVideoLikes (CA9): el detalle con los likes del video y su curva
+// desde la publicación.
+func TestCommentsVideoLikes(t *testing.T) {
+	now := noonToday()
+	msgs, vids := commentsFixture(now)
+	d, ok := CommentsVideo(msgs, vids, commentsLikes(now)["g1"], CommentsQuery{Video: "g1"}, now)
+	if !ok || d.Video.Likes != 120 || d.LikesPer1000 != "60,0" || !d.LikesFrom.IsZero() {
+		t.Fatalf("detalle = %v %+v", ok, d)
+	}
+	// 50 a la hora de publicado (1–2 h), +50 al día (1–2 días), +20 a los 3 días menos 1 h (2–3 días).
+	got := map[int]int{}
+	for i, b := range d.LikeCurve {
+		if b.N != 0 {
+			got[i] = b.N
+		}
+	}
+	if len(got) != 3 || got[1] != 50 || got[6] != 50 || got[7] != 20 {
+		t.Errorf("curva de likes = %+v", d.LikeCurve)
+	}
+	// Si las muestras empiezan mucho después de publicado, la primera es la base.
+	late := []LikeSample{{VideoID: "g2", At: now.Add(-10 * 24 * time.Hour), Likes: 30}, {VideoID: "g2", At: now.Add(-24 * time.Hour), Likes: 40}}
+	d, _ = CommentsVideo(msgs, vids, late, CommentsQuery{Video: "g2"}, now)
+	n := 0
+	for _, b := range d.LikeCurve {
+		n += b.N
+	}
+	if n != 10 || d.LikesFrom.IsZero() {
+		t.Errorf("curva con base = %d desde %v", n, d.LikesFrom)
+	}
+}
+
+// TestCommentsLikesFirstSample (CA8): si la primera muestra de un video
+// publicado en la ventana llega días después (el primer día con la serie),
+// sus likes van al día de la publicación y no se juntan en el de la muestra.
+func TestCommentsLikesFirstSample(t *testing.T) {
+	now := noonToday()
+	msgs, vids := commentsFixture(now)
+	likes := map[string][]LikeSample{"g1": {{VideoID: "g1", At: now.Add(-time.Hour), Likes: 120}}}
+	v := CommentsSummary(msgs, vids, likes, CommentsQuery{Periodo: "30d", Tipo: "videos"}, now)
+	// g1 se publicó hace 3 días (día 26).
+	for i, d := range v.Days {
+		want := int64(0)
+		if i == 26 {
+			want = 120
+		}
+		if d.Likes != want {
+			t.Errorf("día %d = %d, quería %d", i, d.Likes, want)
+		}
+	}
+	// g2 no tiene muestras pero sí contador (40): suma en el total, no en los días.
+	if v.LikesNew != 160 {
+		t.Errorf("likes nuevos = %d, quería 160", v.LikesNew)
 	}
 }

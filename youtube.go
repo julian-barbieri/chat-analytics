@@ -92,6 +92,8 @@ type Video struct {
 	LiveChatID  string
 	Concurrent  int64
 	StartedAt   time.Time // inicio real del vivo; cero si no empezó o no es un vivo
+	Likes       int64     // likeCount: viene en statistics, sin cuota extra
+	Short       bool      // está en la lista de shorts del canal (UUSH)
 }
 
 // ChannelInfo es lo que se necesita de un canal: su ID (también cuando se dio
@@ -271,6 +273,7 @@ func (y *YouTube) videos(ids []string) ([]Video, error) {
 			} `json:"snippet"`
 			Statistics struct {
 				ViewCount    string `json:"viewCount"`
+				LikeCount    string `json:"likeCount"`
 				CommentCount string `json:"commentCount"`
 			} `json:"statistics"`
 			LiveStreamingDetails struct {
@@ -294,6 +297,7 @@ func (y *YouTube) videos(ids []string) ([]Video, error) {
 			PublishedAt: it.Snippet.PublishedAt,
 			Views:       atoi(it.Statistics.ViewCount),
 			Comments:    atoi(it.Statistics.CommentCount),
+			Likes:       atoi(it.Statistics.LikeCount),
 			LiveStatus:  it.Snippet.LiveBroadcastContent,
 			LiveChatID:  it.LiveStreamingDetails.ActiveLiveChatID,
 			Concurrent:  atoi(it.LiveStreamingDetails.ConcurrentViewers),
@@ -770,4 +774,11 @@ func atoi(s string) int64 {
 	var n int64
 	fmt.Sscan(s, &n)
 	return n
+}
+
+// ChannelShorts devuelve los últimos shorts del canal: "UUSH..." es la lista
+// que YouTube arma sola, como la de vivos (1 unidad). No está documentada: si
+// falla, los videos quedan como videos comunes.
+func (y *YouTube) ChannelShorts(uploads string) ([]string, error) {
+	return y.RecentVideoIDs("UUSH"+strings.TrimPrefix(uploads, "UU"), 50)
 }

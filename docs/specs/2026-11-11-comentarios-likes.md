@@ -1,6 +1,6 @@
 # Spec: Comentarios y likes (shorts, likes guardados, videos sin nombre)
 
-- **Estado:** aprobada
+- **Estado:** implementada
 - **Tipo:** mejora
 - **Rama:** `feat/comentarios-likes`
 - **Origen:** pedido del usuario y diseño https://claude.ai/artifact/YQMeAw32tiseUT5pJpMRoE
@@ -27,38 +27,41 @@ sin datos y muestra likes guardados; Programas muestra los likes del vivo por pr
 
 ## Criterios de aceptación
 
-- [ ] CA1: el período `pub` se llama «Publicados en 30 días» y la pantalla dice desde qué
+- [x] CA1: el período `pub` se llama «Publicados en 30 días» y la pantalla dice desde qué
   fecha («publicados desde el 13/10…») — `TestCommentsPage` (texto y fecha).
-- [ ] CA2: `tipo=todos|videos|shorts` (por defecto `todos`); `tipo=vivos` o `grabados`
+- [x] CA2: `tipo=todos|videos|shorts` (por defecto `todos`); `tipo=vivos` o `grabados`
   cae al defecto. Los vivos no entran en ninguna opción. — `TestCommentsQuery`, `TestCommentsSummary`.
-- [ ] CA3: un video está en `UUSH…` del canal ⇒ `Short: true`. La lista se pide cada
-  `extraUploadsEvery` por canal resuelto (1 unidad con `spend`), no en cada revisión; si
-  falla, se conserva lo último. — `TestFlowAgainstFakeAPI` (ruta `UUSH`, `yt.Units`),
-  test de worker con reloj.
-- [ ] CA4: la pantalla avisa que las publicaciones de Comunidad no se leen con la API. —
+- [x] CA3: un video está en `UUSH…` del canal ⇒ `Short: true`. La lista de un canal se
+  pide como mucho cada `shortsEvery` (30 min; la primera, `shortsFirst` después de
+  arrancar) y solo si tiene videos sin clasificar, 1 unidad con `spend`; si falla, se
+  conserva lo último. — `TestVideosLikesAndShorts`, `TestWorkerShortsAndMissing`,
+  `TestReviewShortsOnlyNew`.
+- [x] CA4: la pantalla avisa que las publicaciones de Comunidad no se leen con la API. —
   `TestCommentsPage`.
-- [ ] CA5: los IDs con comentarios guardados que no están en el archivo se piden una sola
+- [x] CA5: los IDs con comentarios guardados que no están en el archivo se piden una sola
   vez con `Videos` (1 unidad cada 50, con `spend`) y entran al archivo; uno que YouTube no
   devuelve no se vuelve a pedir hasta reiniciar. — test de worker con API falsa.
-- [ ] CA6: `Video.Likes` y `VideoRecord.Likes` desde `likeCount`, sin cambiar el costo. —
+- [x] CA6: `Video.Likes` y `VideoRecord.Likes` desde `likeCount`, sin cambiar el costo. —
   `TestFlowAgainstFakeAPI`.
-- [ ] CA7: `datos.likes.jsonl` guarda `LikeSample{VideoID, At, Likes}`: en vivos, en cada
+- [x] CA7: `datos.likes.jsonl` guarda `LikeSample{VideoID, At, Likes}`: en vivos, en cada
   revisión si cambió; en videos y shorts, si cambió y pasaron 30 min desde la última.
   Retención de 30 días al abrir (tmp + `os.Rename`). — `TestLikesStore` (dedup, intervalo,
   retención, reapertura).
-- [ ] CA8: resumen con tarjetas Likes nuevos y Likes c/1.000 vistas, puntos de likes por
+- [x] CA8: resumen con tarjetas Likes nuevos y Likes c/1.000 vistas, puntos de likes por
   día en el gráfico, tarjeta «Videos y shorts» y columnas Likes / Likes del período /
   Likes c/1.000 en la tabla, con órdenes `likes` y `likesratio`. «Likes del período» =
   último valor − último valor antes del inicio (o 0 si se publicó dentro). —
   `TestCommentsSummary` (tabla de casos).
-- [ ] CA9: detalle de un video con tarjeta Likes y curva de likes acumulados desde la
+- [x] CA9: detalle de un video con tarjeta Likes y curva de likes acumulados desde la
   publicación junto a la de comentarios. — `TestCommentsVideo`.
-- [ ] CA10: Programas: por tramo, likes ganados = última muestra − primera del tramo
-  (vacío con menos de 2 muestras), likes c/1.000 espectadores promedio y gráfico de
-  likes cada 30 min del día con el color del programa. — `TestProgramLikes`.
-- [ ] CA11: README (cuota de shorts y faltantes, `datos.likes.jsonl`), AGENTS.md (mapa,
+- [x] CA10: Programas: por tramo, likes ganados = última muestra del tramo − última
+  muestra hasta su inicio (un vivo guarda una muestra solo cuando el contador cambia; sin
+  ninguna antes, la primera del tramo; vacío sin muestras dentro del tramo), likes c/1.000
+  espectadores promedio y gráfico de likes cada 30 min del día con el color y el nombre
+  del programa (el mismo color junto a su nombre en la tabla). — `TestProgramLikes`.
+- [x] CA11: README (cuota de shorts y faltantes, `datos.likes.jsonl`), AGENTS.md (mapa,
   archivos de datos) y `tools/preview` copia `datos.likes.jsonl`.
-- [ ] Gates de `CLAUDE.md` → "Definición de terminado" en verde y navegador en claro,
+- [x] Gates de `CLAUDE.md` → "Definición de terminado" en verde y navegador en claro,
   oscuro y celular.
 
 ## Diseño propuesto
@@ -82,11 +85,14 @@ Publicaciones de Comunidad (no hay API; scrapear no), likes de comentarios en el
 
 ## Riesgos
 
-- **Cuota:** UUSH ~48/día por canal; faltantes 1 cada 50, una vez. Likes: 0. Actualizar
+- **Cuota:** UUSH a lo sumo 48/día por canal, en general unas pocas (solo con videos
+  nuevos; la barra de Canales no lo suma); faltantes 1 cada 50, una vez. Likes: 0. Actualizar
   README. `UUSH` no está documentada: si falla, todos quedan como «Video».
 - **Datos:** `datos.likes.jsonl` es de la API: 30 días, `.gitignore` (`datos.*.jsonl`),
   nunca dentro de `datos.jsonl`. Campos nuevos con `omitempty` en `VideoRecord`.
 - **Tamaño:** ~1 línea cada 3 min por vivo + ≤ 1 cada 30 min por video que cambia.
+- **Revisión 1** (`/revisar`): se corrigieron los 11 hallazgos; CA10 cambió de «primera
+  del tramo» a «última hasta el inicio» por cómo se guardan las muestras de un vivo.
 - **Alcance:** es grande y va en un solo PR (lo decidió la persona). Para que se pueda
   revisar, un commit por parte: datos (CA3, CA5–CA7), Comentarios (CA1, CA2, CA4, CA8,
   CA9) y Programas (CA10).

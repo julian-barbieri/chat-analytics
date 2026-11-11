@@ -24,20 +24,27 @@
   </div>
   {{if .Rows}}<div class="tablewrap">
   <table>
-    <thead><tr><th scope="col">Programa</th><th scope="col">Canal</th><th scope="col">Horario</th><th scope="col" class="n">Mensajes</th><th scope="col" class="n">Personas</th><th scope="col" class="n">Preguntas</th><th scope="col" class="n">Super Chats</th><th scope="col">Resumen</th></tr></thead>
+    <thead><tr><th scope="col">Programa</th><th scope="col">Canal</th><th scope="col">Horario</th><th scope="col" class="n">Mensajes</th><th scope="col" class="n">Personas</th><th scope="col" class="n">Preguntas</th><th scope="col" class="n">Super Chats</th><th scope="col" class="n" title="Lo que subió el contador de likes del vivo durante el programa">Likes</th><th scope="col" class="n" title="Likes cada 1.000 espectadores promedio">Likes c/1.000 esp.</th><th scope="col">Resumen</th></tr></thead>
     <tbody>{{range .Rows}}<tr{{if eq .Key $.Pick}} class="sel"{{end}}>
-      <td><a href="{{($.Q.WithTramo .Key).Page}}" hx-get="{{($.Q.WithTramo .Key).Partial}}" hx-target="#programas" hx-swap="outerHTML" hx-push-url="{{($.Q.WithTramo .Key).Page}}"><strong>{{if .Seg.Program}}{{.Seg.Program}}{{else}}sin programa{{end}}</strong></a>{{if .OnAir}} <span class="live">AL AIRE</span>{{end}}</td>
+      <td>{{with .Swatch}}<span class="sw {{.}}" aria-hidden="true"></span> {{end}}<a href="{{($.Q.WithTramo .Key).Page}}" hx-get="{{($.Q.WithTramo .Key).Partial}}" hx-target="#programas" hx-swap="outerHTML" hx-push-url="{{($.Q.WithTramo .Key).Page}}"><strong>{{if .Seg.Program}}{{.Seg.Program}}{{else}}sin programa{{end}}</strong></a>{{if .OnAir}} <span class="live">AL AIRE</span>{{end}}</td>
       <td>{{if .Channel.Name}}{{.Channel.Name}}{{else}}{{.Channel.ID}}{{end}}</td>
       <td>{{if $.Multi}}{{.Date}} {{end}}{{.Hours}}{{if .Cuts}} <span class="muted">{{.Cuts}} {{if eq .Cuts 1}}corte{{else}}cortes{{end}}</span>{{end}}</td>
       <td class="n">{{miles .Msgs}}</td>
       <td class="n">{{miles .People}}</td>
       <td class="n" title="{{if .QByClaude}}por Claude{{else}}por reglas{{end}}">{{miles .Questions}}</td>
       <td class="n">{{miles .Supers}}</td>
+      <td class="n">{{if .HasLikes}}{{miles .Likes}}{{else}}—{{end}}</td>
+      <td class="n">{{if .HasLikes}}{{.LikesPer1000}}{{else}}—{{end}}</td>
       <td>{{if .Analysis}}{{if .Analysis.Error}}<span class="muted">con error</span>{{else}}<span class="ia">Claude</span>{{end}}{{else}}<span class="muted">{{if .OnAir}}al cerrar{{else}}sin resumen{{end}}</span>{{end}}</td>
     </tr>{{end}}</tbody>
   </table>
   </div>
-  <p class="muted">Preguntas por Claude en los programas con tandas; en los demás, por reglas. El resumen de Claude se hace solo cuando termina cada programa.</p>
+  <p class="muted">Preguntas por Claude en los programas con tandas; en los demás, por reglas. El resumen de Claude se hace solo cuando termina cada programa. YouTube da un solo contador de likes por vivo: los de cada programa son lo que subió durante su horario («—» si todavía no hay dos muestras).</p>
+  {{with .LikesChart}}<div class="cchart">
+    <h3 class="sub">Likes del vivo cada 30 minutos</h3>
+    {{template "cchart" .}}
+    <p class="muted">Cada barra tiene el color del programa que estaba al aire: el mismo que el cuadradito junto a su nombre en la tabla (pasá el mouse por una barra para ver cuál).</p>
+  </div>{{end}}
   {{else}}<p class="muted">{{.Empty}}{{if .Since}} {{.Since}}{{end}}</p>{{end}}
 </section>
 {{with .Detail}}{{template "programa-detalle" .}}{{end}}
