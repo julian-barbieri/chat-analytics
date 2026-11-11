@@ -1,6 +1,6 @@
 # Spec: Programas: preguntas sin etiquetar, franjas futuras y largo esperado
 
-- **Estado:** aprobada
+- **Estado:** implementada
 - **Tipo:** bug
 - **Rama:** `fix/programas-revision-preguntas-eje`
 - **Origen:** revisión del PR #38 (`factory/manual/programas-comparar-claude/revision-1.md`, hallazgos importantes 1 a 3); la persona pidió arreglar los tres.
@@ -18,9 +18,9 @@ Que la columna Preguntas cuente como Categorías, que el futuro del eje se vea c
 
 ## Criterios de aceptación
 
-- [ ] CA1: en un tramo con etiquetas, Preguntas cuenta los etiquetados con `Cat == pregunta` más los no etiquetados que las reglas marcan como pregunta (el criterio de `catOf`). — `TestProgramRowsClaude`.
-- [ ] CA2: el gráfico de un tramo al aire dibuja solo las franjas reales (un `<title>` y un `rect.hit` por franja real). El espacio hasta el fin esperado queda a la izquierda con `viewBox="-P 0 W+P 100"`, sin barras, sin línea típica y sin contar en el aria de oyentes. Un rótulo marca el fin esperado en el borde. — `TestProgramParticipationAxis`.
-- [ ] CA3: el largo esperado es la mediana, entre las emisiones anteriores, del bloque seguido de tramos (huecos ≤ `segmentGap`) que empieza a la hora del reloj más cercana. Un programa que sale a las 01:50 (1 h) y a las 11:50 (1 h 30) da 1 h 30 para la salida de las 11:50. — `TestProgramParticipationAxis` (caso nuevo).
+- [x] CA1: en un tramo con etiquetas, Preguntas cuenta los etiquetados con `Cat == pregunta` más los no etiquetados que las reglas marcan como pregunta (el criterio de `catOf`). — `TestProgramRowsClaude`.
+- [x] CA2: el gráfico de un tramo al aire dibuja solo las franjas reales (un `<title>` y un `rect.hit` por franja real). El espacio hasta el fin esperado queda a la izquierda con `viewBox="-P 0 W+P 100"`, sin barras, sin línea típica y sin contar en el aria de oyentes. Un rótulo marca el fin esperado en el borde. — `TestProgramParticipationAxis`.
+- [x] CA3: el largo esperado es la mediana, entre las emisiones anteriores, del bloque seguido de tramos (huecos ≤ `segmentGap`) que empieza a la hora del reloj más cercana. Un programa que sale a las 01:50 (1 h) y a las 11:50 (1 h 30) da 1 h 30 para la salida de las 11:50. — `TestProgramParticipationAxis` (caso nuevo).
 - [ ] Gates de `CLAUDE.md` → "Definición de terminado" en verde; vista previa de Programas en claro, oscuro y celular.
 
 ## Diseño propuesto

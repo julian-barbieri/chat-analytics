@@ -180,7 +180,7 @@ func programRows(segs []ProgramSeg, msgs []Message, analyses []ClaudeAnalysis, t
 		index[v] = ix
 	}
 	people := make([]map[string]bool, len(segs))
-	// Con etiquetas, un tramo con alguna cuenta las preguntas de Claude.
+	// Con etiquetas, un tramo con alguna cuenta las preguntas como Categorías.
 	labeled, claudeQ := make([]int, len(segs)), make([]int, len(segs))
 	for _, m := range msgs {
 		ix, ok := index[m.VideoID]
@@ -220,11 +220,15 @@ func programRows(segs []ProgramSeg, msgs []Message, analyses []ClaudeAnalysis, t
 			if ask {
 				r.Questions++
 			}
+			// Como catOf: la categoría de Claude si está etiquetado y, si no
+			// (antes de un reinicio, tandas topeadas), la de las reglas.
 			if l, ok := labels[m.ID]; ok {
 				labeled[i]++
 				if l.Cat == CatPregunta {
 					claudeQ[i]++
 				}
+			} else if ask {
+				claudeQ[i]++
 			}
 		}
 	}
@@ -540,10 +544,10 @@ func (s *Server) programDetail(ps ProgramSeg, msgs []Message, a *ClaudeAnalysis,
 		ems, from = s.programHistoryEms(ps, snap, now)
 	}
 	// Las franjas van antes que los botones: sin % no hay con qué comparar.
-	slots, typical, byPct := s.programSlots(sg, msgs, ems, now)
+	slots, typical, byPct, pad := s.programSlots(sg, msgs, ems, now)
 	if len(slots) > 0 {
 		cmp, opts, why := compareSetup(ems, sg.Start, q.WithTramo(ps.Key), byPct)
-		d.Part = programParticipation(slots, typical, byPct, snap.Videos, cmp)
+		d.Part = programParticipation(slots, typical, byPct, pad, snap.Videos, cmp)
 		if sg.Program != "" {
 			d.Part["Compare"], d.Part["CmpWhy"], d.Part["Summary"] = opts, why, EmissionSummary(ems, sg.Start)
 			if cmp != nil {
@@ -772,12 +776,13 @@ func fillEmissions(ems []Emission, msgs []Message, titles map[string]string) {
 
 // programSlots son las franjas de 5 min del tramo entero, de su inicio a su
 // fin (o a ahora si sigue al aire), con los espectadores del vivo
-// (Store.Viewers desde el inicio, no Snapshot). Al aire, se suman franjas
-// vacías hasta su largo esperado (expectedLength): así cada franja tiene el
-// mismo ancho en el gráfico aunque el programa recién empiece.
-func (s *Server) programSlots(sg Segment, msgs []Message, ems []Emission, now time.Time) ([]Slot, float64, bool) {
+// (Store.Viewers desde el inicio, no Snapshot). Al aire, pad dice cuántas
+// franjas faltan hasta su largo esperado (expectedLength): el gráfico deja ese
+// espacio vacío para que cada franja tenga el mismo ancho aunque el programa
+// recién empiece. No son franjas: no llevan título ni cuentan en el aria.
+func (s *Server) programSlots(sg Segment, msgs []Message, ems []Emission, now time.Time) (slots []Slot, typical float64, ok bool, pad int) {
 	if sg.VideoID == "" {
-		return nil, 0, false
+		return nil, 0, false, 0
 	}
 	end := sg.End
 	onAir := sg.State == SegLive || end.After(now)
@@ -790,24 +795,35 @@ func (s *Server) programSlots(sg Segment, msgs []Message, ems []Emission, now ti
 			viewers = append(viewers, v)
 		}
 	}
-	slots, typical, ok := ParticipationRange(msgs, viewers, []string{sg.VideoID}, sg.Start, end)
+	slots, typical, ok = ParticipationRange(msgs, viewers, []string{sg.VideoID}, sg.Start, end)
 	if onAir && len(slots) > 0 {
 		to := sg.Start.Add(expectedLength(ems, sg.Start))
 		for next := slots[len(slots)-1].Start.Add(slotStep); next.Before(to); next = next.Add(slotStep) {
-			slots = append(slots, Slot{Start: next})
+			pad++
 		}
 	}
-	return slots, typical, ok
+	return slots, typical, ok, pad
 }
 
-// expectedLength es cuánto suele durar el programa: la mediana de sus
-// emisiones anteriores (sin la del día de start), con minProgramAxis como
-// mínimo para que una sola franja no ocupe todo el gráfico.
+// expectedLength es cuánto suele durar una salida del programa: la mediana,
+// entre sus emisiones anteriores (sin la del día de start), del bloque que
+// empieza a la hora del reloj más cercana a start. Un programa que sale dos
+// veces por día no "dura" de la primera salida a la última. minProgramAxis
+// es el mínimo, para que una sola franja no ocupe todo el gráfico.
 func expectedLength(ems []Emission, start time.Time) time.Duration {
 	var spans []float64
 	for _, e := range ems {
-		if from, to := e.span(); !e.Day.Equal(dayStart(start)) && to.After(from) {
-			spans = append(spans, float64(to.Sub(from)))
+		if e.Day.Equal(dayStart(start)) {
+			continue
+		}
+		best, bestDist := time.Duration(0), time.Duration(-1)
+		for _, r := range runs(e.Segs) {
+			if d := clockDistance(r[0], start); bestDist < 0 || d < bestDist {
+				best, bestDist = r[1].Sub(r[0]), d
+			}
+		}
+		if best > 0 {
+			spans = append(spans, float64(best))
 		}
 	}
 	if len(spans) == 0 {
@@ -816,17 +832,74 @@ func expectedLength(ems []Emission, start time.Time) time.Duration {
 	return max(time.Duration(median(spans)), minProgramAxis)
 }
 
+// runs junta los tramos seguidos (huecos de hasta segmentGap, como un título
+// que parpadea) en bloques [inicio, fin], ordenados por inicio.
+func runs(segs []Segment) [][2]time.Time {
+	segs = slices.Clone(segs)
+	sort.Slice(segs, func(i, j int) bool { return segs[i].Start.Before(segs[j].Start) })
+	var out [][2]time.Time
+	for _, sg := range segs {
+		if n := len(out); n > 0 && !sg.Start.After(out[n-1][1].Add(segmentGap)) {
+			if sg.End.After(out[n-1][1]) {
+				out[n-1][1] = sg.End
+			}
+			continue
+		}
+		out = append(out, [2]time.Time{sg.Start, sg.End})
+	}
+	return out
+}
+
+// clockDistance es cuánto separa la hora del reloj local de a y b, sin
+// importar el día (a las 23:50 y a las 00:10 hay 20 min).
+func clockDistance(a, b time.Time) time.Duration {
+	d := a.Sub(dayStart(a)) - b.Sub(dayStart(b))
+	if d < 0 {
+		d = -d
+	}
+	return min(d, 24*time.Hour-d)
+}
+
 // minProgramAxis es el largo mínimo del eje de un programa al aire.
 const minProgramAxis = time.Hour
 
-// programParticipation arma el gráfico de participación con las franjas de programSlots.
-func programParticipation(slots []Slot, typical float64, ok bool, videos []Video, cmp *chartCompare) map[string]any {
+// programParticipation arma el gráfico de participación con las franjas de
+// programSlots y, con pad, deja a la izquierda (lo más nuevo va a la
+// izquierda) el espacio hasta el fin esperado: corre el origen del viewBox
+// (X0, VW) en vez de sumar franjas falsas, así las barras, las líneas y el
+// aria quedan como están y solo se reubican los rótulos y las marcas.
+func programParticipation(slots []Slot, typical float64, ok bool, pad int, videos []Video, cmp *chartCompare) map[string]any {
 	titles := videoTitles(videos)
 	var c *ChartCompare
 	if cmp != nil {
 		c = cmp.ChartCompare
 	}
-	return map[string]any{"Chart": participationChartCmp(slots, TopMoments(slots, titles), typical, ok, titles, c), "ByPct": ok, "Typical": pct(typical)}
+	chart := participationChartCmp(slots, TopMoments(slots, titles), typical, ok, titles, c)
+	if pad > 0 {
+		padChart(chart, pad, slots[0].Start.Add(time.Duration(len(slots)+pad)*slotStep))
+	}
+	return map[string]any{"Chart": chart, "ByPct": ok, "Typical": pct(typical)}
+}
+
+// padChart agrega pad posiciones vacías a la izquierda del gráfico, con el
+// rótulo del fin esperado en el borde.
+func padChart(chart map[string]any, pad int, end time.Time) {
+	w := chart["W"].(int)
+	total := float64(w + pad)
+	move := func(left float64) float64 { return (left/100*float64(w) + float64(pad)) / total * 100 }
+	marks := chart["Marks"].([]Mark)
+	for i := range marks {
+		marks[i].Left = move(marks[i].Left)
+	}
+	ticks := []Tick{{Left: 0, Label: end.Local().Format("15:04"), End: true}}
+	for _, t := range chart["Ticks"].([]Tick) {
+		t.Left, t.End = move(t.Left), false
+		ticks = append(ticks, t)
+	}
+	chart["Ticks"], chart["X0"], chart["VW"] = ticks, -pad, w+pad
+	if aria, has := chart["Aria"].(string); has {
+		chart["Aria"] = aria + "; el eje llega hasta las " + end.Local().Format("15:04") + ", lo que suele durar el programa"
+	}
 }
 
 // programSentiment suma al detalle las franjas de sentimiento del tramo
