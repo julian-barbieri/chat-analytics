@@ -216,7 +216,7 @@ el tipo y el monto adelante. */}}
       <div class="card tile"><div class="l">Asistencia media</div><div class="v">{{decimal .Attendance}} <small>de {{plural .Emissions "vivo" "vivos"}}</small></div><div class="muted">vivos en los que escribe cada participante (dice si la gente vuelve)</div></div>
       <div class="card tile"><div class="l">Stickiness</div><div class="v">{{printf "%.0f" .Sticky}} %</div><div class="muted">únicos por vivo ÷ únicos de las 4 semanas (comunidad estable)</div></div>
       <div class="card tile"><div class="l">Núcleo</div><div class="v">{{printf "%.0f" .CorePeople}} %</div><div class="muted">de los participantes escribe el {{printf "%.0f" .CoreMsgs}} % de los mensajes</div></div>
-      <div class="card tile"><div class="l">En riesgo</div><div class="v warnv">{{miles .AtRisk}}</div><div class="muted">habituales sin escribir hace 14+ días</div></div>
+      <div class="card tile"><div class="l">En riesgo</div><div class="v warnv">{{miles .AtRisk}}</div><div class="muted">habituales sin escribir hace 7+ días</div></div>
     </div>
     <div class="grid2">
       <div>

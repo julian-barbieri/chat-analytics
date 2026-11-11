@@ -1,6 +1,6 @@
 # Spec: En riesgo a los 7 días
 
-- **Estado:** aprobada
+- **Estado:** implementada
 - **Tipo:** mejora
 - **Rama:** `feat/en-riesgo-7-dias`
 - **Origen:** pedido del usuario en el chat (2026-11-11): "que esos participantes que están en riesgo sean +7 y no +14 días".
@@ -21,15 +21,13 @@ tarjeta y el README lo dicen.
 
 ## Criterios de aceptación
 
-- [ ] CA1: un habitual cuyo último mensaje fue hace 7 días exactos o más cuenta como en
+- [x] CA1: un habitual cuyo último mensaje fue hace 7 días exactos o más cuenta como en
   riesgo; uno de hace menos de 7 días no. Un ocasional o nuevo nunca cuenta. — `TestLoyaltyAtRisk` (nuevo, tabla de casos).
-- [ ] CA2: `TestLoyalty` sigue en verde sin cambiar sus números (B, a 15 días, sigue
+- [x] CA2: `TestLoyalty` sigue en verde sin cambiar sus números (B, a 15 días, sigue
   siendo el único en riesgo). — `go test -count=1 -run '^TestLoyalty$' ./...`
-- [ ] CA3: la tarjeta dice "habituales sin escribir hace 7+ días". — test de la
-  plantilla con `grep` sobre el HTML de `programDetail` o chequeo en `TestLoyaltyAtRisk`
-  sobre el render; y vista previa.
-- [ ] CA4: el README dice "7 días o más" en "en riesgo".
-- [ ] Gates de `CLAUDE.md` → "Definición de terminado" en verde.
+- [x] CA3: la tarjeta dice "habituales sin escribir hace 7+ días". — `TestProgramDetailSections` (render del detalle) y vista previa.
+- [x] CA4: el README dice "7 días o más" en "en riesgo".
+- [x] Gates de `CLAUDE.md` → "Definición de terminado" en verde.
 
 ## Diseño propuesto
 

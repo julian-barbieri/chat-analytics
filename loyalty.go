@@ -126,6 +126,10 @@ type HeatCell struct {
 // programa semanal y uno diario se comparan igual.
 const habitualShare, coreShare = 0.2, 0.5
 
+// atRiskAfter es cuánto sin escribir deja a un habitual "en riesgo": con
+// programas diarios o semanales, una semana sin aparecer ya es para avisar.
+const atRiskAfter = 7 * 24 * time.Hour
+
 // Loyalty calcula la fidelización de las emisiones (cualquier orden) hasta now.
 func Loyalty(ems []Emission, now time.Time) LoyaltyData {
 	from := now.Add(-loyaltyWindow)
@@ -187,7 +191,7 @@ func Loyalty(ems []Emission, now time.Time) LoyaltyData {
 		}
 		segs[k].People++
 		segMsgs[k] += p.msgs
-		if k >= 2 && now.Sub(p.last) >= 14*24*time.Hour {
+		if k >= 2 && now.Sub(p.last) >= atRiskAfter {
 			l.AtRisk++
 		}
 		if p.weeks[2] {
