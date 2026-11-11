@@ -59,7 +59,10 @@
   </div>
   {{with .Part}}<div class="inner">
     <h3>Participación durante el programa</h3>
-    <p class="muted">{{if .ByPct}}% de los que miraban que escribió en el chat, cada 5 minutos; los números marcan los 5 momentos más altos. Típica: {{.Typical}} (línea punteada).{{with .Chart.Viewers}} La línea: cuántos miraban, con su escala a la derecha.{{end}}{{else}}Sin dato de cuántos miraban: personas que escribieron cada 5 minutos.{{end}}</p>
+    {{with .Summary}}<p class="psum">{{.}}</p>{{end}}
+    {{with .Compare}}<div class="vbtns pcmp" role="group" aria-label="Comparar con">{{range .}}{{if .Off}}<button type="button" class="seg" disabled aria-pressed="false">{{.Label}}</button>{{else}}<button type="button" class="seg" hx-get="{{.Partial}}" hx-target="#programas" hx-swap="outerHTML" hx-push-url="{{.Page}}" aria-pressed="{{.On}}">{{.Label}}</button>{{end}}{{end}}</div>{{end}}
+    {{with .CmpWhy}}<p class="muted cmpwhy">{{.}}</p>{{end}}
+    <p class="muted">{{if .ByPct}}% de los que miraban que escribió en el chat, cada 5 minutos; los números marcan los 5 momentos más altos. {{if .Chart.Bands}}{{.CmpNote}}{{else}}Típica: {{.Typical}} (línea punteada).{{with .CmpNote}} {{.}}{{end}}{{end}}{{with .Chart.Viewers}} La línea: cuántos miraban, con su escala a la derecha.{{end}}{{else}}Sin dato de cuántos miraban: personas que escribieron cada 5 minutos.{{end}}</p>
     {{with .Chart}}{{template "part-chart" .}}{{end}}
   </div>{{end}}
   <div class="inner">

@@ -564,3 +564,151 @@ func EmissionMap(ems []Emission) (MapData, bool) {
 	}
 	return m, true
 }
+
+// Band es lo normal de una franja del reloj entre las emisiones anteriores:
+// percentiles 25 y 75 y la mediana del % de participación, de N emisiones.
+type Band struct {
+	P25, Med, P75 float64
+	N             int
+}
+
+// weekend dice si el día es sábado o domingo: lo normal de un programa de
+// lunes a viernes no se mezcla con el del fin de semana.
+func weekend(t time.Time) bool {
+	w := t.Local().Weekday()
+	return w == time.Saturday || w == time.Sunday
+}
+
+// priorEmissions son las emisiones de días anteriores al de ref, en el orden de ems.
+func priorEmissions(ems []Emission, ref time.Time) []Emission {
+	day := dayStart(ref)
+	var out []Emission
+	for _, e := range ems {
+		if e.Day.Before(day) {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+// NormalBand es lo normal de cada franja (por hora del reloj, clockKey) en
+// las emisiones anteriores al día de ref y del mismo tipo de día (de lunes a
+// viernes o de fin de semana). Una franja con menos de minEmissions
+// emisiones con dato de espectadores no entra.
+func NormalBand(ems []Emission, ref time.Time) map[string]Band {
+	pcts := map[string][]float64{}
+	for _, e := range priorEmissions(ems, ref) {
+		if weekend(e.Day) != weekend(ref) {
+			continue
+		}
+		for _, s := range e.slots() {
+			if s.Viewers > 0 {
+				k := clockKey(s.Start)
+				pcts[k] = append(pcts[k], s.Pct)
+			}
+		}
+	}
+	out := map[string]Band{}
+	for k, xs := range pcts {
+		if len(xs) >= minEmissions {
+			out[k] = Band{P25: quantile(xs, 0.25), Med: median(xs), P75: quantile(xs, 0.75), N: len(xs)}
+		}
+	}
+	return out
+}
+
+// CompareEmission es la emisión contra la que se compara: con "anterior", la
+// más reciente antes del día de ref (de cualquier día); con "semana", la del
+// mismo día 7 días antes. Si no hay, devuelve por qué.
+func CompareEmission(ems []Emission, ref time.Time, mode string) (*Emission, string) {
+	prior := priorEmissions(ems, ref)
+	switch mode {
+	case cmpPrev:
+		if len(prior) == 0 {
+			return nil, "no hay emisiones anteriores en 4 semanas"
+		}
+		e := slices.MaxFunc(prior, func(a, b Emission) int { return a.Day.Compare(b.Day) })
+		return &e, ""
+	case cmpWeek:
+		d := dayStart(ref).AddDate(0, 0, -7)
+		if i := slices.IndexFunc(prior, func(e Emission) bool { return e.Day.Equal(d) }); i >= 0 {
+			e := prior[i]
+			return &e, ""
+		}
+		return nil, "no hubo emisión el " + dayLabel(d)
+	}
+	return nil, ""
+}
+
+// dayLabel es "martes 03/11".
+func dayLabel(d time.Time) string { return weekdays[d.Weekday()] + " " + d.Format("02/01") }
+
+// emissionPct es la participación de una emisión (la mediana del % de sus
+// franjas con dato, como la "Típica" del gráfico) y su pico de espectadores.
+func emissionPct(e Emission) (p float64, peak int64, ok bool) {
+	var pcts []float64
+	for _, s := range e.slots() {
+		if s.Viewers > 0 {
+			pcts = append(pcts, s.Pct)
+			peak = max(peak, s.Viewers)
+		}
+	}
+	if len(pcts) == 0 {
+		return 0, 0, false
+	}
+	return median(pcts), peak, true
+}
+
+// EmissionSummary es la línea de arriba del gráfico: la participación de la
+// emisión del día de ref, su puesto entre las de 4 semanas (con al menos
+// minEmissions con dato) y su pico de espectadores contra el récord. Vacía si
+// la emisión no tiene dato de espectadores.
+func EmissionSummary(ems []Emission, ref time.Time) string {
+	type row struct {
+		day  time.Time
+		pct  float64
+		peak int64
+	}
+	var rows []row
+	cur := -1
+	for _, e := range ems {
+		p, peak, ok := emissionPct(e)
+		if !ok {
+			continue
+		}
+		if e.Day.Equal(dayStart(ref)) {
+			cur = len(rows)
+		}
+		rows = append(rows, row{e.Day, p, peak})
+	}
+	if cur < 0 {
+		return ""
+	}
+	c := rows[cur]
+	parts := []string{"Participación de esta emisión: " + pctFine(c.pct)}
+	rank, rec := 1, -1
+	for i, r := range rows {
+		if i == cur {
+			continue
+		}
+		if r.pct > c.pct {
+			rank++
+		}
+		if rec < 0 || r.peak > rows[rec].peak {
+			rec = i
+		}
+	}
+	if len(rows) >= minEmissions {
+		parts = append(parts, fmt.Sprintf("%d.ª de %d emisiones en 4 semanas", rank, len(rows)))
+	}
+	peak := "pico " + miles(c.peak) + " mirando"
+	switch {
+	case rec < 0:
+		parts = append(parts, peak)
+	case c.peak >= rows[rec].peak:
+		parts = append(parts, peak+", el más alto en 4 semanas")
+	default:
+		parts = append(parts, peak, "récord "+miles(rows[rec].peak)+", el "+dayLabel(rows[rec].day))
+	}
+	return strings.Join(parts, " · ")
+}

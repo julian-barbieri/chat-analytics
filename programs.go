@@ -238,7 +238,7 @@ func mayAsk(text string) bool {
 
 // programsQuery son los filtros de la pantalla, ya validados.
 type programsQuery struct {
-	Dia, Canal, Tramo string
+	Dia, Canal, Tramo, Comparar string
 }
 
 func (q programsQuery) values() url.Values {
@@ -249,6 +249,9 @@ func (q programsQuery) values() url.Values {
 	if q.Tramo != "" {
 		v.Set("tramo", q.Tramo)
 	}
+	if q.Comparar != "" && q.Comparar != cmpNone {
+		v.Set("comparar", q.Comparar)
+	}
 	return v
 }
 
@@ -258,6 +261,9 @@ func (q programsQuery) Partial() string { return "/parcial/programas?" + q.value
 
 // WithTramo es la misma pantalla con otro programa elegido.
 func (q programsQuery) WithTramo(key string) programsQuery { q.Tramo = key; return q }
+
+// WithComparar es la misma pantalla con otro modo de "Comparar con".
+func (q programsQuery) WithComparar(mode string) programsQuery { q.Comparar = mode; return q }
 
 // programChannels son los canales de la configuración y, después, los que
 // tienen muestras en datos.vivos.jsonl pero no están configurados (quitados
@@ -297,7 +303,7 @@ func programChannels(snap Snapshot, samples []LiveSample) []ChannelStatus {
 // readPrograms valida ?dia= y ?canal=: un valor desconocido vale el de por
 // defecto (hoy, todos los canales).
 func readPrograms(v url.Values, channels []ChannelStatus) programsQuery {
-	q := programsQuery{Tramo: v.Get("tramo")}
+	q := programsQuery{Tramo: v.Get("tramo"), Comparar: compareParam(v.Get("comparar"))}
 	q.Dia, _ = dayRange(v.Get("dia"), time.Now())
 	for _, c := range channels {
 		if c.ID == v.Get("canal") && c.ID != "" {
@@ -375,7 +381,7 @@ func (s *Server) programsData(v url.Values) map[string]any {
 		data["Detail"] = ProgramDetail{}
 	case pick >= 0:
 		data["Pick"] = rows[pick].Key
-		data["Detail"] = s.programDetail(rows[pick].ProgramSeg, segmentMessages(msgs, rows[pick].Seg, titles), rows[pick].Analysis, snap, now, q.Dia)
+		data["Detail"] = s.programDetail(rows[pick].ProgramSeg, segmentMessages(msgs, rows[pick].Seg, titles), rows[pick].Analysis, snap, now, q)
 	}
 	return data
 }
@@ -458,11 +464,11 @@ type SentRow struct {
 // programDetail arma el detalle de un tramo con sus mensajes ya filtrados.
 // El CSV lleva el día pedido para que salga el mismo tramo que la fila (en
 // "Ayer", un programa que cruza la medianoche se corta a las 00:00).
-func (s *Server) programDetail(ps ProgramSeg, msgs []Message, a *ClaudeAnalysis, snap Snapshot, now time.Time, dia string) ProgramDetail {
+func (s *Server) programDetail(ps ProgramSeg, msgs []Message, a *ClaudeAnalysis, snap Snapshot, now time.Time, q programsQuery) ProgramDetail {
 	sg := ps.Seg
 	csvQ := url.Values{"tramo": {ps.Key}}
-	if dia != "" {
-		csvQ.Set("dia", dia)
+	if q.Dia != "" {
+		csvQ.Set("dia", q.Dia)
 	}
 	d := ProgramDetail{Found: true, Title: programLabel(sg.Program), CSV: "/export.csv?" + csvQ.Encode()}
 	at := func(t time.Time) string {
@@ -503,44 +509,105 @@ func (s *Server) programDetail(ps ProgramSeg, msgs []Message, a *ClaudeAnalysis,
 		d.Supers = append(d.Supers, SuperRow{Currency: currencyLabel(c.Currency), Total: money(c.Micros), N: c.N})
 	}
 	d.SupersNote = superNote
-	d.Part = s.programParticipation(sg, msgs, snap.Videos, now)
+	var ems []Emission
+	var from time.Time
+	if sg.Program != "" {
+		ems, from = s.programHistoryEms(ps, snap, now)
+	}
+	cmp, opts, why := compareSetup(ems, sg.Start, q.WithTramo(ps.Key))
+	d.Part = s.programParticipation(sg, msgs, snap.Videos, now, cmp)
+	if d.Part != nil && sg.Program != "" {
+		d.Part["Compare"], d.Part["CmpWhy"], d.Part["Summary"] = opts, why, EmissionSummary(ems, sg.Start)
+		if cmp != nil {
+			d.Part["CmpNote"] = cmp.note
+		}
+	}
 	if s.analyst != nil {
 		s.programSentiment(&d, ps, msgs, now)
 	}
 	if sg.Program != "" {
-		d.History = s.programHistory(ps, snap, now)
+		d.History = s.programHistory(ps, ems, from, now)
 	}
 	return d
+}
+
+// CompareOption es un botón de "Comparar con". Off: no hay con qué comparar.
+type CompareOption struct {
+	Label, Page, Partial string
+	On, Off              bool
+}
+
+// compareModes son los botones de "Comparar con", en orden.
+var compareModes = []struct{ ID, Label string }{
+	{cmpNone, "Ninguna"}, {cmpPrev, "Emisión anterior"}, {cmpWeek, "Mismo día la semana pasada"}, {cmpNormal, "Lo normal (4 semanas)"},
+}
+
+// chartCompare es la comparación elegida, con el texto que la explica abajo del título.
+type chartCompare struct {
+	*ChartCompare
+	note string
+}
+
+// compareSetup arma los botones de "Comparar con" y la comparación del modo
+// pedido en q. Un modo sin datos queda deshabilitado (con su motivo en why)
+// y el gráfico sale sin comparar.
+func compareSetup(ems []Emission, ref time.Time, q programsQuery) (*chartCompare, []CompareOption, string) {
+	band := NormalBand(ems, ref)
+	kind := "de lunes a viernes"
+	if weekend(ref) {
+		kind = "de fin de semana"
+	}
+	var cmp *chartCompare
+	var opts []CompareOption
+	var whys []string
+	for _, m := range compareModes {
+		o := CompareOption{Label: m.Label, Page: q.WithComparar(m.ID).Page(), Partial: q.WithComparar(m.ID).Partial()}
+		var c *chartCompare
+		switch m.ID {
+		case cmpNormal:
+			if len(band) == 0 {
+				o.Off = true
+				whys = append(whys, fmt.Sprintf("%s: hacen falta %d emisiones anteriores %s", m.Label, minEmissions, kind))
+				break
+			}
+			c = &chartCompare{&ChartCompare{Band: band, Label: "lo normal"},
+				fmt.Sprintf("Lo normal: la banda va del percentil 25 al 75 de las emisiones anteriores %s a la misma hora (4 semanas) y la línea del medio es la mediana; las barras con borde están por encima de lo normal.", kind)}
+		case cmpPrev, cmpWeek:
+			e, why := CompareEmission(ems, ref, m.ID)
+			if e == nil {
+				o.Off = true
+				whys = append(whys, m.Label+": "+why)
+				break
+			}
+			line := map[string]float64{}
+			for _, s := range e.slots() {
+				if s.Viewers > 0 {
+					line[clockKey(s.Start)] = s.Pct
+				}
+			}
+			label := dayLabel(e.Day)
+			c = &chartCompare{&ChartCompare{Line: line, Label: label}, "La línea violeta: " + label + ", el % de participación a la misma hora."}
+		}
+		if m.ID == q.Comparar && !o.Off {
+			o.On, cmp = true, c
+		}
+		opts = append(opts, o)
+	}
+	if cmp == nil {
+		opts[0].On = true // sin modo o con uno sin datos, el gráfico de siempre
+	}
+	why := ""
+	if len(whys) > 0 {
+		why = "Sin datos para comparar · " + strings.Join(whys, " · ") + "."
+	}
+	return cmp, opts, why
 }
 
 // programHistory junta las emisiones del programa de las últimas 4 semanas
 // (loyaltyWindow) y arma sus secciones. Pide al Store solo los mensajes de
 // los vivos de esas emisiones (MessagesOf), los espectadores de esos vivos y,
 // con Claude, las franjas de sentimiento del canal: nunca Snapshot.
-func (s *Server) programHistory(ps ProgramSeg, snap Snapshot, now time.Time) *ProgramHistory {
-	var days []time.Time
-	for i := range int(loyaltyWindow / (24 * time.Hour)) {
-		days = append(days, dayStart(now).AddDate(0, 0, -i))
-	}
-	from := days[len(days)-1]
-	samples := s.st.Lives(from.Add(-12 * time.Hour))
-	segs := programSegs([]ChannelStatus{ps.Channel}, samples, snap.Videos, days, now)
-	ems := programEmissions(segs, ps.Seg.Program, now)
-	ids := map[string]bool{}
-	for _, e := range ems {
-		for _, id := range e.videoIDs() {
-			ids[id] = true
-		}
-	}
-	if len(ids) > 0 {
-		fillEmissions(ems, s.st.MessagesOf(ids, from.Add(-segmentLead)), videoTitles(snap.Videos))
-		for id := range ids {
-			viewers := s.st.Viewers(id, from)
-			for i := range ems {
-				ems[i].addViewers(id, viewers)
-			}
-		}
-	}
+func (s *Server) programHistory(ps ProgramSeg, ems []Emission, from, now time.Time) *ProgramHistory {
 	h := &ProgramHistory{Loyalty: Loyalty(ems, now), Emissions: len(ems), MinEmissions: minEmissions}
 	switch {
 	case s.analyst == nil:
@@ -556,6 +623,36 @@ func (s *Server) programHistory(ps ProgramSeg, snap Snapshot, now time.Time) *Pr
 	h.Slots, h.SlotsOK = StrongWeakSlots(ems)
 	h.Map, h.MapOK = EmissionMap(ems)
 	return h
+}
+
+// programHistoryEms arma una sola vez las emisiones del programa de las
+// últimas 4 semanas, con sus mensajes y espectadores: sirven para la
+// historia y para la comparación del gráfico. from es el primer día.
+func (s *Server) programHistoryEms(ps ProgramSeg, snap Snapshot, now time.Time) (ems []Emission, from time.Time) {
+	var days []time.Time
+	for i := range int(loyaltyWindow / (24 * time.Hour)) {
+		days = append(days, dayStart(now).AddDate(0, 0, -i))
+	}
+	from = days[len(days)-1]
+	samples := s.st.Lives(from.Add(-12 * time.Hour))
+	segs := programSegs([]ChannelStatus{ps.Channel}, samples, snap.Videos, days, now)
+	ems = programEmissions(segs, ps.Seg.Program, now)
+	ids := map[string]bool{}
+	for _, e := range ems {
+		for _, id := range e.videoIDs() {
+			ids[id] = true
+		}
+	}
+	if len(ids) > 0 {
+		fillEmissions(ems, s.st.MessagesOf(ids, from.Add(-segmentLead)), videoTitles(snap.Videos))
+		for id := range ids {
+			viewers := s.st.Viewers(id, from)
+			for i := range ems {
+				ems[i].addViewers(id, viewers)
+			}
+		}
+	}
+	return ems, from
 }
 
 // programEmissions agrupa por día local los tramos con ese programa (sin
@@ -613,7 +710,7 @@ func fillEmissions(ems []Emission, msgs []Message, titles map[string]string) {
 // programParticipation arma el gráfico de participación del tramo entero,
 // franjas de 5 min de su inicio a su fin (o a ahora si sigue al aire), con
 // los espectadores del vivo (Store.Viewers desde el inicio, no Snapshot).
-func (s *Server) programParticipation(sg Segment, msgs []Message, videos []Video, now time.Time) map[string]any {
+func (s *Server) programParticipation(sg Segment, msgs []Message, videos []Video, now time.Time, cmp *chartCompare) map[string]any {
 	if sg.VideoID == "" {
 		return nil
 	}
@@ -632,7 +729,11 @@ func (s *Server) programParticipation(sg Segment, msgs []Message, videos []Video
 		return nil
 	}
 	titles := videoTitles(videos)
-	return map[string]any{"Chart": participationChart(slots, TopMoments(slots, titles), typical, ok, titles), "ByPct": ok, "Typical": pct(typical)}
+	var c *ChartCompare
+	if cmp != nil {
+		c = cmp.ChartCompare
+	}
+	return map[string]any{"Chart": participationChartCmp(slots, TopMoments(slots, titles), typical, ok, titles, c), "ByPct": ok, "Typical": pct(typical)}
 }
 
 // programSentiment suma al detalle las franjas de sentimiento del tramo
@@ -775,7 +876,7 @@ func (s *Server) programDetailPartial(w http.ResponseWriter, r *http.Request) {
 			final = &a
 		}
 	}
-	s.render(w, "programa-detalle", s.programDetail(ps, msgs, final, snap, now, dia))
+	s.render(w, "programa-detalle", s.programDetail(ps, msgs, final, snap, now, programsQuery{Dia: dia, Comparar: compareParam(q.Get("comparar"))}))
 }
 
 // exportProgram es GET /export.csv?tramo=…&dia=…: los mensajes de un programa
@@ -827,4 +928,22 @@ func csvName(program string, start time.Time) string {
 		slug = "programa"
 	}
 	return "mensajes_" + slug + "_" + start.Local().Format("2006-01-02_1504") + ".csv"
+}
+
+// Modos de "Comparar con" del gráfico de participación (?comparar=, lista cerrada).
+const (
+	cmpNone   = "ninguna"
+	cmpPrev   = "anterior"
+	cmpWeek   = "semana"
+	cmpNormal = "normal"
+)
+
+// compareParam valida ?comparar=: un valor fuera de la lista es "ninguna".
+func compareParam(v string) string {
+	for _, m := range compareModes {
+		if m.ID == v {
+			return v
+		}
+	}
+	return cmpNone
 }

@@ -300,9 +300,12 @@ Lo usan En vivo y el detalle de Programas. */}}
   <div class="pmarks" aria-hidden="true">{{range .Marks}}<span style="left: {{printf "%.2f" .Left}}%">{{.Rank}}</span>{{end}}</div>
   <div class="pchart">
     <svg viewBox="0 0 {{.W}} 100" preserveAspectRatio="none" role="img" aria-label="{{.Aria}}{{with .Viewers}}. {{.Aria}}{{end}}">
+      {{range .Bands}}<rect class="banda" x="{{.X}}" y="{{.Y}}" width="{{.W}}" height="{{.H}}"></rect>{{end}}
       {{range .Bars}}<g><title>{{.Label}}</title><rect class="hit" x="{{.X}}" y="0" width="{{.W}}" height="100"></rect><rect class="bar{{if .Class}} {{.Class}}{{end}}" x="{{.X}}" y="{{.Y}}" width="{{.W}}" height="{{.H}}"></rect></g>
       {{end}}{{range .Lines}}<line class="corte" x1="{{.X}}" x2="{{.X}}" y1="0" y2="100" vector-effect="non-scaling-stroke"></line>{{end}}
-      {{if .ByPct}}<line class="tipica" x1="0" x2="{{.W}}" y1="{{.TypicalY}}" y2="{{.TypicalY}}"></line>{{end}}
+      {{if and .ByPct (not .Bands)}}<line class="tipica" x1="0" x2="{{.W}}" y1="{{.TypicalY}}" y2="{{.TypicalY}}"></line>{{end}}
+      {{with .Median}}<path class="mediana" d="{{.}}" vector-effect="non-scaling-stroke"></path>{{end}}
+      {{with .CmpLine}}<path class="cmp" d="{{.}}" vector-effect="non-scaling-stroke"></path>{{end}}
       {{with .Viewers}}<path class="oyentes" d="{{.Path}}" vector-effect="non-scaling-stroke"></path>{{end}}
       <line class="base" x1="0" x2="{{.W}}" y1="100" y2="100"></line>
     </svg>

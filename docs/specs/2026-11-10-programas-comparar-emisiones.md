@@ -1,6 +1,6 @@
 # Spec: comparar la participación de un programa con sus emisiones anteriores
 
-- **Estado:** aprobada
+- **Estado:** implementada
 - **Tipo:** mejora
 - **Rama:** `feat/programas-comparar-emisiones`
 - **Origen:** pedido del usuario (captura de "Participación durante el programa" de NADIE NOS PARA, Rock And Pop)
@@ -25,14 +25,14 @@ del programa, y que arriba haya una línea que ubique a esta emisión entre las 
 
 ## Criterios de aceptación
 
-- [ ] CA1: arriba del gráfico hay un selector "Comparar con": *Ninguna · Emisión
+- [x] CA1: arriba del gráfico hay un selector "Comparar con": *Ninguna · Emisión
   anterior · Mismo día la semana pasada · Lo normal (4 semanas)*, con botones de 44 px
   como mínimo. Viaja en el parámetro `comparar` (`ninguna|anterior|semana|normal`, lista
   cerrada) de `/programas` y `/parcial/programas/detalle`, y se conserva al cambiar de
   tramo y en el refresco de 60 s. Por defecto, `ninguna`: el gráfico queda igual que hoy.
   Un valor fuera de la lista se toma como `ninguna` y nunca se refleja en el HTML.
   — `TestCompareParam`, `TestProgramDetailCompare`
-- [ ] CA2: con `normal`, detrás de las barras va una banda (del percentil 25 al 75) y
+- [x] CA2: con `normal`, detrás de las barras va una banda (del percentil 25 al 75) y
   una línea con la mediana del % de las emisiones anteriores, franja por franja,
   **alineadas por hora del reloj** (la franja 11:15 contra las 11:15 de las otras). Solo
   cuentan las emisiones anteriores al día del tramo y del mismo tipo de día: de lunes a
@@ -41,30 +41,30 @@ del programa, y que arriba haya una línea que ubique a esta emisión entre las 
   ninguna franja llega a 3, el botón está deshabilitado con el motivo ("hacen falta 3
   emisiones anteriores"). La banda reemplaza a la línea "Típica" y el texto de abajo lo
   explica. — `TestNormalBand`
-- [ ] CA3: con `normal`, una barra que pasa el percentil 75 de su franja lleva una marca
+- [x] CA3: con `normal`, una barra que pasa el percentil 75 de su franja lleva una marca
   propia (clase CSS, además del color del top 5) y su `<title>` dice "por encima de lo
   normal (lo normal: x % a y %)". — `TestNormalBand`, `TestProgramDetailCompare`
-- [ ] CA4: con `anterior` (la emisión más reciente antes del día del tramo, de cualquier
+- [x] CA4: con `anterior` (la emisión más reciente antes del día del tramo, de cualquier
   día) y con `semana` (la del mismo día 7 días antes), se dibuja una línea escalonada con
   el % de esa emisión por hora del reloj. La línea se corta donde no hay dato. La escala
   del gráfico es la mayor entre las barras y lo comparado, para que nada quede afuera. La
   leyenda dice de qué día es ("martes 03/11"). Si no hay emisión para comparar, el botón
   está deshabilitado con el motivo ("no hubo emisión el martes 03/11"). — `TestCompareLine`
-- [ ] CA5: arriba del gráfico va una línea de resumen, con cualquier valor del selector:
+- [x] CA5: arriba del gráfico va una línea de resumen, con cualquier valor del selector:
   participación de la emisión (mediana del % de sus franjas, el mismo número que hoy es
   "Típica"), su puesto entre las emisiones de 4 semanas ("3.ª de 12") y el pico de
   espectadores contra el récord de esas emisiones ("pico 16.468 mirando · récord 18.200,
   el 28/10"). Con menos de 3 emisiones no hay puesto, y sin dato de espectadores no se
   muestra la línea. — `TestEmissionRank`
-- [ ] CA6: los colores nuevos (banda, mediana, línea comparada, marca) son tokens
+- [x] CA6: los colores nuevos (banda, mediana, línea comparada, marca) son tokens
   definidos en los dos temas, y `aria-label` del SVG suma lo comparado.
   — `TestTemplateTokens`, `TestProgramDetailCompare`
-- [ ] CA7: el detalle no pide más al `Store` que hoy: las emisiones se arman una sola vez
+- [x] CA7: el detalle no pide más al `Store` que hoy: las emisiones se arman una sola vez
   (las de `programHistory`) y sirven para la fidelización y para la comparación.
   — revisión del diff
 - [ ] CA8: vista previa con datos: Programas en claro, oscuro y ancho de celular, con los
   cuatro valores del selector.
-- [ ] Gates de `CLAUDE.md` → "Definición de terminado" en verde.
+- [x] Gates de `CLAUDE.md` → "Definición de terminado" en verde.
 
 ## Diseño propuesto
 

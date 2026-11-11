@@ -11015,3 +11015,216 @@ func TestSentimentSlotParam(t *testing.T) {
 		})
 	}
 }
+
+// cmpRef es un martes fijo (10/11/2026 al mediodía local): los tests de la
+// comparación dependen del día de la semana.
+func cmpRef() time.Time { return time.Date(2026, time.November, 10, 12, 0, 0, 0, time.Local) }
+
+// TestCompareParam (CA1 de programas-comparar-emisiones): ?comparar= es una
+// lista cerrada; lo que no está vale "ninguna" y nunca se refleja.
+func TestCompareParam(t *testing.T) {
+	for in, want := range map[string]string{"": cmpNone, "ninguna": cmpNone, "anterior": cmpPrev, "semana": cmpWeek,
+		"normal": cmpNormal, "NORMAL": cmpNone, "<script>": cmpNone, "normal ": cmpNone} {
+		if got := compareParam(in); got != want {
+			t.Errorf("compareParam(%q) = %q, quería %q", in, got, want)
+		}
+	}
+	q := readPrograms(url.Values{"comparar": {"normal"}, "tramo": {"k"}}, nil)
+	if q.Comparar != cmpNormal || !strings.Contains(q.Page(), "comparar=normal") || !strings.Contains(q.WithTramo("x").Partial(), "comparar=normal") {
+		t.Errorf("el modo no viaja: %+v %s", q, q.Page())
+	}
+	if q := readPrograms(url.Values{}, nil); strings.Contains(q.Page(), "comparar") {
+		t.Errorf("sin comparar no va en la URL: %s", q.Page())
+	}
+	now := noonToday()
+	_, srv := programServer(t, now, false)
+	body := getBody(srv.Routes(), "/programas?comparar=%3Cx%3Ealerta")
+	if strings.Contains(body, "alerta") || strings.Contains(body, "%3Cx") {
+		t.Error("se reflejó un comparar fuera de la lista")
+	}
+}
+
+// TestNormalBand (CA2, CA3): lo normal por hora del reloj, solo de días
+// anteriores del mismo tipo, con al menos 3 emisiones por franja.
+func TestNormalBand(t *testing.T) {
+	ref := cmpRef() // martes
+	var ems []Emission
+	// Hoy (0) y el fin de semana (2 y 3) tienen 90 personas a las 10:20: no cuentan.
+	for _, c := range []struct{ d, n int }{{0, 90}, {1, 10}, {2, 90}, {3, 90}, {4, 20}, {5, 30}, {6, 40}, {7, 50}} {
+		ems = append(ems, slotEmission(ref, c.d, map[int]int{20: c.n}))
+	}
+	b := NormalBand(ems, ref)
+	if got := b["10:20"]; math.Abs(got.P25-2) > 0.01 || math.Abs(got.Med-3) > 0.01 || math.Abs(got.P75-4) > 0.01 || got.N != 5 {
+		t.Errorf("10:20 = %+v", got)
+	}
+	if got := b["10:00"]; got.N != 5 || math.Abs(got.Med-1) > 0.01 {
+		t.Errorf("10:00 = %+v", got)
+	}
+	if len(b) != 12 {
+		t.Errorf("franjas = %d, quería 12", len(b))
+	}
+	// Un domingo compara con sábado y domingo anteriores: solo hay 2.
+	if b := NormalBand(ems, ref.AddDate(0, 0, 5)); len(b) != 0 {
+		t.Errorf("con 2 emisiones del fin de semana no hay banda: %+v", b)
+	}
+	if b := NormalBand(ems[:3], ref); len(b) != 0 {
+		t.Errorf("con menos de 3 emisiones no hay banda: %+v", b)
+	}
+}
+
+// TestCompareEmission (CA4): la emisión anterior y la de 7 días antes.
+func TestCompareEmission(t *testing.T) {
+	ref := cmpRef()
+	ems := []Emission{slotEmission(ref, 0, nil), slotEmission(ref, 2, nil), slotEmission(ref, 7, nil)}
+	if e, why := CompareEmission(ems, ref, cmpPrev); e == nil || !e.Day.Equal(dayStart(ref).AddDate(0, 0, -2)) || why != "" {
+		t.Errorf("anterior = %v %q", e, why)
+	}
+	if e, _ := CompareEmission(ems, ref, cmpWeek); e == nil || !e.Day.Equal(dayStart(ref).AddDate(0, 0, -7)) {
+		t.Errorf("semana = %v", e)
+	}
+	if e, why := CompareEmission(ems[:2], ref, cmpWeek); e != nil || why != "no hubo emisión el martes 03/11" {
+		t.Errorf("sin la de la semana pasada = %v %q", e, why)
+	}
+	if e, why := CompareEmission(ems[:1], ref, cmpPrev); e != nil || why != "no hay emisiones anteriores en 4 semanas" {
+		t.Errorf("sin anteriores = %v %q", e, why)
+	}
+}
+
+// TestEmissionRank (CA5): participación, puesto y récord de espectadores.
+func TestEmissionRank(t *testing.T) {
+	ref := cmpRef()
+	var ems []Emission
+	for _, c := range []struct{ d, n int }{{0, 30}, {1, 50}, {4, 10}, {5, 20}, {6, 40}} {
+		per := map[int]int{}
+		for m := 0; m < 60; m += 5 {
+			per[m] = c.n
+		}
+		ems = append(ems, slotEmission(ref, c.d, per))
+	}
+	ems[1].Viewers[3].Viewers = 1200 // el lunes 09/11 tuvo el récord
+	want := "Participación de esta emisión: 3,0 % · 3.ª de 5 emisiones en 4 semanas · pico 1.000 mirando · récord 1.200, el lunes 09/11"
+	if got := EmissionSummary(ems, ref); got != want {
+		t.Errorf("resumen =\n%q\nquería\n%q", got, want)
+	}
+	if got := EmissionSummary(ems[:2], ref); got != "Participación de esta emisión: 3,0 % · pico 1.000 mirando · récord 1.200, el lunes 09/11" {
+		t.Errorf("con 2 emisiones = %q", got)
+	}
+	ems[0].Viewers[0].Viewers = 2000
+	if got := EmissionSummary(ems, ref); !strings.HasSuffix(got, "pico 2.000 mirando, el más alto en 4 semanas") {
+		t.Errorf("con récord propio = %q", got)
+	}
+	if got := pctFine(0.04); got != "0,04 %" {
+		t.Errorf("pctFine(0,04) = %q", got)
+	}
+	if got := EmissionSummary([]Emission{emissionAt(ref, 0)}, ref); got != "" {
+		t.Errorf("sin espectadores = %q", got)
+	}
+}
+
+// cmpSlots son 4 franjas desde las 10:00 de ref con 10, 20, 30 y 40 personas de 1.000.
+func cmpSlots(ref time.Time) []Slot {
+	var out []Slot
+	for i := range 4 {
+		n := 10 * (i + 1)
+		out = append(out, Slot{Start: dayStart(ref).Add(10*time.Hour + time.Duration(i)*slotStep), N: n, Authors: n, Viewers: 1000, Pct: float64(n) / 10})
+	}
+	return out
+}
+
+// TestCompareChart (CA2, CA3, CA4): la banda, las barras por encima y la línea comparada.
+func TestCompareChart(t *testing.T) {
+	ref := cmpRef()
+	slots := cmpSlots(ref)
+	c := participationChartCmp(slots, nil, 2.5, true, nil, &ChartCompare{Label: "lo normal", Band: map[string]Band{
+		"10:10": {P25: 1, Med: 2, P75: 2.5, N: 3}, "10:15": {P25: 4, Med: 4.5, P75: 5, N: 4}}})
+	if c["Max"] != "máx. 5,0 %" {
+		t.Errorf("la escala no cubre la banda: %v", c["Max"])
+	}
+	bands, _ := c["Bands"].([]Bar)
+	if len(bands) != 2 || bands[0].X != 0 || math.Abs(bands[0].Y-0) > 0.01 || math.Abs(bands[0].H-20) > 0.01 {
+		t.Errorf("banda = %+v", bands)
+	}
+	if c["Median"] != "M0 10.00H1V60.00H2" {
+		t.Errorf("mediana = %v", c["Median"])
+	}
+	bars := c["Bars"].([]Bar)
+	if bars[2].Class != "sobre" || !strings.Contains(bars[2].Label, "por encima de lo normal (lo normal: 1,0 % a 2,5 %)") || bars[3].Class != "" {
+		t.Errorf("barras = %+v", bars)
+	}
+	if !strings.Contains(c["Aria"].(string), "1 franja por encima de lo normal") {
+		t.Errorf("aria = %v", c["Aria"])
+	}
+	l := participationChartCmp(slots, nil, 2.5, true, nil, &ChartCompare{Label: "martes 03/11", Line: map[string]float64{"10:00": 6, "10:05": 1}})
+	if l["CmpLine"] != "M2 83.33H3V0.00H4" || l["Max"] != "máx. 6,0 %" || l["Bands"] != nil {
+		t.Errorf("línea = %v, máx %v", l["CmpLine"], l["Max"])
+	}
+	if !strings.Contains(l["Aria"].(string), "comparado con martes 03/11") {
+		t.Errorf("aria = %v", l["Aria"])
+	}
+	if n := participationChartCmp(slots, nil, 2.5, true, nil, nil); n["Bands"] != nil || n["CmpLine"] != nil || n["Max"] != "máx. 4,0 %" {
+		t.Errorf("sin comparación cambió el gráfico: %v", n)
+	}
+}
+
+// TestProgramDetailCompare (CA1 a CA6): el selector, la banda, la línea y
+// el resumen en el detalle de un programa con 14 días de historia.
+func TestProgramDetailCompare(t *testing.T) {
+	now := noonToday()
+	day := dayStart(now)
+	st, srv := programServer(t, now, false)
+	// LA MAÑANA de 8:00 a 9:57 hoy y los 14 días anteriores, con 400 mirando:
+	// en 14 días hay al menos 3 del mismo tipo que hoy (de semana o fin de semana).
+	for d := 0; d <= 14; d++ {
+		id, start := "v1", day.Add(8*time.Hour)
+		if d > 0 {
+			id, start = fmt.Sprintf("p%d", d), day.AddDate(0, 0, -d).Add(8*time.Hour)
+			for _, s := range livesEvery(id, "UC1", "Radio Test", testTitle+"LA MAÑANA", start, start.Add(117*time.Minute)) {
+				st.AddLives(s.At, []Video{{ID: s.VideoID, ChannelID: s.ChannelID, Channel: s.Channel, Title: s.Title, LiveStatus: "live"}})
+			}
+			st.Add(chatRun(fmt.Sprintf("h%d-", d), id, "LA MAÑANA", start, time.Minute, 25))
+		}
+		for m := start; m.Before(start.Add(117 * time.Minute)); m = m.Add(time.Minute) {
+			st.AddViewers(m, []Video{{ID: id, ChannelID: "UC1", Channel: "Radio Test", LiveStatus: "live", Concurrent: int64(400 + d)}})
+		}
+	}
+	keyMan := segmentKey("UC1", Segment{VideoID: "v1", Program: "LA MAÑANA", Start: day.Add(8 * time.Hour)})
+	path := func(cmp string) string {
+		return "/programas?" + url.Values{"tramo": {keyMan}, "comparar": {cmp}}.Encode()
+	}
+	h := srv.Routes()
+	week := day.AddDate(0, 0, -7)
+	weekLabel := weekdays[week.Weekday()] + " " + week.Format("02/01")
+	cases := []struct {
+		cmp       string
+		want, not []string
+	}{
+		{"", []string{`aria-label="Comparar con"`, `aria-pressed="true">Ninguna`, `class="tipica"`, "Típica:", "emisiones en 4 semanas", "récord 414"},
+			[]string{`class="banda"`, `class="cmp"`}},
+		{"normal", []string{`aria-pressed="true">Lo normal (4 semanas)`, `class="banda"`, `class="mediana"`, "Lo normal: la banda"},
+			[]string{`class="tipica"`, `class="cmp"`}},
+		{"semana", []string{`aria-pressed="true">Mismo día la semana pasada`, `class="cmp"`, "La línea violeta: " + weekLabel, `class="tipica"`},
+			[]string{`class="banda"`}},
+		{"anterior", []string{`aria-pressed="true">Emisión anterior`, `class="cmp"`}, []string{`class="banda"`}},
+	}
+	for _, c := range cases {
+		body := getBody(h, path(c.cmp))
+		for _, w := range c.want {
+			if !strings.Contains(body, w) {
+				t.Errorf("%q: falta %q", c.cmp, w)
+			}
+		}
+		for _, w := range c.not {
+			if strings.Contains(body, w) {
+				t.Errorf("%q: sobra %q", c.cmp, w)
+			}
+		}
+		// Los botones mantienen el tramo y el modo viaja en el refresco y en las filas.
+		if c.cmp != "" && !strings.Contains(body, "comparar="+c.cmp) {
+			t.Errorf("%q: el modo no viaja en los links", c.cmp)
+		}
+	}
+	// El parcial del detalle también lo toma.
+	if body := getBody(h, "/parcial/programas/detalle?"+url.Values{"tramo": {keyMan}, "comparar": {"normal"}}.Encode()); !strings.Contains(body, `class="banda"`) {
+		t.Error("el parcial del detalle no dibuja la banda")
+	}
+}
