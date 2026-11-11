@@ -31,13 +31,13 @@
       <td>{{if $.Multi}}{{.Date}} {{end}}{{.Hours}}</td>
       <td class="n">{{miles .Msgs}}</td>
       <td class="n">{{miles .People}}</td>
-      <td class="n" title="por reglas">{{miles .Questions}}</td>
+      <td class="n" title="{{if .QByClaude}}por Claude{{else}}por reglas{{end}}">{{miles .Questions}}</td>
       <td class="n">{{miles .Supers}}</td>
       <td>{{if .Analysis}}{{if .Analysis.Error}}<span class="muted">con error</span>{{else}}<span class="ia">Claude</span>{{end}}{{else}}<span class="muted">{{if .OnAir}}al cerrar{{else}}sin resumen{{end}}</span>{{end}}</td>
     </tr>{{end}}</tbody>
   </table>
   </div>
-  <p class="muted">Preguntas por reglas. El resumen de Claude se hace solo cuando termina cada programa.</p>
+  <p class="muted">Preguntas por Claude en los programas con tandas; en los demás, por reglas. El resumen de Claude se hace solo cuando termina cada programa.</p>
   {{else}}<p class="muted">{{.Empty}}{{if .Since}} {{.Since}}{{end}}</p>{{end}}
 </section>
 {{with .Detail}}{{template "programa-detalle" .}}{{end}}
@@ -85,9 +85,13 @@
   </div>{{end}}
   <div class="detail-grid">
     <div class="inner">
-      <h3>Temas de conversación {{if and .Claude .Claude.Topics}}<span class="ia">Claude</span>{{else}}<span class="chip">por reglas</span>{{end}}</h3>
-      {{if and .Claude .Claude.Topics}}<div class="words">{{range .Claude.Topics}}<span>{{.Text}} · {{.Count}}</span>{{end}}</div>
-      {{else}}{{range .Topics}}<div class="catrow" title="{{.Label}}: {{.N}} mensajes">
+      {{if and .Claude .Claude.Topics}}<h3>Temas de conversación <span class="ia">Claude</span></h3>
+      <div class="words">{{range .Claude.Topics}}<span>{{.Text}} · {{.Count}}</span>{{end}}</div>
+      {{else if .CatsClaude}}<h3>Categorías <span class="ia">Claude</span></h3>
+      <div class="cats">{{range .Cats}}<div class="catline" title="{{.Label}}: {{.N}}">{{template "catrow" .}}</div>{{end}}</div>
+      <p class="muted">Por Claude, con las tandas; el spam, por reglas{{if .CatsPending}}. {{.CatsPending}} todavía sin etiquetar (por reglas){{end}}. Los temas salen del resumen cuando termina el programa.</p>
+      {{else}}<h3>Temas de conversación <span class="chip">por reglas</span></h3>
+      {{range .Topics}}<div class="catrow" title="{{.Label}}: {{.N}} mensajes">
         <span>{{.Label}}</span>
         <div class="track"><div class="fill" style="width: {{printf "%.1f" .Pct}}%"></div></div>
         <span class="num">{{miles .N}}</span>
@@ -103,8 +107,12 @@
       {{else if .Sent}}<p class="muted">Todavía no hay mensajes analizados por Claude en este programa.</p>{{end}}
     </div>
     <div class="inner">
-      <h3>Preguntas {{if and .Claude .Claude.Questions}}<span class="ia">Claude</span>{{else}}<span class="chip">por reglas</span>{{end}}</h3>
-      {{if and .Claude .Claude.Questions}}{{template "claude-items" .Claude.Questions}}
+      <h3>Preguntas {{if or .QGroups (and .Claude .Claude.Questions)}}<span class="ia">Claude</span>{{else if not .QClaude}}<span class="chip">por reglas</span>{{end}}</h3>
+      {{if .QGroups}}<p class="muted">{{.QHeader}}</p>
+      <ul class="qlist qgroups">{{range .QGroups}}<li{{if .Answered}} class="hecha"{{end}}><div>{{template "qrow" .}}</div></li>{{end}}</ul>
+      <p class="muted">Agrupadas por Claude en las tandas; las cantidades las cuenta el monitor.</p>
+      {{else if and .Claude .Claude.Questions}}{{template "claude-items" .Claude.Questions}}
+      {{else if .QClaude}}<p class="muted">Claude no agrupó preguntas en este programa.</p>
       {{else}}<ul class="qlist">{{range .Questions}}<li>
         <div class="meta"><strong>{{.Author}}</strong> · {{fecha .At}}</div>
         <div>{{.Text}}</div>

@@ -6543,7 +6543,7 @@ func TestProgramRows(t *testing.T) {
 	for _, c := range cases {
 		_, days := dayRange(c.dia, now)
 		segs := programSegs(c.chans, samples, videos, days, now)
-		rows := programRows(segs, msgs, analyses, titles)
+		rows := programRows(segs, msgs, analyses, titles, nil)
 		var got []row
 		for _, r := range rows {
 			a := ""
@@ -6565,7 +6565,7 @@ func TestProgramRows(t *testing.T) {
 	}
 	// La pregunta del Super Chat cuenta en LA MAÑANA.
 	_, days := dayRange("hoy", now)
-	for _, r := range programRows(programSegs(chans, samples, videos, days, now), msgs, nil, titles) {
+	for _, r := range programRows(programSegs(chans, samples, videos, days, now), msgs, nil, titles, nil) {
 		if r.Seg.Program == "LA MAÑANA" && r.Questions != 1 {
 			t.Errorf("LA MAÑANA: %d preguntas, quería 1", r.Questions)
 		}
@@ -6618,7 +6618,7 @@ func BenchmarkProgramRows(b *testing.B) {
 	b.ReportMetric(float64(len(msgs)), "mensajes")
 	b.ResetTimer()
 	for range b.N {
-		programRows(programSegs(chans, samples, videos, days, now), msgs, nil, titles)
+		programRows(programSegs(chans, samples, videos, days, now), msgs, nil, titles, nil)
 	}
 }
 
@@ -11449,5 +11449,197 @@ func TestClientsTransport(t *testing.T) {
 		if tr.Proxy == nil || !tr.ForceAttemptHTTP2 {
 			t.Errorf("%s: se perdió el proxy del entorno o HTTP/2 del transporte por defecto", name)
 		}
+	}
+}
+
+// TestProgramCompareNoPct (CA1): con el gráfico por personas (sin dato de
+// cuántos miraban en el tramo) no se ofrece comparar: los modos quedan
+// deshabilitados con su motivo y "Ninguna" marcada aunque se pida otro.
+func TestProgramCompareNoPct(t *testing.T) {
+	now := noonToday()
+	day := dayStart(now)
+	st, srv := programServer(t, now, false)
+	// Emisiones anteriores con espectadores (hay banda), hoy sin dato.
+	for d := 1; d <= 14; d++ {
+		id, start := fmt.Sprintf("p%d", d), day.AddDate(0, 0, -d).Add(8*time.Hour)
+		for _, s := range livesEvery(id, "UC1", "Radio Test", testTitle+"LA MAÑANA", start, start.Add(117*time.Minute)) {
+			st.AddLives(s.At, []Video{{ID: s.VideoID, ChannelID: s.ChannelID, Channel: s.Channel, Title: s.Title, LiveStatus: "live"}})
+		}
+		st.Add(chatRun(fmt.Sprintf("h%d-", d), id, "LA MAÑANA", start, time.Minute, 25))
+		for m := start; m.Before(start.Add(117 * time.Minute)); m = m.Add(time.Minute) {
+			st.AddViewers(m, []Video{{ID: id, ChannelID: "UC1", Channel: "Radio Test", LiveStatus: "live", Concurrent: 400}})
+		}
+	}
+	keyMan := segmentKey("UC1", Segment{VideoID: "v1", Program: "LA MAÑANA", Start: day.Add(8 * time.Hour)})
+	for _, cmp := range []string{"", "normal", "anterior", "semana"} {
+		body := getBody(srv.Routes(), "/programas?"+url.Values{"tramo": {keyMan}, "comparar": {cmp}}.Encode())
+		for _, w := range []string{`aria-pressed="true">Ninguna`, `disabled aria-pressed="false">Lo normal (4 semanas)`,
+			`disabled aria-pressed="false">Emisión anterior`, `disabled aria-pressed="false">Mismo día la semana pasada`,
+			"falta el dato de cuántos miraban"} {
+			if !strings.Contains(body, w) {
+				t.Errorf("%q: falta %q", cmp, w)
+			}
+		}
+		if strings.Contains(body, `class="banda"`) || strings.Contains(body, `class="cmp"`) {
+			t.Errorf("%q: compara sin %%", cmp)
+		}
+	}
+}
+
+// TestProgramParticipationAxis (CA3): un programa al aire se dibuja sobre su
+// largo esperado (la mediana de sus emisiones anteriores, 1 h como mínimo),
+// así cada franja tiene el mismo ancho; uno cerrado, sobre su largo real.
+func TestProgramParticipationAxis(t *testing.T) {
+	now := noonToday()
+	day := dayStart(now)
+	addLive := func(st *Store, id, prog string, from, to time.Time) {
+		for _, s := range livesEvery(id, "UC1", "Radio Test", testTitle+prog, from, to) {
+			st.AddLives(s.At, []Video{{ID: s.VideoID, ChannelID: s.ChannelID, Channel: s.Channel, Title: s.Title, LiveStatus: "live"}})
+		}
+	}
+	cases := []struct {
+		name, prog string
+		start      time.Time
+		history    time.Duration // largo de las emisiones anteriores (0: sin historia)
+		want       string
+	}{
+		// LA TARDE lleva 2 h (10:00 a 12:00: 25 franjas); con emisiones de 3 h, el eje es de 3 h.
+		{"al aire con historia", "LA TARDE", day.Add(10 * time.Hour), 3 * time.Hour, `<svg viewBox="0 0 36 100"`},
+		// Sin historia y más de 1 h al aire: lo transcurrido, como antes.
+		{"al aire sin historia", "LA TARDE", day.Add(10 * time.Hour), 0, `<svg viewBox="0 0 25 100"`},
+		// Recién empezado y sin historia: 1 h como mínimo.
+		{"recién empezado", "NUEVO", now.Add(-10 * time.Minute), 0, `<svg viewBox="0 0 12 100"`},
+		// Cerrado: su largo real aunque las anteriores duren más.
+		{"cerrado", "LA MAÑANA", day.Add(8 * time.Hour), 3 * time.Hour, `<svg viewBox="0 0 24 100"`},
+	}
+	for _, c := range cases {
+		st, srv := programServer(t, now, false)
+		vid := "v1"
+		if c.prog == "NUEVO" {
+			vid = "v9"
+			addLive(st, vid, c.prog, c.start, now.Add(-time.Minute))
+			st.SetVideos("Radio Test", append(st.Status().Videos, Video{ID: vid, Title: testTitle + c.prog, ChannelID: "UC1", Channel: "Radio Test", LiveStatus: "live"}))
+			st.Add(chatRun("nuevo", vid, c.prog, c.start, time.Minute, 5))
+		}
+		if c.history > 0 {
+			for d := 1; d <= 3; d++ {
+				start := c.start.AddDate(0, 0, -d)
+				addLive(st, fmt.Sprintf("h%d", d), c.prog, start, start.Add(c.history))
+			}
+		}
+		key := segmentKey("UC1", Segment{VideoID: vid, Program: c.prog, Start: c.start})
+		body := getBody(srv.Routes(), "/parcial/programas/detalle?tramo="+url.QueryEscape(key))
+		if !strings.Contains(body, c.want) {
+			i := strings.Index(body, "<svg viewBox")
+			got := "sin gráfico"
+			if i >= 0 {
+				got = body[i : i+30]
+			}
+			t.Errorf("%s: quiero %q, está %q", c.name, c.want, got)
+		}
+	}
+}
+
+// claudeProgramServer es programServer con Claude prendido y una tanda que
+// etiqueta LA MAÑANA: 6 preguntas en dos grupos y el resto elogios.
+func claudeProgramServer(t *testing.T, now time.Time) (*Store, *Server, string) {
+	t.Helper()
+	day := dayStart(now)
+	st, srv := programServer(t, now, true)
+	man := func(i int) time.Time { return day.Add(8*time.Hour + time.Duration(i)*time.Minute) }
+	var ls []MessageLabel
+	for i := range 25 {
+		l := MessageLabel{ID: fmt.Sprintf("man%d", i), VideoID: "v1", At: man(i), Program: "LA MAÑANA", Sentiment: "positivo", Cat: CatElogio}
+		switch {
+		case i < 4:
+			l.Cat, l.Group = CatPregunta, "UC1|1|0"
+		case i < 6:
+			l.Cat, l.Group = CatPregunta, "UC1|1|1"
+		}
+		ls = append(ls, l)
+	}
+	st.AddBatch(ClaudeBatch{At: man(26), ChannelID: "UC1", From: man(0), To: man(24), Labels: ls, NewGroups: []BatchGroup{
+		{ID: "UC1|1|0", Program: "LA MAÑANA", Text: "¿A qué hora pasan el pronóstico?"},
+		{ID: "UC1|1|1", Program: "LA MAÑANA", Text: "¿Cómo se llama el tema?"},
+	}})
+	return st, srv, segmentKey("UC1", Segment{VideoID: "v1", Program: "LA MAÑANA", Start: day.Add(8 * time.Hour)})
+}
+
+// TestProgramDetailClaudeQuestions (CA4): con Claude y etiquetas, las
+// preguntas del detalle son los grupos de las tandas; sin Claude, por reglas.
+func TestProgramDetailClaudeQuestions(t *testing.T) {
+	now := noonToday()
+	_, srv, key := claudeProgramServer(t, now)
+	body := getBody(srv.Routes(), "/parcial/programas/detalle?tramo="+url.QueryEscape(key))
+	i := strings.Index(body, "<h3>Preguntas")
+	if i < 0 {
+		t.Fatal("falta la tarjeta de preguntas")
+	}
+	card := body[i:]
+	card = card[:strings.Index(card, "</div>\n  </div>")]
+	for _, w := range []string{`<span class="ia">Claude</span>`, "¿A qué hora pasan el pronóstico?", "¿Cómo se llama el tema?", ">4</strong>", ">2</strong>", "6 preguntas · 2 grupos"} {
+		if !strings.Contains(card, w) {
+			t.Errorf("falta %q en:\n%s", w, card)
+		}
+	}
+	if strings.Contains(card, "por reglas") || strings.Contains(card, "Marcar respondida") {
+		t.Errorf("sobra en:\n%s", card)
+	}
+	// Sin Claude: por reglas, como antes.
+	_, off := programServer(t, now, false)
+	body = getBody(off.Routes(), "/parcial/programas/detalle?tramo="+url.QueryEscape(key))
+	if !strings.Contains(body, `<h3>Preguntas <span class="chip">por reglas</span>`) {
+		t.Error("sin Claude: falta el chip por reglas")
+	}
+}
+
+// TestProgramDetailClaudeCats (CA5): con Claude y etiquetas, la tarjeta de la
+// izquierda es Categorías por Claude; sin Claude, temas por reglas.
+func TestProgramDetailClaudeCats(t *testing.T) {
+	now := noonToday()
+	_, srv, key := claudeProgramServer(t, now)
+	body := getBody(srv.Routes(), "/parcial/programas/detalle?tramo="+url.QueryEscape(key))
+	for _, w := range []string{`<h3>Categorías <span class="ia">Claude</span></h3>`, "Preguntas</strong>", "Elogios</strong>"} {
+		if !strings.Contains(body, w) {
+			t.Errorf("falta %q", w)
+		}
+	}
+	if strings.Contains(body, "Temas de conversación") {
+		t.Error("con Claude y etiquetas no van los temas por reglas")
+	}
+	_, off := programServer(t, now, false)
+	body = getBody(off.Routes(), "/parcial/programas/detalle?tramo="+url.QueryEscape(key))
+	if !strings.Contains(body, `<h3>Temas de conversación <span class="chip">por reglas</span>`) {
+		t.Error("sin Claude: faltan los temas por reglas")
+	}
+}
+
+// TestProgramRowsClaude (CA6): la columna Preguntas cuenta con las etiquetas
+// de Claude en los tramos etiquetados y por reglas en los demás.
+func TestProgramRowsClaude(t *testing.T) {
+	now := noonToday()
+	chans, samples, videos, msgs := programDay(now)
+	_, days := dayRange("hoy", now)
+	segs := programSegs(chans[:1], samples, videos, days, now)
+	labels := map[string]MessageLabel{}
+	for i := range 3 {
+		labels[fmt.Sprintf("man%d", i)] = MessageLabel{ID: fmt.Sprintf("man%d", i), Cat: CatPregunta}
+	}
+	labels["man5"] = MessageLabel{ID: "man5", Cat: CatOtro}
+	for _, r := range programRows(segs, msgs, nil, videoTitles(videos), labels) {
+		switch r.Seg.Program {
+		case "LA MAÑANA": // 3 por Claude (el "¿Saludan a Rosario?" sin etiquetar no cuenta)
+			if r.Questions != 3 || !r.QByClaude {
+				t.Errorf("LA MAÑANA: %d preguntas, Claude %v", r.Questions, r.QByClaude)
+			}
+		case "POCO":
+			if r.QByClaude {
+				t.Error("POCO no tiene etiquetas: va por reglas")
+			}
+		}
+	}
+	h := func() http.Handler { _, srv, _ := claudeProgramServer(t, now); return srv.Routes() }()
+	if body := getBody(h, "/programas"); !strings.Contains(body, `<td class="n" title="por Claude">6</td>`) {
+		t.Error("la fila de LA MAÑANA no cuenta por Claude")
 	}
 }
