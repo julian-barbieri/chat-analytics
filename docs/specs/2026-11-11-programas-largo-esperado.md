@@ -1,6 +1,6 @@
 # Spec: largo esperado de un programa al aire con pocas emisiones
 
-- **Estado:** aprobada
+- **Estado:** implementada
 - **Tipo:** bug
 - **Rama:** `fix/programas-largo-esperado`
 - **Origen:** captura del usuario en Programas (2026-11-11): "COBERTURA ESPECIAL DE RADIO RIVADAVIA" al aire con el gráfico apretado a la derecha y el eje hasta las 19:40.
@@ -28,15 +28,15 @@ al menos `minEmissions` emisiones anteriores; con menos, se usa el mínimo de 1 
 
 ## Criterios de aceptación
 
-- [ ] CA1: con 1 o 2 emisiones anteriores (de cualquier largo), `expectedLength` devuelve
+- [x] CA1: con 1 o 2 emisiones anteriores (de cualquier largo), `expectedLength` devuelve
   `minProgramAxis` — `TestExpectedLength` (nuevo, tabla: 0, 1, 2 y 3 emisiones; con 3,
   la mediana como hoy).
-- [ ] CA2: en el detalle de un programa al aire hace 2 h con una sola emisión anterior de
+- [x] CA2: en el detalle de un programa al aire hace 2 h con una sola emisión anterior de
   9 h, el gráfico no tiene franjas vacías (`viewBox="0 0 25 100"`, sin rótulo del fin
   esperado) — caso nuevo en `TestProgramParticipationAxis`.
-- [ ] CA3: los casos actuales de `TestProgramParticipationAxis` (3 días de historia)
+- [x] CA3: los casos actuales de `TestProgramParticipationAxis` (3 días de historia)
   siguen pasando sin cambios.
-- [ ] Gates de `CLAUDE.md` → "Definición de terminado" en verde.
+- [x] Gates de `CLAUDE.md` → "Definición de terminado" en verde.
 
 ## Diseño propuesto
 

@@ -951,7 +951,9 @@ func (s *Server) programSlots(ps ProgramSeg, msgs []Message, ems []Emission, now
 // entre sus emisiones anteriores (sin la del día de start), del bloque que
 // empieza a la hora del reloj más cercana a start. Un programa que sale dos
 // veces por día no "dura" de la primera salida a la última. minProgramAxis
-// es el mínimo, para que una sola franja no ocupe todo el gráfico.
+// es el mínimo, para que una sola franja no ocupe todo el gráfico. Con menos
+// de minEmissions emisiones (como en "Lo normal") no hay largo esperado: una
+// sola emisión especial de 9 h dejaría el gráfico casi vacío.
 func expectedLength(ems []Emission, start time.Time) time.Duration {
 	var spans []float64
 	for _, e := range ems {
@@ -968,7 +970,7 @@ func expectedLength(ems []Emission, start time.Time) time.Duration {
 			spans = append(spans, float64(best))
 		}
 	}
-	if len(spans) == 0 {
+	if len(spans) < minEmissions {
 		return minProgramAxis
 	}
 	return max(time.Duration(median(spans)), minProgramAxis)
