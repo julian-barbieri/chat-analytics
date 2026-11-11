@@ -3,7 +3,8 @@
 # que mencione .env. Sale con 2 para que Claude Code cancele el comando y le
 # muestre el motivo al agente.
 set -u
-cmd=$(jq -r '.tool_input.command // empty')
+input=$(cat)
+cmd=$(jq -r '.tool_input.command // empty' <<<"$input")
 [ -z "$cmd" ] && exit 0
 
 block() {
@@ -16,7 +17,10 @@ if grep -Eq '(^|[^[:alnum:]_])\.env([^[:alnum:]_]|$)' <<<"$cmd"; then
 	block "el comando menciona .env (tiene la API key). Si es un mensaje de commit que lo nombra, usá git commit -F <archivo>."
 fi
 
-branch=$(git -C "${CLAUDE_PROJECT_DIR:-.}" branch --show-current 2>/dev/null)
+# La rama de la carpeta donde corre el comando (cwd del hook): en un worktree es
+# la de la tarea, no la del checkout principal, que puede estar en main.
+dir=$(jq -r '.cwd // empty' <<<"$input")
+branch=$(git -C "${dir:-${CLAUDE_PROJECT_DIR:-.}}" branch --show-current 2>/dev/null)
 
 # Se analiza cada comando de la línea por separado (;, &&, ||, |, &, subshells).
 while IFS= read -r seg; do
