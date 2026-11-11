@@ -1,10 +1,10 @@
 # Spec: largo esperado de un programa al aire con pocas emisiones
 
-- **Estado:** borrador
+- **Estado:** aprobada
 - **Tipo:** bug
 - **Rama:** `fix/programas-largo-esperado`
 - **Origen:** captura del usuario en Programas (2026-11-11): "COBERTURA ESPECIAL DE RADIO RIVADAVIA" al aire con el gráfico apretado a la derecha y el eje hasta las 19:40.
-- **Aprobada por / fecha:** —
+- **Aprobada por / fecha:** Julian Barbieri, 2026-11-11
 
 ## Contexto
 
