@@ -1,10 +1,10 @@
 # Spec: Comentarios y likes (shorts, likes guardados, videos sin nombre)
 
-- **Estado:** borrador
+- **Estado:** aprobada
 - **Tipo:** mejora
 - **Rama:** `feat/comentarios-likes`
 - **Origen:** pedido del usuario y diseño https://claude.ai/artifact/YQMeAw32tiseUT5pJpMRoE
-- **Aprobada por / fecha:** —
+- **Aprobada por / fecha:** Julian Barbieri, 2026-11-11
 
 ## Contexto
 
