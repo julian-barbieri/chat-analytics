@@ -1,10 +1,10 @@
 # Spec: pantalla Comentarios
 
-- **Estado:** borrador
+- **Estado:** aprobada
 - **Tipo:** mejora
 - **Rama:** `feat/pantalla-comentarios`
 - **Origen:** pedido del usuario (2026-11-11); diseño de referencia en https://claude.ai/artifact/SkDNihHmNVFNcyQjDtwM3t. Decisión: cubrir las subidas de **todos** los canales configurados.
-- **Aprobada por / fecha:** —
+- **Aprobada por / fecha:** Julian Barbieri, 2026-11-11
 
 ## Contexto
 
