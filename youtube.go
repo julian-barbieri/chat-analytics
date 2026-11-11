@@ -25,12 +25,33 @@ type YouTube struct {
 }
 
 func NewYouTube(key string) *YouTube {
+	// Los dos clientes comparten transporte (y la conexión HTTP/2 con Google), como
+	// cuando usaban el de por defecto.
+	tr := newTransport()
 	return &YouTube{
 		Key:     key,
 		BaseURL: "https://www.googleapis.com/youtube/v3",
-		HTTP:    &http.Client{Timeout: 30 * time.Second},
-		Stream:  &http.Client{},
+		HTTP:    &http.Client{Timeout: 30 * time.Second, Transport: tr},
+		Stream:  &http.Client{Transport: tr},
 	}
+}
+
+// Pings de HTTP/2 (los tests los achican).
+var (
+	pingEvery = 15 * time.Second
+	pingWait  = 15 * time.Second
+)
+
+// newTransport es el transporte de por defecto (proxy del entorno, HTTP/2,
+// timeouts de conexión) con pings de HTTP/2. Todos los pedidos a un host van
+// por una sola conexión, y si la red la corta sin avisar (NAT de WSL, firewall)
+// Go la sigue usando: cada pedido espera su Timeout y falla, hasta que Linux la
+// descarta 15 a 30 min después. Con los pings se descarta en pingEvery + pingWait
+// y el pedido siguiente abre una nueva. Los pings no gastan cuota.
+func newTransport() *http.Transport {
+	tr := http.DefaultTransport.(*http.Transport).Clone()
+	tr.HTTP2 = &http.HTTP2Config{SendPingTimeout: pingEvery, PingTimeout: pingWait}
+	return tr
 }
 
 func (y *YouTube) get(path string, params url.Values, cost int, out any) error {

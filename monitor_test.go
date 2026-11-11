@@ -12,6 +12,7 @@ import (
 	"log"
 	"maps"
 	"math"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -11226,5 +11227,227 @@ func TestProgramDetailCompare(t *testing.T) {
 	// El parcial del detalle también lo toma.
 	if body := getBody(h, "/parcial/programas/detalle?"+url.Values{"tramo": {keyMan}, "comparar": {"normal"}}.Encode()); !strings.Contains(body, `class="banda"`) {
 		t.Error("el parcial del detalle no dibuja la banda")
+	}
+}
+
+// deadProxy reenvía TCP entre el cliente y un servidor. kill deja "muertas" las
+// conexiones abiertas hasta ese momento: no reenvía nada y no las cierra, como
+// un NAT o un firewall que se olvidó de la conexión. Las nuevas andan.
+type deadProxy struct {
+	ln     net.Listener
+	mu     sync.Mutex
+	conns  []*proxyConn
+	closed bool
+	wg     sync.WaitGroup
+}
+
+type proxyConn struct {
+	client, server net.Conn
+	dead           atomic.Bool
+}
+
+func newDeadProxy(t *testing.T, target string) *deadProxy {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := &deadProxy{ln: ln}
+	p.wg.Add(1)
+	go p.accept(target)
+	t.Cleanup(p.close)
+	return p
+}
+
+func (p *deadProxy) accept(target string) {
+	defer p.wg.Done()
+	for {
+		c, err := p.ln.Accept()
+		if err != nil {
+			return
+		}
+		s, err := net.Dial("tcp", target)
+		if err != nil {
+			c.Close()
+			continue
+		}
+		pc := &proxyConn{client: c, server: s}
+		p.mu.Lock()
+		if p.closed {
+			p.mu.Unlock()
+			c.Close()
+			s.Close()
+			return
+		}
+		p.conns = append(p.conns, pc)
+		p.wg.Add(2)
+		p.mu.Unlock()
+		go p.pipe(pc, c, s)
+		go p.pipe(pc, s, c)
+	}
+}
+
+func (p *deadProxy) pipe(pc *proxyConn, from, to net.Conn) {
+	defer p.wg.Done()
+	buf := make([]byte, 32<<10)
+	for {
+		n, err := from.Read(buf)
+		if pc.dead.Load() {
+			if err != nil {
+				return
+			}
+			continue // se lee y se tira: del otro lado no llega nada
+		}
+		if n > 0 {
+			if _, werr := to.Write(buf[:n]); werr != nil {
+				return
+			}
+		}
+		if err != nil {
+			to.Close()
+			return
+		}
+	}
+}
+
+func (p *deadProxy) kill() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	for _, c := range p.conns {
+		c.dead.Store(true)
+	}
+}
+
+func (p *deadProxy) close() {
+	p.ln.Close()
+	p.mu.Lock()
+	p.closed = true
+	for _, c := range p.conns {
+		c.client.Close()
+		c.server.Close()
+	}
+	p.mu.Unlock()
+	p.wg.Wait()
+}
+
+// deadConnSetup arma un servidor HTTP/2 con TLS detrás de un deadProxy y un
+// cliente de YouTube que confía en su certificado, con pings y streamIdle cortos.
+// El streaming manda un pedazo con nextPageToken "t1" y queda abierto.
+func deadConnSetup(t *testing.T) (*YouTube, *deadProxy, *atomic.Bool) {
+	t.Helper()
+	oldEvery, oldWait, oldIdle := pingEvery, pingWait, streamIdle
+	pingEvery, pingWait, streamIdle = 100*time.Millisecond, 100*time.Millisecond, 5*time.Second
+	t.Cleanup(func() { pingEvery, pingWait, streamIdle = oldEvery, oldWait, oldIdle })
+
+	h2 := new(atomic.Bool)
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h2.Store(r.ProtoMajor == 2)
+		if strings.HasSuffix(r.URL.Path, "/stream") {
+			io.WriteString(w, `[{"nextPageToken":"t1","items":[]}`)
+			w.(http.Flusher).Flush()
+			<-r.Context().Done()
+			return
+		}
+		io.WriteString(w, `{}`)
+	}))
+	srv.EnableHTTP2 = true
+	srv.StartTLS()
+	t.Cleanup(srv.Close)
+	proxy := newDeadProxy(t, srv.Listener.Addr().String())
+
+	yt := NewYouTube("clave-de-prueba")
+	yt.BaseURL = "https://" + proxy.ln.Addr().String()
+	yt.HTTP.Timeout = 5 * time.Second
+	tr, ok := yt.HTTP.Transport.(*http.Transport)
+	if !ok {
+		t.Fatalf("NewYouTube no arma su transporte: %T", yt.HTTP.Transport)
+	}
+	tr.TLSClientConfig = srv.Client().Transport.(*http.Transport).TLSClientConfig.Clone()
+	t.Cleanup(tr.CloseIdleConnections)
+	return yt, proxy, h2
+}
+
+// TestYouTubeDeadConnection (spec youtube-conexion-muerta, CA1): si la red corta
+// la conexión HTTP/2 sin avisar, el pedido en curso no espera el Timeout y el
+// siguiente sale por una conexión nueva.
+func TestYouTubeDeadConnection(t *testing.T) {
+	yt, proxy, h2 := deadConnSetup(t)
+	var out struct{}
+	if err := yt.get("videos", url.Values{}, 1, &out); err != nil {
+		t.Fatalf("primer pedido: %v", err)
+	}
+	if !h2.Load() {
+		t.Fatal("el pedido no fue por HTTP/2: el test no prueba lo que dice la spec")
+	}
+
+	proxy.kill()
+	start := time.Now()
+	err := yt.get("videos", url.Values{}, 1, &out)
+	if d := time.Since(start); d > yt.HTTP.Timeout/2 {
+		t.Errorf("el pedido sobre la conexión muerta tardó %v (error: %v): no se descartó antes del Timeout", d.Round(time.Millisecond), err)
+	}
+	if err := yt.get("videos", url.Values{}, 1, &out); err != nil {
+		t.Errorf("el pedido siguiente falló: %v", err)
+	}
+}
+
+// TestStreamChatDeadConnection (spec youtube-conexion-muerta, CA2): el streaming
+// del chat sobre una conexión muerta termina antes de streamIdle. Vuelve sin
+// error, como un cierre normal de YouTube: el worker lo reabre sin anotar nada.
+func TestStreamChatDeadConnection(t *testing.T) {
+	yt, proxy, _ := deadConnSetup(t)
+	got := make(chan ChatBatch, 8)
+	done := make(chan error, 1)
+	go func() {
+		done <- yt.StreamChat(context.Background(), "v", "c", "", func(b ChatBatch) {
+			select {
+			case got <- b:
+			default:
+			}
+		})
+	}()
+	for ok := false; !ok; {
+		select {
+		case b := <-got:
+			ok = b.Token == "t1"
+		case err := <-done:
+			t.Fatalf("el streaming terminó antes de recibir nada: %v", err)
+		case <-time.After(3 * time.Second):
+			t.Fatal("no llegó el primer pedazo del streaming")
+		}
+	}
+
+	proxy.kill()
+	start := time.Now()
+	err := <-done // StreamChat siempre vuelve: como mucho, a los streamIdle
+	if d := time.Since(start); d > streamIdle/2 {
+		t.Errorf("el streaming sobre la conexión muerta terminó a los %v (error: %v); se esperaba antes de %v", d.Round(time.Millisecond), err, streamIdle/2)
+	}
+}
+
+// TestClientsTransport (spec youtube-conexion-muerta, CA3): los clientes de
+// YouTube y de Claude usan un transporte con pings de HTTP/2; los dos de YouTube
+// comparten el suyo y Claude sigue sin seguir redirecciones.
+func TestClientsTransport(t *testing.T) {
+	yt := NewYouTube("k")
+	ytTr, ok := yt.HTTP.Transport.(*http.Transport)
+	if !ok || yt.Stream.Transport != yt.HTTP.Transport {
+		t.Fatalf("YouTube: HTTP %T y Stream %T deberían compartir un *http.Transport", yt.HTTP.Transport, yt.Stream.Transport)
+	}
+	cl := NewClaude(ClaudeConfig{On: true, Key: testClaudeKey, BaseURL: "http://x", Model: defaultClaudeModel})
+	clTr, ok := cl.HTTP.Transport.(*http.Transport)
+	if !ok {
+		t.Fatalf("Claude: transporte %T", cl.HTTP.Transport)
+	}
+	if cl.HTTP.CheckRedirect == nil {
+		t.Error("Claude: se perdió el CheckRedirect")
+	}
+	for name, tr := range map[string]*http.Transport{"youtube": ytTr, "claude": clTr} {
+		if c := tr.HTTP2; c == nil || c.SendPingTimeout != pingEvery || c.PingTimeout != pingWait {
+			t.Errorf("%s: HTTP2 = %+v; quería pings cada %v con espera de %v", name, c, pingEvery, pingWait)
+		}
+		if tr.Proxy == nil || !tr.ForceAttemptHTTP2 {
+			t.Errorf("%s: se perdió el proxy del entorno o HTTP/2 del transporte por defecto", name)
+		}
 	}
 }
