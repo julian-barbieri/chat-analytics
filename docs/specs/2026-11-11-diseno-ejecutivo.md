@@ -1,10 +1,10 @@
 # Spec: diseño ejecutivo del dashboard
 
-- **Estado:** borrador
+- **Estado:** aprobada
 - **Tipo:** mejora
 - **Rama:** `feat/diseno-ejecutivo`
 - **Origen:** pedido del usuario (2026-11-11): un dashboard más profesional y minimalista, para gerentes y directores. Eligió la propuesta A «Ejecutivo claro» con la frase de resumen de la C (lienzo de diseño, `Main.dc.html` y `Editorial.dc.html`). En el ajuste pidió sumar a esta spec el eje X con lo más nuevo a la derecha, los likes en En vivo, «Habituales contra nuevos» y conservar los Super Chats con el estilo nuevo.
-- **Aprobada por / fecha:** —
+- **Aprobada por / fecha:** Julian Barbieri, 2026-11-11
 
 ## Contexto
 
