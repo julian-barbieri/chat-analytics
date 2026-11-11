@@ -127,7 +127,8 @@ Una tarea está terminada solo si se cumple **todo**:
   `gh workflow enable CI`.
 - Hooks de `.claude/settings.json`: después de editar un `.go`, `gofmt -w` y `go vet`
   (si vet falla, el error vuelve al agente). Antes de cada comando se bloquean `rm -rf`,
-  `git push` forzado o a `main`, `git commit` en `main`, `git reset --hard`,
+  `git push` forzado o a `main`, `git commit` en `main` (la rama de la carpeta donde
+  corre el comando: en un worktree, la de la tarea), `git reset --hard`,
   `git clean -f` y cualquier mención de `.env`; Read/Edit/Write de `.env` también.
   Si un hook te bloquea, no lo esquives: cambiá el enfoque o preguntá.
 - `log-activity.sh` (async, no bloquea) registra cada herramienta y cada subagente en
