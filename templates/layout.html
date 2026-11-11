@@ -203,6 +203,14 @@ tr.sel td { background: var(--ia-bg); }
 /* Gráfico de participación: el SVG se estira a un alto fijo (no depende del
    ancho) y los textos van en HTML para que midan siempre 12 px. */
 .pchart svg { display: block; width: 100%; height: 240px; overflow: visible; }
+/* Programas: ancho fijo por franja (el width lo calcula Go); en pantallas
+   angostas o programas muy largos se achica, y no baja de lo que piden los
+   rótulos de arriba. */
+.pfijo { max-width: 100%; min-width: min(100%, 240px); }
+/* Programas se reemplaza entero (botones, filas, refresco de 60 s): sin esto
+   el "scroll anchoring" del navegador toma de ancla el botón que se va y
+   salta al final de la página. */
+#programas { overflow-anchor: none; }
 /* Línea de oyentes dentro del SVG de las barras, con su propia escala (el
    máximo va a la derecha de .pmax). No toma el mouse: el tooltip lo da la franja. */
 .oyentes { fill: none; stroke: var(--text-primary); stroke-width: 2; stroke-linejoin: round; pointer-events: none; }

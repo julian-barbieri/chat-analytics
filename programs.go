@@ -16,12 +16,92 @@ import (
 // las muestras salen de Store.Lives de los días pedidos y los mensajes de
 // Store.MessagesOf de los vivos de esos tramos.
 
-// ProgramSeg es un tramo de un canal con su clave (la de la 009) y por qué terminó.
+// ProgramSeg es un programa de un canal: uno o varios tramos (Parts) del
+// mismo programa y del mismo día que se cortaron por una caída de la
+// transmisión. Seg va del inicio del primero al fin del último, con el vivo y
+// el estado del último; Key es la del primer pedazo (la de la 009), así no
+// cambia cuando aparece otro; Closed, por qué terminó el último.
 type ProgramSeg struct {
 	Channel ChannelStatus
 	Seg     Segment
+	Parts   []Segment
 	Key     string
 	Closed  string
+}
+
+// pieces son sus pedazos (Seg solo si no los tiene).
+func (ps ProgramSeg) pieces() []Segment {
+	if len(ps.Parts) == 0 {
+		return []Segment{ps.Seg}
+	}
+	return ps.Parts
+}
+
+// HasKey dice si key es la clave de alguno de sus pedazos: un link viejo al
+// segundo pedazo sigue llevando al programa unido.
+func (ps ProgramSeg) HasKey(key string) bool {
+	for _, sg := range ps.pieces() {
+		if segmentKey(ps.Channel.ID, sg) == key {
+			return true
+		}
+	}
+	return false
+}
+
+// videoIDs son los vivos de sus pedazos, sin repetir y en orden.
+func (ps ProgramSeg) videoIDs() []string {
+	var ids []string
+	for _, sg := range ps.pieces() {
+		if sg.VideoID != "" && !slices.Contains(ids, sg.VideoID) {
+			ids = append(ids, sg.VideoID)
+		}
+	}
+	return ids
+}
+
+// programMessages son los mensajes de todos los pedazos del programa, con el
+// filtro de segmentMessages en cada uno; un mensaje en el margen de 5 min de
+// dos pedazos va una sola vez.
+func programMessages(msgs []Message, ps ProgramSeg, titles map[string]string) []Message {
+	parts := ps.pieces()
+	if len(parts) == 1 {
+		return segmentMessages(msgs, parts[0], titles)
+	}
+	var out []Message
+	seen := map[string]bool{}
+	for _, sg := range parts {
+		for _, m := range segmentMessages(msgs, sg, titles) {
+			if !seen[m.ID] {
+				seen[m.ID] = true
+				out = append(out, m)
+			}
+		}
+	}
+	// Los márgenes de dos pedazos de vivos distintos se pisan en el tiempo.
+	slices.SortStableFunc(out, func(a, b Message) int { return a.At.Compare(b.At) })
+	return out
+}
+
+// joins dice si el tramo sg sigue al programa p después de un corte: mismo
+// programa, mismo día local y después del fin de su último pedazo. Solo se
+// llama con el último programa del canal, así que no hubo otro en el medio.
+func joins(p ProgramSeg, sg Segment) bool {
+	last := p.Parts[len(p.Parts)-1]
+	return sg.Program != "" && strings.EqualFold(sg.Program, last.Program) &&
+		dayStart(sg.Start).Equal(dayStart(p.Seg.Start)) && sg.Start.After(last.End)
+}
+
+// cutsText es "(se cortó de 08:30 a 08:39)" con los huecos entre pedazos;
+// vacío si no hubo corte.
+func cutsText(parts []Segment, at func(time.Time) string) string {
+	var gaps []string
+	for i := 1; i < len(parts); i++ {
+		gaps = append(gaps, "de "+at(parts[i-1].End)+" a "+at(parts[i].Start))
+	}
+	if len(gaps) == 0 {
+		return ""
+	}
+	return " (se cortó " + strings.Join(gaps, " y ") + ")"
 }
 
 const (
@@ -55,6 +135,9 @@ func dayRange(dia string, now time.Time) (string, []time.Time) {
 // que terminan en D o después: para hoy es lo mismo que segmenta la 009, así
 // las claves coinciden. Un programa que cruza la medianoche aparece una vez.
 // Solo hoy puede haber algo al aire: un día anterior se corta a las 00:00.
+// Los pedazos de un programa cortado se unen antes de mirar si llega a D, así
+// uno que se cortó antes de las 00:00 y siguió después es una sola fila con
+// la misma clave en Hoy, Ayer y 7 días.
 func programSegs(channels []ChannelStatus, samples []LiveSample, videos []Video, days []time.Time, now time.Time) []ProgramSeg {
 	var out []ProgramSeg
 	for _, ch := range channels {
@@ -66,20 +149,30 @@ func programSegs(channels []ChannelStatus, samples []LiveSample, videos []Video,
 				to, live, past = next, nil, true
 			}
 			segs := ProgramSegments(samples, ch.ID, live, d.Add(-12*time.Hour), to)
+			var progs []ProgramSeg
 			for i, sg := range segs {
-				if sg.State == SegNone || sg.End.Before(d) {
+				if sg.State == SegNone {
 					continue
 				}
-				key := segmentKey(ch.ID, sg)
-				if seen[key] {
-					continue
-				}
-				seen[key] = true
 				closed := closedWhy(segs, i)
 				if past && continuesAfter(samples, ch.ID, sg, to) {
 					closed = closedCut // el día se cortó a las 00:00, no el programa
 				}
-				mine = append(mine, ProgramSeg{Channel: ch, Seg: sg, Key: key, Closed: closed})
+				// Solo con el último programa: si hubo otro en el medio, no se une.
+				if n := len(progs); n > 0 && joins(progs[n-1], sg) {
+					p := &progs[n-1]
+					p.Parts = append(p.Parts, sg)
+					p.Seg.End, p.Seg.State, p.Seg.VideoID, p.Closed = sg.End, sg.State, sg.VideoID, closed
+					continue
+				}
+				progs = append(progs, ProgramSeg{Channel: ch, Seg: sg, Parts: []Segment{sg}, Key: segmentKey(ch.ID, sg), Closed: closed})
+			}
+			for _, ps := range progs {
+				if ps.Seg.End.Before(d) || seen[ps.Key] {
+					continue
+				}
+				seen[ps.Key] = true
+				mine = append(mine, ps)
 			}
 		}
 		sort.SliceStable(mine, func(i, j int) bool { return mine[i].Seg.Start.After(mine[j].Seg.Start) })
@@ -122,6 +215,7 @@ type ProgramRow struct {
 	ProgramSeg
 	Date, Hours                     string
 	Msgs, People, Supers, Questions int
+	Cuts                            int
 	OnAir                           bool
 	QByClaude                       bool            // Questions cuenta las etiquetas de Claude
 	Analysis                        *ClaudeAnalysis // el análisis final de la 009, si hay
@@ -139,19 +233,26 @@ func programRows(segs []ProgramSeg, msgs []Message, analyses []ClaudeAnalysis, t
 			final[a.Key] = a
 		}
 	}
+	// Los mensajes se buscan por pedazo y se suman en la fila del programa.
+	type part struct {
+		row int
+		sg  Segment
+	}
+	var parts []part
 	byVideo := map[string][]int{}
 	for i, ps := range segs {
 		sg := ps.Seg
 		r := ProgramRow{ProgramSeg: ps, Date: sg.Start.Local().Format("02/01"), OnAir: sg.State == SegLive,
-			Hours: sg.Start.Local().Format("15:04") + "–"}
+			Hours: sg.Start.Local().Format("15:04") + "–", Cuts: len(ps.pieces()) - 1}
 		if !r.OnAir {
 			r.Hours += sg.End.Local().Format("15:04")
 		}
-		if a, ok := final[ps.Key]; ok {
-			r.Analysis = &a
-		}
+		r.Analysis = finalAnalysis(ps, final)
 		rows[i] = r
-		byVideo[sg.VideoID] = append(byVideo[sg.VideoID], i)
+		for _, pg := range ps.pieces() {
+			byVideo[pg.VideoID] = append(byVideo[pg.VideoID], len(parts))
+			parts = append(parts, part{i, pg})
+		}
 	}
 	// Por vivo, ordenados por inicio, con el fin más tardío hasta cada uno:
 	// así se deja de buscar apenas ningún tramo anterior llega al mensaje.
@@ -161,12 +262,12 @@ func programRows(segs []ProgramSeg, msgs []Message, analyses []ClaudeAnalysis, t
 	}
 	index := map[string]idx{}
 	for v, list := range byVideo {
-		sort.SliceStable(list, func(i, j int) bool { return segs[list[i]].Seg.Start.Before(segs[list[j]].Seg.Start) })
+		sort.SliceStable(list, func(i, j int) bool { return parts[list[i]].sg.Start.Before(parts[list[j]].sg.Start) })
 		ix := idx{list: list}
 		var end time.Time
 		open := false
 		for _, k := range list {
-			sg := segs[k].Seg
+			sg := parts[k].sg
 			open = open || sg.State == SegLive
 			if sg.End.After(end) {
 				end = sg.End
@@ -182,29 +283,32 @@ func programRows(segs []ProgramSeg, msgs []Message, analyses []ClaudeAnalysis, t
 	people := make([]map[string]bool, len(segs))
 	// Con etiquetas, un tramo con alguna cuenta las preguntas como Categorías.
 	labeled, claudeQ := make([]int, len(segs)), make([]int, len(segs))
+	var hit []int // filas que ya contaron el mensaje (dos pedazos con margen en común)
 	for _, m := range msgs {
 		ix, ok := index[m.VideoID]
 		if !ok {
 			continue
 		}
-		n := sort.Search(len(ix.list), func(k int) bool { return segs[ix.list[k]].Seg.Start.Add(-segmentLead).After(m.At) })
+		n := sort.Search(len(ix.list), func(k int) bool { return parts[ix.list[k]].sg.Start.Add(-segmentLead).After(m.At) })
 		var prog string
 		progDone, ask, askDone := false, false, false
+		hit = hit[:0]
 		for k := n - 1; k >= 0; k-- {
 			if e := ix.maxEnd[k]; !e.IsZero() && m.At.After(e.Add(segmentLead)) {
 				break
 			}
-			i := ix.list[k]
-			sg := segs[i].Seg
+			p := parts[ix.list[k]]
+			i, sg := p.row, p.sg
 			if sg.State != SegLive && m.At.After(sg.End.Add(segmentLead)) {
 				continue
 			}
 			if !progDone {
 				prog, progDone = programOf(m, titles), true
 			}
-			if prog != sg.Program {
+			if prog != sg.Program || slices.Contains(hit, i) {
 				continue
 			}
+			hit = append(hit, i)
 			r := &rows[i]
 			r.Msgs++
 			if people[i] == nil {
@@ -239,6 +343,18 @@ func programRows(segs []ProgramSeg, msgs []Message, analyses []ClaudeAnalysis, t
 		}
 	}
 	return rows
+}
+
+// finalAnalysis es el análisis final del último pedazo que tenga uno (el
+// analista resume cada pedazo por separado).
+func finalAnalysis(ps ProgramSeg, final map[string]ClaudeAnalysis) *ClaudeAnalysis {
+	parts := ps.pieces()
+	for i := len(parts) - 1; i >= 0; i-- {
+		if a, ok := final[segmentKey(ps.Channel.ID, parts[i])]; ok {
+			return &a
+		}
+	}
+	return nil
 }
 
 // mayAsk descarta rápido lo que Classify nunca marca como pregunta (sin "?",
@@ -355,7 +471,9 @@ func (s *Server) programsData(v url.Values) map[string]any {
 	segs := programSegs(chans, samples, snap.Videos, days, now)
 	ids, from := map[string]bool{}, now
 	for _, ps := range segs {
-		ids[ps.Seg.VideoID] = true
+		for _, id := range ps.videoIDs() {
+			ids[id] = true
+		}
 		if t := ps.Seg.Start.Add(-segmentLead); t.Before(from) {
 			from = t
 		}
@@ -378,7 +496,7 @@ func (s *Server) programsData(v url.Values) map[string]any {
 	rows := programRows(segs, msgs, analyses, titles, labels)
 	pick := -1
 	for i, r := range rows {
-		if r.Key == q.Tramo {
+		if q.Tramo != "" && r.HasKey(q.Tramo) {
 			pick = i
 		}
 	}
@@ -403,7 +521,7 @@ func (s *Server) programsData(v url.Values) map[string]any {
 		data["Detail"] = ProgramDetail{}
 	case pick >= 0:
 		data["Pick"] = rows[pick].Key
-		data["Detail"] = s.programDetail(rows[pick].ProgramSeg, segmentMessages(msgs, rows[pick].Seg, titles), rows[pick].Analysis, snap, now, q)
+		data["Detail"] = s.programDetail(rows[pick].ProgramSeg, programMessages(msgs, rows[pick].ProgramSeg, titles), rows[pick].Analysis, snap, now, q)
 	}
 	return data
 }
@@ -442,6 +560,7 @@ type ProgramDetail struct {
 	CSV, Href, Hint      string
 	Claude               *ClaudeBlock // el análisis final, si hay y no tuvo error
 	ClaudeErr, NoSummary string
+	ClaudeFor            string // con cortes: qué parte resume Claude
 	Topics               []CatRow
 	Questions            []Message
 	// Con Claude y etiquetas en el tramo: los grupos de preguntas de las
@@ -510,19 +629,31 @@ func (s *Server) programDetail(ps ProgramSeg, msgs []Message, a *ClaudeAnalysis,
 	if sg.State == SegLive {
 		span = at(sg.Start) + " a ahora"
 	}
+	parts := ps.pieces()
+	span += cutsText(parts, at)
 	people := map[string]bool{}
 	for _, m := range msgs {
 		people[m.Author] = true
 	}
 	d.Line = fmt.Sprintf("%s · %s · %s · %s de %s", channelName(ps.Channel), span, ps.Closed,
 		plural(len(msgs), "mensaje", "mensajes"), plural(len(people), "persona", "personas"))
-	d.Href, d.Hint = momentLink(snap.Videos, sg.VideoID, sg.Start, now)
+	// Desde el primer pedazo del último vivo: un corte en el mismo vivo abre
+	// donde empezó el programa; uno con vivo nuevo, donde empezó ese vivo.
+	last := parts[len(parts)-1]
+	open := last.Start
+	if i := slices.IndexFunc(parts, func(p Segment) bool { return p.VideoID == last.VideoID }); i >= 0 {
+		open = parts[i].Start
+	}
+	d.Href, d.Hint = momentLink(snap.Videos, last.VideoID, open, now)
 	switch {
 	case a != nil && a.Error != "":
 		d.ClaudeErr = a.Error
 	case a != nil:
 		b := claudeBlock(*a, messagesByID(msgs), false)
 		d.Claude = &b
+		if len(parts) > 1 {
+			d.ClaudeFor = "Resume solo de " + at(a.From) + " a " + at(a.To) + ": Claude resume cada parte del programa por separado."
+		}
 	case s.analyst == nil:
 		d.NoSummary = claudeOffText
 	case snap.Claude.Off != "":
@@ -544,7 +675,7 @@ func (s *Server) programDetail(ps ProgramSeg, msgs []Message, a *ClaudeAnalysis,
 		ems, from = s.programHistoryEms(ps, snap, now)
 	}
 	// Las franjas van antes que los botones: sin % no hay con qué comparar.
-	slots, typical, byPct, pad := s.programSlots(sg, msgs, ems, now)
+	slots, typical, byPct, pad := s.programSlots(ps, msgs, ems, now)
 	if len(slots) > 0 {
 		cmp, opts, why := compareSetup(ems, sg.Start, q.WithTramo(ps.Key), byPct)
 		d.Part = programParticipation(slots, typical, byPct, pad, snap.Videos, cmp)
@@ -728,20 +859,21 @@ func (s *Server) programHistoryEms(ps ProgramSeg, snap Snapshot, now time.Time) 
 func programEmissions(segs []ProgramSeg, program string, now time.Time) []Emission {
 	var ems []Emission
 	for _, ps := range segs {
-		sg := ps.Seg
-		if !strings.EqualFold(sg.Program, program) || sg.Start.Before(now.Add(-loyaltyWindow)) {
-			continue
+		for _, sg := range ps.pieces() {
+			if !strings.EqualFold(sg.Program, program) || sg.Start.Before(now.Add(-loyaltyWindow)) {
+				continue
+			}
+			if sg.State == SegLive || sg.End.After(now) {
+				sg.End = now
+			}
+			d := dayStart(sg.Start)
+			i := slices.IndexFunc(ems, func(e Emission) bool { return e.Day.Equal(d) })
+			if i < 0 {
+				ems = append(ems, Emission{Day: d, Program: program})
+				i = len(ems) - 1
+			}
+			ems[i].Segs = append(ems[i].Segs, sg)
 		}
-		if sg.State == SegLive || sg.End.After(now) {
-			sg.End = now
-		}
-		d := dayStart(sg.Start)
-		i := slices.IndexFunc(ems, func(e Emission) bool { return e.Day.Equal(d) })
-		if i < 0 {
-			ems = append(ems, Emission{Day: d, Program: program})
-			i = len(ems) - 1
-		}
-		ems[i].Segs = append(ems[i].Segs, sg)
 	}
 	sort.SliceStable(ems, func(i, j int) bool { return ems[i].Day.After(ems[j].Day) })
 	return ems
@@ -780,8 +912,9 @@ func fillEmissions(ems []Emission, msgs []Message, titles map[string]string) {
 // franjas faltan hasta su largo esperado (expectedLength): el gráfico deja ese
 // espacio vacío para que cada franja tenga el mismo ancho aunque el programa
 // recién empiece. No son franjas: no llevan título ni cuentan en el aria.
-func (s *Server) programSlots(sg Segment, msgs []Message, ems []Emission, now time.Time) (slots []Slot, typical float64, ok bool, pad int) {
-	if sg.VideoID == "" {
+func (s *Server) programSlots(ps ProgramSeg, msgs []Message, ems []Emission, now time.Time) (slots []Slot, typical float64, ok bool, pad int) {
+	sg, ids := ps.Seg, ps.videoIDs()
+	if len(ids) == 0 {
 		return nil, 0, false, 0
 	}
 	end := sg.End
@@ -789,13 +922,22 @@ func (s *Server) programSlots(sg Segment, msgs []Message, ems []Emission, now ti
 	if onAir {
 		end = now
 	}
+	// Con un corte, las franjas del hueco quedan vacías: se ve dónde se cayó.
+	// Los oyentes de cada vivo, solo durante su pedazo: si el vivo siguió con
+	// otro programa, esos no cuentan.
 	var viewers []ViewerSample
-	for _, v := range s.st.Viewers(sg.VideoID, sg.Start) {
-		if !v.At.After(end) {
-			viewers = append(viewers, v)
+	for _, pg := range ps.pieces() {
+		to := pg.End
+		if pg.State == SegLive || to.After(end) {
+			to = end
+		}
+		for _, v := range s.st.Viewers(pg.VideoID, pg.Start) {
+			if !v.At.After(to) {
+				viewers = append(viewers, v)
+			}
 		}
 	}
-	slots, typical, ok = ParticipationRange(msgs, viewers, []string{sg.VideoID}, sg.Start, end)
+	slots, typical, ok = ParticipationRange(msgs, viewers, ids, sg.Start, end)
 	if onAir && len(slots) > 0 {
 		to := sg.Start.Add(expectedLength(ems, sg.Start))
 		for next := slots[len(slots)-1].Start.Add(slotStep); next.Before(to); next = next.Add(slotStep) {
@@ -860,6 +1002,9 @@ func clockDistance(a, b time.Time) time.Duration {
 	return min(d, 24*time.Hour-d)
 }
 
+// slotPx es el ancho de cada franja de 5 min en el gráfico de Programas.
+const slotPx = 28
+
 // minProgramAxis es el largo mínimo del eje de un programa al aire.
 const minProgramAxis = time.Hour
 
@@ -878,7 +1023,9 @@ func programParticipation(slots []Slot, typical float64, ok bool, pad int, video
 	if pad > 0 {
 		padChart(chart, pad, slots[0].Start.Add(time.Duration(len(slots)+pad)*slotStep))
 	}
-	return map[string]any{"Chart": chart, "ByPct": ok, "Typical": pct(typical)}
+	// Ancho fijo por franja (con las vacías del pad): con pocas franjas no
+	// quedan barras anchísimas y dos programas se comparan a simple vista.
+	return map[string]any{"Chart": chart, "ByPct": ok, "Typical": pct(typical), "Px": (len(slots) + pad) * slotPx}
 }
 
 // padChart agrega pad posiciones vacías a la izquierda del gráfico, con el
@@ -914,7 +1061,7 @@ func (s *Server) programSentiment(d *ProgramDetail, ps ProgramSeg, msgs []Messag
 	d.Sent = true
 	var all SentSlot
 	for _, sl := range s.st.SentSlots(ps.Channel.ID, sg.Start) {
-		if sl.Program != sg.Program || sl.Start.After(end) || sl.Total() == 0 {
+		if !strings.EqualFold(sl.Program, sg.Program) || sl.Start.After(end) || sl.Total() == 0 {
 			continue
 		}
 		b := sentStack(sl)
@@ -989,9 +1136,13 @@ func (s *Server) findProgram(key, dia string, snap Snapshot, now time.Time) (Pro
 			continue
 		}
 		for _, ps := range programSegs([]ChannelStatus{ch}, samples, snap.Videos, days, now) {
-			if ps.Key == key {
-				msgs := s.st.MessagesOf(map[string]bool{ps.Seg.VideoID: true}, ps.Seg.Start.Add(-segmentLead))
-				return ps, segmentMessages(msgs, ps.Seg, videoTitles(snap.Videos)), true
+			if ps.HasKey(key) {
+				ids := map[string]bool{}
+				for _, id := range ps.videoIDs() {
+					ids[id] = true
+				}
+				msgs := s.st.MessagesOf(ids, ps.Seg.Start.Add(-segmentLead))
+				return ps, programMessages(msgs, ps, videoTitles(snap.Videos)), true
 			}
 		}
 	}
@@ -1035,12 +1186,13 @@ func (s *Server) programDetailPartial(w http.ResponseWriter, r *http.Request) {
 		s.render(w, "programa-detalle", ProgramDetail{})
 		return
 	}
-	var final *ClaudeAnalysis
+	finals := map[string]ClaudeAnalysis{}
 	for _, a := range s.st.Analyses(ps.Channel.ID, ps.Seg.Start) {
-		if a.Key == ps.Key && !a.Partial {
-			final = &a
+		if !a.Partial {
+			finals[a.Key] = a
 		}
 	}
+	final := finalAnalysis(ps, finals)
 	s.render(w, "programa-detalle", s.programDetail(ps, msgs, final, snap, now, programsQuery{Dia: dia, Comparar: compareParam(q.Get("comparar"))}))
 }
 
