@@ -594,13 +594,14 @@ type ProgramDetail struct {
 	Questions            []Message
 	// Con Claude y etiquetas en el tramo: los grupos de preguntas de las
 	// tandas y las categorías de Claude (programClaudeCards).
-	QClaude, CatsClaude   bool
-	QHeader               string
-	QGroups               []QGRow
-	Cats                  []CatRow
-	CatsPending           int
-	Supers                []SuperRow
-	SupersNote, SupersMsg string
+	QClaude, CatsClaude bool
+	QHeader             string
+	QGroups             []QGRow
+	Cats                []CatRow
+	CatsPending         int
+	Supers              []SuperRow
+	SupersNote          string
+	SuperMsgs           []ChatLine // cada pago, con los tags del chat del programa
 	// Sentimiento de las tandas de Claude: una fila por franja de 5 min y los
 	// motivos de todo el programa. Sin Claude, Sent va en false.
 	Sent, Motives bool
@@ -748,6 +749,7 @@ func (s *Server) programDetail(ps ProgramSeg, msgs []Message, a *ClaudeAnalysis,
 		topics = a.Result.Topics
 	}
 	d.Chat = programChatSection(msgs, labels, groups, topics, q)
+	d.SuperMsgs = programSupers(msgs, labels, groups, topics)
 	if sg.Program != "" {
 		d.History = s.programHistory(ps, ems, from, now)
 	}

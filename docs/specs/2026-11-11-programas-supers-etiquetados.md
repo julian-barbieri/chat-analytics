@@ -1,10 +1,10 @@
 # Spec: Super Chats del programa con mensaje, autor y tags
 
-- **Estado:** borrador
+- **Estado:** implementada
 - **Tipo:** feature
 - **Rama:** `feat/programas-supers-etiquetados`
 - **Origen:** pedido del usuario (2026-11-11): "en la sección de Super Chats del programa agregá el mensaje y el usuario y cómo fue categorizado (si es pregunta, etc.), etiquetado igual que el resto de los mensajes del chat del programa".
-- **Aprobada por / fecha:**
+- **Aprobada por / fecha:** Julian Barbieri, 2026-11-11
 
 ## Contexto
 
@@ -22,16 +22,17 @@ orden de hora, cada uno con hora, autor, tipo y monto, texto y los mismos tags q
 
 ## Criterios de aceptación
 
-- [ ] CA1: `programSupers` devuelve solo los mensajes con `Super`, en orden de hora, con
+- [x] CA1: `programSupers` devuelve solo los mensajes con `Super`, en orden de hora, con
   `Kind` ("Super Chat" / "Super Sticker"), `Amount` (`AmountText`) y los mismos `Cat`,
   `Sent`, `Group` y `Topics` que la fila de `programChat` del mismo mensaje; un Super
   Sticker sin texto muestra "Super Sticker: <nombre>"; sin etiquetas, la categoría es
   por reglas y sin sentimiento — `TestProgramSupers` (nuevo).
-- [ ] CA2: el detalle renderizado tiene, dentro de `#supers`, el autor, el texto, el
-  monto y el badge de categoría de cada pago; sin pagos sigue "Sin Super Chats ni Super
-  Stickers." — `TestProgramSupers` (render con `programas.html`).
-- [ ] CA3: los tests de `programChat` siguen pasando sin cambios.
-- [ ] Gates de `CLAUDE.md` → "Definición de terminado" en verde.
+- [x] CA2: el detalle renderizado tiene, dentro de `#supers`, el autor, el texto, el
+  monto y el badge de categoría de cada pago; un pago sin monto escrito muestra solo el
+  tipo — `TestProgramSupers` (render con `programas.html`). Sin pagos sigue "Sin Super
+  Chats ni Super Stickers." — `TestProgramDetail` (sin cambios).
+- [x] CA3: los tests de `programChat` siguen pasando sin cambios.
+- [x] Gates de `CLAUDE.md` → "Definición de terminado" en verde.
 
 ## Diseño propuesto
 

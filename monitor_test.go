@@ -12233,3 +12233,60 @@ func TestProgramReviewFixes(t *testing.T) {
 		}
 	})
 }
+
+// TestProgramSupers (CA1, CA2): los Super Chats del programa van con hora,
+// autor, tipo, monto, texto y los mismos tags que en "Chat del programa".
+func TestProgramSupers(t *testing.T) {
+	day := dayStart(noonToday())
+	at := func(i int) time.Time { return day.Add(8*time.Hour + time.Duration(i)*time.Minute) }
+	msgs := []Message{
+		{ID: "p2", Source: "chat", Author: "Beto", Text: "¿A qué hora el clima?", At: at(2), Super: SuperChat, AmountMicros: 5000000, Currency: "ARS", AmountText: "ARS 5,00"},
+		{ID: "a", Source: "chat", Author: "Ana", Text: "Qué lindo programa", At: at(1)},
+		{ID: "p1", Source: "chat", Author: "Caro", At: at(0), Super: SuperSticker, AmountMicros: 1990000, Currency: "USD", AmountText: "US$ 1.99", Sticker: "Perrito"},
+	}
+	labels := map[string]MessageLabel{"p2": {ID: "p2", Sentiment: "neutro", Cat: CatPregunta, Group: "g1"}}
+	groups := map[string]BatchGroup{"g1": {ID: "g1", Text: "¿Cuándo pasan el clima?"}}
+	topics := []ClaudeGroup{{Text: "El clima", Msgs: 1, IDs: []string{"p2"}}}
+	got := programSupers(msgs, labels, groups, topics)
+	if len(got) != 2 {
+		t.Fatalf("%d pagos, quiero 2: %+v", len(got), got)
+	}
+	chat := programChat(msgs, labels, groups, topics, chatFilter{})
+	same := chat.Rows[2] // p2 en el chat
+	same.Kind, same.Amount = "Super Chat", "ARS 5,00"
+	if !reflect.DeepEqual(got[1], same) {
+		t.Errorf("Super Chat: %+v, quiero los tags del chat %+v", got[1], same)
+	}
+	if s := got[0]; s.ID != "p1" || s.Kind != "Super Sticker" || s.Amount != "US$ 1.99" || s.Text != "Super Sticker: Perrito" || s.Author != "Caro" || s.Cat != CatOtro || s.Sent != "" {
+		t.Errorf("Super Sticker: %+v", s)
+	}
+	// Sin etiquetas: por reglas y sin sentimiento.
+	if off := programSupers(msgs, nil, nil, nil); off[1].Cat != CatPregunta || off[1].Sent != "" || off[1].Group != "" {
+		t.Errorf("sin etiquetas: %+v", off[1])
+	}
+
+	// CA2: el detalle muestra el pago con autor, texto, monto y tags.
+	now := noonToday()
+	st, srv, key := claudeProgramServer(t, now)
+	h := srv.Routes()
+	supers := func() string {
+		body := getBody(h, "/parcial/programas/detalle?tramo="+url.QueryEscape(key))
+		i := strings.Index(body, `<div id="supers"`)
+		if i < 0 {
+			t.Fatal("falta #supers")
+		}
+		card := body[i:]
+		return card[:strings.Index(card, `<div id="chat-programa"`)]
+	}
+	// El pago que ya trae el servidor de prueba no tiene AmountText: sin " · ".
+	if c := supers(); !strings.Contains(c, "<strong>Pago</strong>") || !strings.Contains(c, `<span class="badge super">Super Chat</span>`) {
+		t.Errorf("pago sin monto escrito:\n%s", c)
+	}
+	st.Add([]Message{{ID: "sc1", Source: "chat", VideoID: "v1", Program: "LA MAÑANA", Author: "Pagador", Text: "¿Saludan a Quilmes?", At: day.Add(8*time.Hour + 30*time.Second), Super: SuperChat, AmountMicros: 2000000000, Currency: "ARS", AmountText: "ARS 2.000,00"}})
+	c := supers()
+	for _, w := range []string{"<strong>Pagador</strong>", "¿Saludan a Quilmes?", `<span class="badge super">Super Chat · ARS 2.000,00</span>`, `<span class="badge pregunta">Pregunta</span>`} {
+		if !strings.Contains(c, w) {
+			t.Errorf("falta %q en:\n%s", w, c)
+		}
+	}
+}

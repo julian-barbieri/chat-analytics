@@ -132,6 +132,7 @@
         <tr><th scope="col">Moneda</th><th scope="col" class="n">Cantidad</th><th scope="col" class="n">Total</th></tr>
         {{range .Supers}}<tr><td>{{.Currency}}</td><td class="n">{{miles .N}}</td><td class="n">{{.Total}}</td></tr>{{end}}
       </table>{{else}}<p class="muted">Sin Super Chats ni Super Stickers.</p>{{end}}
+      {{if .SuperMsgs}}<ul class="qlist chatl">{{range .SuperMsgs}}{{template "chat-line" .}}{{end}}</ul>{{end}}
       <p class="muted">{{.SupersNote}}</p>
   </div>
   {{template "prog-chat" .Chat}}
@@ -183,16 +184,20 @@ mensajes en orden de hora con sus tags. */}}
       {{if $.Filtered}}<button type="button" class="btn btn-s" hx-get="{{$.Clear}}" hx-sync="#programas:replace" hx-target="#programas" hx-swap="outerHTML">Limpiar</button>{{end}}
     </form>
     <p class="muted">{{miles .Matched}} de {{plural .Total "mensaje" "mensajes"}} · en orden de hora. Mientras el chat está abierto la pantalla no se actualiza sola: buscá de nuevo para ver lo nuevo.</p>
-    <ul class="qlist chatl">{{range .Rows}}<li>
-      <div class="meta"><span class="hora">{{.Hour}}</span> · <strong>{{.Author}}</strong></div>
-      <div>{{.Text}}</div>
-      <div class="tags"><span class="badge {{.Cat}}">{{.CatLabel}}</span>{{if .Sent}}<span class="badge"><span class="sw {{.SentClass}}" aria-hidden="true"></span> {{.SentLabel}}</span>{{end}}{{with .Group}}<span class="badge grupo" title="Grupo de preguntas de Claude">{{.}}</span>{{end}}{{range .Topics}}<span class="badge tema">{{.}}</span>{{end}}</div>
-    </li>{{else}}<li class="muted">Ningún mensaje con esos filtros.</li>{{end}}</ul>
+    <ul class="qlist chatl">{{range .Rows}}{{template "chat-line" .}}{{else}}<li class="muted">Ningún mensaje con esos filtros.</li>{{end}}</ul>
     {{if $.MoreHref}}<button type="button" class="btn btn-s" hx-get="{{$.MoreHref}}" hx-sync="#programas:replace" hx-target="#programas" hx-swap="outerHTML">Ver más mensajes</button>{{end}}
     {{with $.Capped}}<p class="muted">{{.}}</p>{{end}}
     {{end}}
   </details>
 </div>{{end}}
+
+{{/* Un mensaje del chat del programa con sus tags; en los Super Chats, con
+el tipo y el monto adelante. */}}
+{{define "chat-line"}}<li>
+      <div class="meta"><span class="hora">{{.Hour}}</span> · <strong>{{.Author}}</strong></div>
+      <div>{{.Text}}</div>
+      <div class="tags">{{if .Kind}}<span class="badge super">{{.Kind}}{{with .Amount}} · {{.}}{{end}}</span>{{end}}<span class="badge {{.Cat}}">{{.CatLabel}}</span>{{if .Sent}}<span class="badge"><span class="sw {{.SentClass}}" aria-hidden="true"></span> {{.SentLabel}}</span>{{end}}{{with .Group}}<span class="badge grupo" title="Grupo de preguntas de Claude">{{.}}</span>{{end}}{{range .Topics}}<span class="badge tema">{{.}}</span>{{end}}</div>
+    </li>{{end}}
 
 {{/* Lo que compara el programa con sus emisiones de las últimas 4 semanas. */}}
 {{define "historia"}}

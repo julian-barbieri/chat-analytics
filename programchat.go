@@ -130,6 +130,7 @@ type ChatLine struct {
 	Sent, SentLabel, SentClass string // vacíos sin etiqueta de Claude
 	Group                      string // texto del grupo de preguntas
 	Topics                     []string
+	Kind, Amount               string // solo en los Super Chats del programa
 }
 
 // ChatView es la página pedida del chat filtrado.
@@ -150,12 +151,7 @@ type chatFilter struct {
 // grupo de las tandas, y los temas del resumen que incluyen al mensaje.
 // Sin etiquetas (labels nil), todo por reglas y sin sentimiento.
 func programChat(msgs []Message, labels map[string]MessageLabel, groups map[string]BatchGroup, topics []ClaudeGroup, f chatFilter) ChatView {
-	tops := map[string][]int{}
-	for i, tp := range topics {
-		for _, id := range groupIDs(tp) {
-			tops[id] = append(tops[id], i)
-		}
-	}
+	tops := topicIndex(topics)
 	tema := -1
 	if f.Tema != "" {
 		tema, _ = strconv.Atoi(strings.TrimPrefix(f.Tema, "tema"))
@@ -186,25 +182,67 @@ func programChat(msgs []Message, labels map[string]MessageLabel, groups map[stri
 		if len(v.Rows) >= limit {
 			continue
 		}
-		r := ChatLine{ID: m.ID, Hour: m.At.Local().Format("15:04"), Author: m.Author, Text: m.Text, Cat: cat, CatLabel: catOne[cat]}
-		if labeled {
-			r.Sent = l.Sentiment
-			for _, s := range chatSents {
-				if s.Key == l.Sentiment {
-					r.SentLabel, r.SentClass = s.Label, s.Class
-				}
-			}
-			if g, ok := groups[l.Group]; ok && l.Group != "" {
-				r.Group = g.Text
-			}
-		}
-		for _, i := range tops[m.ID] {
-			r.Topics = append(r.Topics, topics[i].Text)
-		}
-		v.Rows = append(v.Rows, r)
+		v.Rows = append(v.Rows, chatLine(m, labels, groups, topics, tops))
 	}
 	v.More = v.Matched > len(v.Rows)
 	return v
+}
+
+// topicIndex dice, por ID de mensaje, en qué temas del resumen está.
+func topicIndex(topics []ClaudeGroup) map[string][]int {
+	tops := map[string][]int{}
+	for i, tp := range topics {
+		for _, id := range groupIDs(tp) {
+			tops[id] = append(tops[id], i)
+		}
+	}
+	return tops
+}
+
+// chatLine es la fila de un mensaje con sus tags, la misma en el chat y en
+// los Super Chats del programa.
+func chatLine(m Message, labels map[string]MessageLabel, groups map[string]BatchGroup, topics []ClaudeGroup, tops map[string][]int) ChatLine {
+	cat, _ := catOf(m, labels)
+	r := ChatLine{ID: m.ID, Hour: m.At.Local().Format("15:04"), Author: m.Author, Text: m.Text, Cat: cat, CatLabel: catOne[cat]}
+	if l, ok := labels[m.ID]; ok {
+		r.Sent = l.Sentiment
+		for _, s := range chatSents {
+			if s.Key == l.Sentiment {
+				r.SentLabel, r.SentClass = s.Label, s.Class
+			}
+		}
+		if g, ok := groups[l.Group]; ok && l.Group != "" {
+			r.Group = g.Text
+		}
+	}
+	for _, i := range tops[m.ID] {
+		r.Topics = append(r.Topics, topics[i].Text)
+	}
+	return r
+}
+
+// programSupers son los Super Chats y Super Stickers del tramo en orden de
+// hora, con los mismos tags que en el chat del programa y su tipo y monto.
+// Son pocos por programa: van todos, sin filtros ni páginas.
+func programSupers(msgs []Message, labels map[string]MessageLabel, groups map[string]BatchGroup, topics []ClaudeGroup) []ChatLine {
+	var paid []Message
+	for _, m := range msgs {
+		if m.Super != "" {
+			paid = append(paid, m)
+		}
+	}
+	sort.SliceStable(paid, func(i, j int) bool { return paid[i].At.Before(paid[j].At) })
+	tops := topicIndex(topics)
+	var rows []ChatLine
+	for _, m := range paid {
+		r := chatLine(m, labels, groups, topics, tops)
+		r.Kind, r.Amount = superLabels[m.Super], m.AmountText
+		if strings.TrimSpace(r.Text) == "" && m.Sticker != "" {
+			r.Text = "Super Sticker: " + m.Sticker
+		}
+		rows = append(rows, r)
+	}
+	return rows
 }
 
 // foldSearch es el texto para buscar: minúsculas y sin tildes.
