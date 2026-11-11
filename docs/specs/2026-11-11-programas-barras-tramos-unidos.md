@@ -1,6 +1,6 @@
 # Spec: Programas: barras de ancho fijo y programa partido por un corte en una sola fila
 
-- **Estado:** aprobada
+- **Estado:** implementada
 - **Tipo:** bug
 - **Rama:** `fix/programas-barras-tramos-unidos`
 - **Origen:** mensaje del usuario con capturas (2026-11-11).
@@ -27,32 +27,38 @@ por una caída se vea como uno solo: una fila y un detalle con todos sus pedazos
 
 ## Criterios de aceptación
 
-- [ ] CA1: en Programas el gráfico tiene un ancho fijo por franja (`28px` por posición,
+- [x] CA1: en Programas el gráfico tiene un ancho fijo por franja (`28px` por posición,
   contando el `pad`): el contenedor lleva `style="width: N×28px"` con `max-width: 100%`
   (en pantallas angostas o programas muy largos se achica). En vivo no cambia. —
   `TestProgramParticipationAxis` (caso: 6 posiciones → 168 px; 36 → 1008 px) y
   `TestProgramsPage` (el `style` sale en el HTML).
-- [ ] CA2: `programSegs` junta en un solo `ProgramSeg` los tramos seguidos del mismo
+- [x] CA2: `programSegs` junta en un solo `ProgramSeg` los tramos seguidos del mismo
   canal, mismo programa (sin distinguir mayúsculas) y mismo día local, cuando entre
   ellos solo hay "sin vivo" (ningún otro programa). `Parts` guarda los pedazos;
   `Seg` va del inicio del primero al fin del último, con el estado y el `VideoID` del
   último. — `TestProgramSegs` (casos: corte de 15 min en el mismo vivo; corte con vivo
   nuevo; otro programa en el medio → no se juntan; distinto día → no se juntan).
-- [ ] CA3: la clave de la fila es la del primer pedazo (no cambia cuando aparece otro);
+- [x] CA3: la clave de la fila es la del primer pedazo (no cambia cuando aparece otro);
   `?tramo=` con la clave de cualquier pedazo elige la fila unida. — `TestProgramSegs` y
   `TestProgramsPage`.
-- [ ] CA4: la fila suma mensajes, Super Chats y preguntas de todos los pedazos y cuenta
+- [x] CA4: la fila suma mensajes, Super Chats y preguntas de todos los pedazos y cuenta
   personas sin repetir; el horario es `09:24–10:14` (o `09:24–` al aire) con la marca
   "1 corte". — `TestProgramRows` (caso nuevo).
-- [ ] CA5: el detalle y el CSV del programa usan los mensajes de todos los pedazos (sin
+- [x] CA5: el detalle y el CSV del programa usan los mensajes de todos los pedazos (sin
   duplicar los que caen en los 5 min de margen de dos pedazos); el gráfico va del
   inicio al fin con las franjas del corte vacías y el aria/la línea dicen "se cortó de
   09:32 a 09:47". — `TestProgramDetailCut` (nuevo) y `TestExportProgram`.
-- [ ] CA6: la historia y la comparación siguen contando una emisión por día (ya lo
+- [x] CA6: la historia y la comparación siguen contando una emisión por día (ya lo
   hacía `programEmissions`, que ahora recibe todos los pedazos). — tests existentes
   de `programEmissions` en verde.
+- [x] CA8 (pedido después de aprobar la spec): al tocar un botón de "Comparar con" (o una fila,
+  o en el refresco de 60 s) la página no salta al final. Causa: `#programas` se reemplaza
+  entero (`hx-swap="outerHTML"`) y el "scroll anchoring" del navegador toma de ancla el
+  botón con foco, que desaparece; reproducido con un clic real en la vista previa (de
+  y=901 a y=3658). Arreglo: `#programas { overflow-anchor: none; }` en `layout.html`. —
+  `TestProgramsPage` (la regla sale en la página) y navegador (con la regla, y=901 queda igual).
 - [ ] CA7: navegador con la vista previa: Programas en claro, oscuro y ancho de celular.
-- [ ] Gates de `CLAUDE.md` → "Definición de terminado" en verde.
+- [x] Gates de `CLAUDE.md` → "Definición de terminado" en verde.
 
 ## Diseño propuesto
 

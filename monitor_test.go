@@ -6552,10 +6552,10 @@ func TestProgramRows(t *testing.T) {
 			}
 			got = append(got, row{r.Channel.ID, r.Seg.Program, r.Hours, r.Msgs, r.People, r.Supers, r.OnAir, r.Closed, a})
 			// Mismo filtro que "Programa en curso" y que la 009.
-			if want := len(segmentMessages(msgs, r.Seg, titles)); r.Msgs != want {
-				t.Errorf("%s: %s tiene %d mensajes y segmentMessages %d", c.name, r.Seg.Program, r.Msgs, want)
+			if want := len(programMessages(msgs, r.ProgramSeg, titles)); r.Msgs != want {
+				t.Errorf("%s: %s tiene %d mensajes y programMessages %d", c.name, r.Seg.Program, r.Msgs, want)
 			}
-			if r.Key != segmentKey(r.Channel.ID, r.Seg) {
+			if len(r.Parts) != 1 || r.Parts[0] != r.Seg || r.Key != segmentKey(r.Channel.ID, r.Seg) {
 				t.Errorf("%s: clave %q", c.name, r.Key)
 			}
 		}
@@ -6662,6 +6662,8 @@ func TestProgramsPage(t *testing.T) {
 			`<label class="field" for="f-canal"><span class="lbl">Canal</span>`, `<label class="field" for="f-dia"><span class="lbl">Día</span>`,
 			`id="f-canal" class="sel" name="canal" hx-get="/parcial/programas" hx-trigger="change"`, `hx-push-url="true"`,
 			`<option value="" selected>Todos los canales</option>`, `<option value="hoy" selected>Hoy</option>`,
+			// Al cambiar "Comparar con" la página no salta al final.
+			"#programas { overflow-anchor: none; }",
 			`<th scope="col">Programa</th>`, `hx-trigger="every 60s"`, "LA TARDE", "OTRO2", "CRUCE", `<span class="live">AL AIRE</span>`,
 			// La fila elegida por defecto es el último programa que terminó.
 			`<tr class="sel">`, `hx-get="/parcial/programas?dia=hoy&amp;tramo=` + attrQuery(keyMan) + `"`,
@@ -11504,19 +11506,20 @@ func TestProgramParticipationAxis(t *testing.T) {
 		history    []run // salidas de cada uno de los 3 días anteriores (nil: sin historia)
 		want, end  string
 		real       int // franjas reales: un <title> y un rect.hit por cada una
+		px         int // ancho fijo: 28 px por posición, con las vacías
 	}{
 		// LA TARDE lleva 2 h (10:00 a 12:00: 25 franjas); con emisiones de 3 h, el eje es de 3 h:
 		// 11 franjas vacías a la izquierda, con el fin esperado en el borde.
-		{"al aire con historia", "LA TARDE", day.Add(10 * time.Hour), []run{{0, 3 * time.Hour}}, `<svg viewBox="-11 0 36 100"`, "13:00", 25},
+		{"al aire con historia", "LA TARDE", day.Add(10 * time.Hour), []run{{0, 3 * time.Hour}}, `<svg viewBox="-11 0 36 100"`, "13:00", 25, 1008},
 		// Sin historia y más de 1 h al aire: lo transcurrido, como antes.
-		{"al aire sin historia", "LA TARDE", day.Add(10 * time.Hour), nil, `<svg viewBox="0 0 25 100"`, "", 25},
+		{"al aire sin historia", "LA TARDE", day.Add(10 * time.Hour), nil, `<svg viewBox="0 0 25 100"`, "", 25, 700},
 		// Recién empezado y sin historia: 1 h como mínimo.
-		{"recién empezado", "NUEVO", now.Add(-10 * time.Minute), nil, `<svg viewBox="-9 0 12 100"`, now.Add(50 * time.Minute).Local().Format("15:04"), 3},
+		{"recién empezado", "NUEVO", now.Add(-10 * time.Minute), nil, `<svg viewBox="-9 0 12 100"`, now.Add(50 * time.Minute).Local().Format("15:04"), 3, 336},
 		// Sale dos veces por día: cuenta la salida que empieza a la misma hora (1 h 30), no el día entero.
 		{"dos salidas por día", "NUEVO", now.Add(-10 * time.Minute), []run{{-10 * time.Hour, time.Hour}, {0, 90 * time.Minute}},
-			`<svg viewBox="-15 0 18 100"`, now.Add(80 * time.Minute).Local().Format("15:04"), 3},
+			`<svg viewBox="-15 0 18 100"`, now.Add(80 * time.Minute).Local().Format("15:04"), 3, 504},
 		// Cerrado: su largo real aunque las anteriores duren más.
-		{"cerrado", "LA MAÑANA", day.Add(8 * time.Hour), []run{{0, 3 * time.Hour}}, `<svg viewBox="0 0 24 100"`, "", 24},
+		{"cerrado", "LA MAÑANA", day.Add(8 * time.Hour), []run{{0, 3 * time.Hour}}, `<svg viewBox="0 0 24 100"`, "", 24, 672},
 	}
 	for _, c := range cases {
 		st, srv := programServer(t, now, false)
@@ -11546,6 +11549,10 @@ func TestProgramParticipationAxis(t *testing.T) {
 		// Las franjas vacías del futuro no son franjas: sin <title> ni zona de mouse.
 		if n := strings.Count(body, `<rect class="hit"`); n != c.real {
 			t.Errorf("%s: %d franjas con título, quiero %d", c.name, n, c.real)
+		}
+		// CA1 (programas-barras-tramos-unidos): cada franja mide lo mismo en cualquier programa.
+		if px := fmt.Sprintf(`<div class="pfijo" style="width: %dpx">`, c.px); !strings.Contains(body, px) {
+			t.Errorf("%s: falta el ancho fijo %s", c.name, px)
 		}
 		if c.end != "" && !strings.Contains(body, `<span class="end" style="left: 0.00%">`+c.end+`</span>`) {
 			t.Errorf("%s: falta el rótulo del fin esperado %s", c.name, c.end)
@@ -11654,5 +11661,169 @@ func TestProgramRowsClaude(t *testing.T) {
 	h := func() http.Handler { _, srv, _ := claudeProgramServer(t, now); return srv.Routes() }()
 	if body := getBody(h, "/programas"); !strings.Contains(body, `<td class="n" title="por Claude">7</td>`) {
 		t.Error("la fila de LA MAÑANA no cuenta por Claude")
+	}
+}
+
+// cutDay arma un canal con programas cortados (now a las 12:00):
+//
+//	DOBLE     v8  06:00 a 06:27, OTRO 06:30 a 06:57, DOBLE 07:00 a 07:30: otro programa en el medio
+//	CORTADO   v5  08:00 a 08:30, corte de 9 min, v5 08:39 a 09:15 (mismo vivo)
+//	VUELVE    v6  09:30 a 09:45, corte, vivo nuevo v7 10:00 al aire
+//	CORTADO   v4  ayer 08:00 a 08:30 (otro día)
+//	NOCHE     v3  ayer 22:00 a 22:30, corte, v3 22:45 a 00:09 de hoy (cruza la medianoche)
+func cutDay(now time.Time) ([]ChannelStatus, []LiveSample, []Video, []Message) {
+	day := dayStart(now)
+	chans := []ChannelStatus{{ID: "UC1", Name: "Radio Test"}}
+	videos := []Video{{ID: "v7", Title: testTitle + "VUELVE", ChannelID: "UC1", Channel: "Radio Test", LiveStatus: "live"}}
+	var samples []LiveSample
+	add := func(video, prog string, from, to time.Time) {
+		samples = append(samples, livesEvery(video, "UC1", "Radio Test", testTitle+prog, from, to)...)
+	}
+	h := func(hh, mm int) time.Time {
+		return day.Add(time.Duration(hh)*time.Hour + time.Duration(mm)*time.Minute)
+	}
+	add("v4", "CORTADO", h(8, 0).AddDate(0, 0, -1), h(8, 30).AddDate(0, 0, -1))
+	add("v3", "NOCHE", h(-2, 0), h(-2, 30))
+	add("v3", "NOCHE", h(-2, 45), h(0, 10))
+	add("v8", "DOBLE", h(6, 0), h(6, 27))
+	add("v8", "OTRO", h(6, 30), h(6, 57))
+	add("v8", "DOBLE", h(7, 0), h(7, 30))
+	add("v5", "CORTADO", h(8, 0), h(8, 30))
+	add("v5", "CORTADO", h(8, 39), h(9, 15))
+	add("v6", "VUELVE", h(9, 30), h(9, 45))
+	add("v7", "VUELVE", h(10, 0), now.Add(-time.Minute))
+	var msgs []Message
+	msgs = append(msgs, chatRun("co1", "v5", "CORTADO", h(8, 0), time.Minute, 20)...)
+	msgs = append(msgs, chatRun("co2", "v5", "CORTADO", h(8, 45), time.Minute, 20)...)
+	// En el margen de 5 min de los dos pedazos: se cuenta una vez.
+	msgs = append(msgs, Message{ID: "borde", Source: "chat", VideoID: "v5", Program: "CORTADO", Author: "autor-co1-0",
+		Text: "sigo acá", At: h(8, 34).Add(30 * time.Second)})
+	msgs = append(msgs, chatRun("vu6", "v6", "VUELVE", h(9, 30), time.Minute, 10)...)
+	msgs = append(msgs, chatRun("vu7", "v7", "VUELVE", h(10, 0), time.Minute, 10)...)
+	return chans, samples, videos, msgs
+}
+
+// TestProgramSegsCut (CA2–CA4 de programas-barras-tramos-unidos): un programa
+// cortado por una caída es una sola fila con todos sus pedazos.
+func TestProgramSegsCut(t *testing.T) {
+	now := noonToday()
+	day := dayStart(now)
+	chans, samples, videos, msgs := cutDay(now)
+	type row struct {
+		prog, hours string
+		parts, cuts int
+		n, people   int
+		onAir       bool
+		closed      string
+	}
+	hoy := []row{
+		{"VUELVE", "09:30–", 2, 1, 20, 6, true, SegLive},
+		{"CORTADO", "08:00–09:15", 2, 1, 41, 6, false, closedEnded},
+		{"DOBLE", "07:00–07:30", 1, 0, 0, 0, false, closedEnded},
+		{"OTRO", "06:30–06:57", 1, 0, 0, 0, false, closedTitle},
+		{"DOBLE", "06:00–06:27", 1, 0, 0, 0, false, closedTitle},
+		// Cortado antes de las 00:00 y siguió después: una fila, también en Hoy.
+		{"NOCHE", "22:00–00:09", 2, 1, 0, 0, false, closedEnded},
+	}
+	ayer := []row{
+		{"NOCHE", "22:00–00:00", 2, 1, 0, 0, false, closedCut},
+		{"CORTADO", "08:00–08:30", 1, 0, 0, 0, false, closedEnded},
+	}
+	noche := segmentKey("UC1", Segment{VideoID: "v3", Program: "NOCHE", Start: day.Add(-2 * time.Hour)})
+	var rows []ProgramRow
+	for _, c := range []struct {
+		dia  string
+		want []row
+	}{{"hoy", hoy}, {"ayer", ayer}, {"7d", append(slices.Clone(hoy), ayer[1])}} {
+		_, days := dayRange(c.dia, now)
+		rows = programRows(programSegs(chans, samples, videos, days, now), msgs, nil, videoTitles(videos), nil)
+		var got []row
+		for _, r := range rows {
+			got = append(got, row{r.Seg.Program, r.Hours, len(r.Parts), r.Cuts, r.Msgs, r.People, r.OnAir, r.Closed})
+			if n := len(programMessages(msgs, r.ProgramSeg, videoTitles(videos))); n != r.Msgs {
+				t.Errorf("%s: %s tiene %d mensajes y programMessages %d", c.dia, r.Seg.Program, r.Msgs, n)
+			}
+			if r.Seg.Program == "NOCHE" && r.Key != noche {
+				t.Errorf("%s: NOCHE con clave %q, quiero la del primer pedazo", c.dia, r.Key)
+			}
+		}
+		if !reflect.DeepEqual(got, c.want) {
+			t.Errorf("%s:\n got %v\nwant %v", c.dia, got, c.want)
+		}
+	}
+	// Los mensajes del programa unido van en orden de hora.
+	all := programMessages(msgs, rows[1].ProgramSeg, videoTitles(videos))
+	if !slices.IsSortedFunc(all, func(a, b Message) int { return a.At.Compare(b.At) }) {
+		t.Error("programMessages no está en orden de hora")
+	}
+	// La clave es la del primer pedazo y cualquier pedazo la encuentra.
+	cut := rows[1].ProgramSeg
+	first := segmentKey("UC1", Segment{VideoID: "v5", Program: "CORTADO", Start: day.Add(8 * time.Hour)})
+	second := segmentKey("UC1", Segment{VideoID: "v5", Program: "CORTADO", Start: day.Add(8*time.Hour + 39*time.Minute)})
+	if cut.Key != first || !cut.HasKey(second) || !cut.HasKey(first) || cut.HasKey(rows[0].Key) {
+		t.Errorf("claves: %q, segundo pedazo %v", cut.Key, cut.HasKey(second))
+	}
+	if v := rows[0].Seg.VideoID; v != "v7" {
+		t.Errorf("el programa unido al aire queda con el vivo del último pedazo, no %q", v)
+	}
+}
+
+// cutServer es programServer con los datos de cutDay.
+func cutServer(t *testing.T, now time.Time) *Server {
+	t.Helper()
+	st, err := OpenStore(t.TempDir() + "/datos.jsonl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	chans, samples, videos, msgs := cutDay(now)
+	st.SetChannels(chans)
+	st.SetVideos("Radio Test", videos)
+	for _, s := range samples {
+		st.AddLives(s.At, []Video{{ID: s.VideoID, ChannelID: s.ChannelID, Channel: s.Channel, Title: s.Title, LiveStatus: "live"}})
+	}
+	st.Add(msgs)
+	return &Server{st: st, budget: 9000, now: func() time.Time { return now }}
+}
+
+// TestProgramDetailCut (CA3, CA5 de programas-barras-tramos-unidos): el
+// detalle, la lista y el CSV de un programa cortado usan todos sus pedazos.
+func TestProgramDetailCut(t *testing.T) {
+	now := noonToday()
+	day := dayStart(now)
+	h := cutServer(t, now).Routes()
+	first := segmentKey("UC1", Segment{VideoID: "v5", Program: "CORTADO", Start: day.Add(8 * time.Hour)})
+	second := segmentKey("UC1", Segment{VideoID: "v5", Program: "CORTADO", Start: day.Add(8*time.Hour + 39*time.Minute)})
+	vuelve := segmentKey("UC1", Segment{VideoID: "v6", Program: "VUELVE", Start: day.Add(9*time.Hour + 30*time.Minute)})
+	for _, c := range []struct {
+		name, path string
+		want, not  []string
+	}{
+		{"lista", "/programas", []string{"08:00–09:15", `<span class="muted">1 corte</span>`, "09:30–"},
+			[]string{"08:00–08:30</td>", "08:39–09:15"}},
+		{"detalle cortado", "/parcial/programas/detalle?tramo=" + url.QueryEscape(first),
+			[]string{"08:00 a 09:15 (se cortó de 08:30 a 08:39)", "41 mensajes de 6 personas"}, nil},
+		{"clave del segundo pedazo", "/parcial/programas/detalle?tramo=" + url.QueryEscape(second),
+			[]string{"08:00 a 09:15 (se cortó de 08:30 a 08:39)"}, nil},
+		{"lista con el segundo pedazo", "/programas?tramo=" + url.QueryEscape(second),
+			[]string{"08:00 a 09:15 (se cortó de 08:30 a 08:39)"}, []string{"Ese programa ya no"}},
+		{"al aire con vivo nuevo", "/parcial/programas/detalle?tramo=" + url.QueryEscape(vuelve),
+			[]string{"09:30 a ahora (se cortó de 09:45 a 10:00)", "20 mensajes de 6 personas"}, nil},
+	} {
+		body := getBody(h, c.path)
+		for _, w := range c.want {
+			if !strings.Contains(body, w) {
+				t.Errorf("%s: falta %q", c.name, w)
+			}
+		}
+		for _, w := range c.not {
+			if strings.Contains(body, w) {
+				t.Errorf("%s: sobra %q", c.name, w)
+			}
+		}
+	}
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, httptest.NewRequest("GET", "/export.csv?tramo="+url.QueryEscape(first), nil))
+	if rows, err := csv.NewReader(w.Body).ReadAll(); err != nil || len(rows) != 42 {
+		t.Errorf("CSV del programa cortado: %d filas, %v; quiero 41 mensajes", len(rows)-1, err)
 	}
 }
