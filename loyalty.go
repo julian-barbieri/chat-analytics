@@ -532,7 +532,8 @@ func EmissionMap(ems []Emission) (MapData, bool) {
 	lo, hi := math.Inf(1), math.Inf(-1)
 	put := func(v float64) HeatCell {
 		lo, hi = min(lo, v), max(hi, v)
-		return HeatCell{Text: decimal(v), OK: true, Val: v}
+		// Dos decimales bajo el 1 %: si no, casi todo el mapa dice 0,1.
+		return HeatCell{Text: decimalFine(v), OK: true, Val: v}
 	}
 	for i, e := range ems {
 		r := MapRow{Label: emissionLabel(e.Day)}
