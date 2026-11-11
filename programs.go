@@ -123,6 +123,7 @@ type ProgramRow struct {
 	Date, Hours                     string
 	Msgs, People, Supers, Questions int
 	OnAir                           bool
+	QByClaude                       bool            // Questions cuenta las etiquetas de Claude
 	Analysis                        *ClaudeAnalysis // el análisis final de la 009, si hay
 }
 
@@ -130,7 +131,7 @@ type ProgramRow struct {
 // mensaje va a su tramo con el mismo criterio que segmentMessages (del vivo,
 // con su programa, desde 5 min antes y, si terminó, hasta 5 min después),
 // buscando con búsqueda binaria entre los tramos de su vivo: O(M log S).
-func programRows(segs []ProgramSeg, msgs []Message, analyses []ClaudeAnalysis, titles map[string]string) []ProgramRow {
+func programRows(segs []ProgramSeg, msgs []Message, analyses []ClaudeAnalysis, titles map[string]string, labels map[string]MessageLabel) []ProgramRow {
 	rows := make([]ProgramRow, len(segs))
 	final := map[string]ClaudeAnalysis{}
 	for _, a := range analyses {
@@ -179,6 +180,8 @@ func programRows(segs []ProgramSeg, msgs []Message, analyses []ClaudeAnalysis, t
 		index[v] = ix
 	}
 	people := make([]map[string]bool, len(segs))
+	// Con etiquetas, un tramo con alguna cuenta las preguntas de Claude.
+	labeled, claudeQ := make([]int, len(segs)), make([]int, len(segs))
 	for _, m := range msgs {
 		ix, ok := index[m.VideoID]
 		if !ok {
@@ -217,10 +220,19 @@ func programRows(segs []ProgramSeg, msgs []Message, analyses []ClaudeAnalysis, t
 			if ask {
 				r.Questions++
 			}
+			if l, ok := labels[m.ID]; ok {
+				labeled[i]++
+				if l.Cat == CatPregunta {
+					claudeQ[i]++
+				}
+			}
 		}
 	}
 	for i := range rows {
 		rows[i].People = len(people[i])
+		if labeled[i] > 0 {
+			rows[i].Questions, rows[i].QByClaude = claudeQ[i], true
+		}
 	}
 	return rows
 }
@@ -353,7 +365,13 @@ func (s *Server) programsData(v url.Values) map[string]any {
 		analyses = append(analyses, s.st.Analyses(c.ID, oldest)...)
 	}
 	titles := videoTitles(snap.Videos)
-	rows := programRows(segs, msgs, analyses, titles)
+	// Con Claude, las preguntas de cada fila salen de las tandas: un solo
+	// pedido de etiquetas, por el índice por ID del Store.
+	var labels map[string]MessageLabel
+	if s.claudeActive(snap) && len(msgs) > 0 {
+		labels = s.st.Labels(messageIDs(msgs))
+	}
+	rows := programRows(segs, msgs, analyses, titles, labels)
 	pick := -1
 	for i, r := range rows {
 		if r.Key == q.Tramo {
@@ -415,13 +433,20 @@ func programsTitle(dia string, days []time.Time) string {
 
 // ProgramDetail es el detalle de un programa, listo para mostrar.
 type ProgramDetail struct {
-	Found                 bool
-	Title, Line           string
-	CSV, Href, Hint       string
-	Claude                *ClaudeBlock // el análisis final, si hay y no tuvo error
-	ClaudeErr, NoSummary  string
-	Topics                []CatRow
-	Questions             []Message
+	Found                bool
+	Title, Line          string
+	CSV, Href, Hint      string
+	Claude               *ClaudeBlock // el análisis final, si hay y no tuvo error
+	ClaudeErr, NoSummary string
+	Topics               []CatRow
+	Questions            []Message
+	// Con Claude y etiquetas en el tramo: los grupos de preguntas de las
+	// tandas y las categorías de Claude (programClaudeCards).
+	QClaude, CatsClaude   bool
+	QHeader               string
+	QGroups               []QGRow
+	Cats                  []CatRow
+	CatsPending           int
 	Supers                []SuperRow
 	SupersNote, SupersMsg string
 	// Sentimiento de las tandas de Claude: una fila por franja de 5 min y los
@@ -514,21 +539,49 @@ func (s *Server) programDetail(ps ProgramSeg, msgs []Message, a *ClaudeAnalysis,
 	if sg.Program != "" {
 		ems, from = s.programHistoryEms(ps, snap, now)
 	}
-	cmp, opts, why := compareSetup(ems, sg.Start, q.WithTramo(ps.Key))
-	d.Part = s.programParticipation(sg, msgs, snap.Videos, now, cmp)
-	if d.Part != nil && sg.Program != "" {
-		d.Part["Compare"], d.Part["CmpWhy"], d.Part["Summary"] = opts, why, EmissionSummary(ems, sg.Start)
-		if cmp != nil {
-			d.Part["CmpNote"] = cmp.note
+	// Las franjas van antes que los botones: sin % no hay con qué comparar.
+	slots, typical, byPct := s.programSlots(sg, msgs, ems, now)
+	if len(slots) > 0 {
+		cmp, opts, why := compareSetup(ems, sg.Start, q.WithTramo(ps.Key), byPct)
+		d.Part = programParticipation(slots, typical, byPct, snap.Videos, cmp)
+		if sg.Program != "" {
+			d.Part["Compare"], d.Part["CmpWhy"], d.Part["Summary"] = opts, why, EmissionSummary(ems, sg.Start)
+			if cmp != nil {
+				d.Part["CmpNote"] = cmp.note
+			}
 		}
 	}
 	if s.analyst != nil {
-		s.programSentiment(&d, ps, msgs, now)
+		labels := s.st.Labels(messageIDs(msgs))
+		s.programSentiment(&d, ps, msgs, labels, now)
+		if s.claudeActive(snap) && len(labels) > 0 {
+			s.programClaudeCards(&d, msgs, labels)
+		}
 	}
 	if sg.Program != "" {
 		d.History = s.programHistory(ps, ems, from, now)
 	}
 	return d
+}
+
+// programClaudeCards arma Preguntas y Categorías del detalle con las
+// etiquetas de las tandas (ADR 0009, 0010): los grupos de preguntas, como en
+// En vivo pero sin marcar respondidas, y las categorías de catRowsWith.
+func (s *Server) programClaudeCards(d *ProgramDetail, msgs []Message, labels map[string]MessageLabel) {
+	var gids []string
+	for _, l := range labels {
+		if l.Group != "" {
+			gids = append(gids, l.Group)
+		}
+	}
+	rows, n := questionGroups(msgs, labels, s.st.Groups(gids), s.answers.Answered)
+	d.QClaude = true
+	d.QHeader = plural(n, "pregunta", "preguntas") + " · " + plural(len(rows), "grupo", "grupos")
+	for _, r := range rows {
+		d.QGroups = append(d.QGroups, QGRow{QGroupRow: r, Count: miles(r.N)})
+	}
+	d.Cats, d.CatsPending = catRowsWith(msgs, labels)
+	d.CatsClaude = true
 }
 
 // CompareOption es un botón de "Comparar con". Off: no hay con qué comparar.
@@ -550,8 +603,18 @@ type chartCompare struct {
 
 // compareSetup arma los botones de "Comparar con" y la comparación del modo
 // pedido en q. Un modo sin datos queda deshabilitado (con su motivo en why)
-// y el gráfico sale sin comparar.
-func compareSetup(ems []Emission, ref time.Time, q programsQuery) (*chartCompare, []CompareOption, string) {
+// y el gráfico sale sin comparar. Sin byPct (el gráfico va por personas
+// porque falta el dato de cuántos miraban) no se dibuja ninguna comparación:
+// todos los modos quedan deshabilitados con un solo motivo.
+func compareSetup(ems []Emission, ref time.Time, q programsQuery, byPct bool) (*chartCompare, []CompareOption, string) {
+	if !byPct {
+		var opts []CompareOption
+		for _, m := range compareModes {
+			opts = append(opts, CompareOption{Label: m.Label, Page: q.WithComparar(m.ID).Page(), Partial: q.WithComparar(m.ID).Partial(),
+				On: m.ID == cmpNone, Off: m.ID != cmpNone})
+		}
+		return nil, opts, "Sin datos para comparar: las comparaciones son de % de participación y en este programa falta el dato de cuántos miraban."
+	}
 	band := NormalBand(ems, ref)
 	kind := "de lunes a viernes"
 	if weekend(ref) {
@@ -707,15 +770,18 @@ func fillEmissions(ems []Emission, msgs []Message, titles map[string]string) {
 	}
 }
 
-// programParticipation arma el gráfico de participación del tramo entero,
-// franjas de 5 min de su inicio a su fin (o a ahora si sigue al aire), con
-// los espectadores del vivo (Store.Viewers desde el inicio, no Snapshot).
-func (s *Server) programParticipation(sg Segment, msgs []Message, videos []Video, now time.Time, cmp *chartCompare) map[string]any {
+// programSlots son las franjas de 5 min del tramo entero, de su inicio a su
+// fin (o a ahora si sigue al aire), con los espectadores del vivo
+// (Store.Viewers desde el inicio, no Snapshot). Al aire, se suman franjas
+// vacías hasta su largo esperado (expectedLength): así cada franja tiene el
+// mismo ancho en el gráfico aunque el programa recién empiece.
+func (s *Server) programSlots(sg Segment, msgs []Message, ems []Emission, now time.Time) ([]Slot, float64, bool) {
 	if sg.VideoID == "" {
-		return nil
+		return nil, 0, false
 	}
 	end := sg.End
-	if sg.State == SegLive || end.After(now) {
+	onAir := sg.State == SegLive || end.After(now)
+	if onAir {
 		end = now
 	}
 	var viewers []ViewerSample
@@ -725,9 +791,36 @@ func (s *Server) programParticipation(sg Segment, msgs []Message, videos []Video
 		}
 	}
 	slots, typical, ok := ParticipationRange(msgs, viewers, []string{sg.VideoID}, sg.Start, end)
-	if len(slots) == 0 {
-		return nil
+	if onAir && len(slots) > 0 {
+		to := sg.Start.Add(expectedLength(ems, sg.Start))
+		for next := slots[len(slots)-1].Start.Add(slotStep); next.Before(to); next = next.Add(slotStep) {
+			slots = append(slots, Slot{Start: next})
+		}
 	}
+	return slots, typical, ok
+}
+
+// expectedLength es cuánto suele durar el programa: la mediana de sus
+// emisiones anteriores (sin la del día de start), con minProgramAxis como
+// mínimo para que una sola franja no ocupe todo el gráfico.
+func expectedLength(ems []Emission, start time.Time) time.Duration {
+	var spans []float64
+	for _, e := range ems {
+		if from, to := e.span(); !e.Day.Equal(dayStart(start)) && to.After(from) {
+			spans = append(spans, float64(to.Sub(from)))
+		}
+	}
+	if len(spans) == 0 {
+		return minProgramAxis
+	}
+	return max(time.Duration(median(spans)), minProgramAxis)
+}
+
+// minProgramAxis es el largo mínimo del eje de un programa al aire.
+const minProgramAxis = time.Hour
+
+// programParticipation arma el gráfico de participación con las franjas de programSlots.
+func programParticipation(slots []Slot, typical float64, ok bool, videos []Video, cmp *chartCompare) map[string]any {
 	titles := videoTitles(videos)
 	var c *ChartCompare
 	if cmp != nil {
@@ -739,7 +832,7 @@ func (s *Server) programParticipation(sg Segment, msgs []Message, videos []Video
 // programSentiment suma al detalle las franjas de sentimiento del tramo
 // (Store.SentSlots, ya sumadas al guardar) y los motivos de las tandas que
 // tocan el tramo, contando solo los mensajes del tramo. No pide nada a Claude.
-func (s *Server) programSentiment(d *ProgramDetail, ps ProgramSeg, msgs []Message, now time.Time) {
+func (s *Server) programSentiment(d *ProgramDetail, ps ProgramSeg, msgs []Message, labels map[string]MessageLabel, now time.Time) {
 	sg := ps.Seg
 	end := sg.End
 	if sg.State == SegLive || end.After(now) {
@@ -765,7 +858,6 @@ func (s *Server) programSentiment(d *ProgramDetail, ps ProgramSeg, msgs []Messag
 			Label: fmt.Sprintf("Promedio del programa: %.0f %% positivo, %.0f %% neutro, %.0f %% negativo (%s)", p.Pos, p.Neu, p.Neg, plural(all.Total(), "mensaje", "mensajes"))}
 	}
 	byID := messagesByID(msgs)
-	labels := s.st.Labels(messageIDs(msgs))
 	for _, l := range labels {
 		switch l.Sentiment {
 		case "negativo":

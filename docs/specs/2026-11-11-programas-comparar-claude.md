@@ -1,6 +1,6 @@
 # Spec: Programas: comparar que se vea, barras de ancho fijo y preguntas y categorías de Claude
 
-- **Estado:** aprobada
+- **Estado:** implementada
 - **Tipo:** bug
 - **Rama:** `fix/programas-comparar-claude`
 - **Origen:** mensaje del usuario con capturas (2026-11-11): los botones de "Comparar con" no hacen nada, la barra de un programa recién empezado ocupa todo el ancho y Preguntas / Temas salen "por reglas".
@@ -23,14 +23,14 @@ Que "Comparar con" solo ofrezca lo que se puede dibujar, que cada franja de 5 mi
 
 ## Criterios de aceptación
 
-- [ ] CA1: con el gráfico por personas (sin %), "Emisión anterior", "Mismo día la semana pasada" y "Lo normal" quedan deshabilitados y el motivo dice que falta el dato de cuántos miraban; "Ninguna" queda marcada aunque venga `?comparar=normal`. — `TestCompareSetup` (caso sin %) y `TestProgramsPage`.
-- [ ] CA2: con % y un modo con datos, el gráfico trae banda (o línea) como hoy. — `TestCompareSetup` existente sigue verde.
-- [ ] CA3: el eje del gráfico de un tramo al aire cubre al menos su largo esperado: la mediana de duración de las emisiones anteriores del programa, o 1 h si no hay; nunca menos de lo transcurrido. Un tramo de 1 franja con 1 h esperada tiene `W` = 12 y la barra ocupa 1/12. Un tramo cerrado usa su largo real (sin cambios). — `TestProgramParticipationAxis` (nuevo).
-- [ ] CA4: con Claude activo (`claudeActive`) y etiquetas en el tramo, Preguntas muestra los grupos de las tandas (texto y cantidad, como En vivo, sin "Marcar respondida") con la marca Claude; con resumen final y sin grupos, las preguntas del resumen; reglas solo con Claude apagado o sin etiquetas, con el chip "por reglas". — `TestProgramDetailClaudeQuestions` (nuevo).
-- [ ] CA5: con Claude activo y etiquetas, la tarjeta de la izquierda es "Categorías" con `catRowsWith` (Claude) y los mensajes sin etiquetar contados aparte; con resumen final, los temas del resumen como hoy; sin Claude, temas por reglas. — `TestProgramDetailClaudeCats` (nuevo).
-- [ ] CA6: la columna Preguntas de la lista cuenta mensajes con `Cat == pregunta` de las etiquetas cuando Claude está activo y hay etiquetas del tramo; si no, por reglas, y el `title`/nota dice cuál. — `TestProgramRows` (caso nuevo).
-- [ ] CA7: navegador con la vista previa: Programas en claro, oscuro y ancho de celular.
-- [ ] Gates de `CLAUDE.md` → "Definición de terminado" en verde.
+- [x] CA1: con el gráfico por personas (sin %), "Emisión anterior", "Mismo día la semana pasada" y "Lo normal" quedan deshabilitados y el motivo dice que falta el dato de cuántos miraban; "Ninguna" queda marcada aunque venga `?comparar=normal`. — `TestCompareSetup` (caso sin %) y `TestProgramsPage`.
+- [x] CA2: con % y un modo con datos, el gráfico trae banda (o línea) como hoy. — `TestCompareSetup` existente sigue verde.
+- [x] CA3: el eje del gráfico de un tramo al aire cubre al menos su largo esperado: la mediana de duración de las emisiones anteriores del programa, o 1 h si no hay; nunca menos de lo transcurrido. Un tramo de 1 franja con 1 h esperada tiene `W` = 12 y la barra ocupa 1/12. Un tramo cerrado usa su largo real (sin cambios). — `TestProgramParticipationAxis` (nuevo).
+- [x] CA4: con Claude activo (`claudeActive`) y etiquetas en el tramo, Preguntas muestra los grupos de las tandas (texto y cantidad, como En vivo, sin "Marcar respondida") con la marca Claude; con resumen final y sin grupos, las preguntas del resumen; reglas solo con Claude apagado o sin etiquetas, con el chip "por reglas". — `TestProgramDetailClaudeQuestions` (nuevo).
+- [x] CA5: con Claude activo y etiquetas, la tarjeta de la izquierda es "Categorías" con `catRowsWith` (Claude) y los mensajes sin etiquetar contados aparte; con resumen final, los temas del resumen como hoy; sin Claude, temas por reglas. — `TestProgramDetailClaudeCats` (nuevo).
+- [x] CA6: la columna Preguntas de la lista cuenta mensajes con `Cat == pregunta` de las etiquetas cuando Claude está activo y hay etiquetas del tramo; si no, por reglas, y el `title`/nota dice cuál. — `TestProgramRows` (caso nuevo).
+- [x] CA7: navegador con la vista previa: Programas en claro, oscuro y ancho de celular.
+- [x] Gates de `CLAUDE.md` → "Definición de terminado" en verde.
 
 ## Diseño propuesto
 
