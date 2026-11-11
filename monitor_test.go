@@ -10469,6 +10469,39 @@ func TestLoyaltyPerf(t *testing.T) {
 	}
 }
 
+// TestLoyaltyAtRisk (CA1): un habitual queda en riesgo a los 7 días sin
+// escribir; uno de hace 6 no, y un ocasional nunca.
+func TestLoyaltyAtRisk(t *testing.T) {
+	now := noonToday()
+	cases := []struct {
+		name     string
+		last     int // días desde el último mensaje
+		vivos    int // emisiones en las que escribió
+		wantRisk int
+	}{
+		{"habitual hace 6 días", 6, 6, 0},
+		{"habitual hace 7 días", 7, 6, 1},
+		{"habitual hace 8 días", 8, 6, 1},
+		{"ocasional hace 10 días", 10, 2, 0},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			// 21 emisiones (días 0 a 20): habituales desde 5 vivos.
+			var ems []Emission
+			for k := 0; k <= 20; k++ {
+				var msgs []Message
+				if k >= c.last && k < c.last+c.vivos {
+					msgs = loyaltyMsg(now, k, "X", "buenas", "", 1)
+				}
+				ems = append(ems, emissionAt(now, k, msgs...))
+			}
+			if l := Loyalty(ems, now); l.AtRisk != c.wantRisk {
+				t.Errorf("en riesgo = %d, quería %d", l.AtRisk, c.wantRisk)
+			}
+		})
+	}
+}
+
 // TestProgramDetailSections (CA7): las secciones nuevas en su orden, con
 // Super Chats al final.
 func TestProgramDetailSections(t *testing.T) {
@@ -10486,7 +10519,8 @@ func TestProgramDetailSections(t *testing.T) {
 		last = i
 	}
 	for _, w := range []string{"Fidelización del chat", "ventana fija de 4 semanas", "Emisión por emisión", "Franjas fuertes y débiles", "Mapa por emisión",
-		"Super Chats del programa", "Segmentos por asistencia", "Cohortes: ¿vuelven los que llegan?"} {
+		"Super Chats del programa", "Segmentos por asistencia", "Cohortes: ¿vuelven los que llegan?",
+		"habituales sin escribir hace 7+ días"} {
 		if !strings.Contains(body, w) {
 			t.Errorf("falta %q", w)
 		}
