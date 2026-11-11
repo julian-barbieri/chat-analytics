@@ -1,10 +1,10 @@
 # Spec: Preguntas de Programas con "Ver N más"
 
-- **Estado:** borrador
+- **Estado:** aprobada
 - **Tipo:** mejora
 - **Rama:** `feat/programas-preguntas-plegadas`
 - **Origen:** pedido del usuario: "en Programas, en Preguntas, hay veces que se ven muchas preguntas y queda muy larga la sección".
-- **Aprobada por / fecha:** —
+- **Aprobada por / fecha:** Julian Barbieri, 2026-11-11
 
 ## Contexto
 
