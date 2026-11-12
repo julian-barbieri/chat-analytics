@@ -72,6 +72,10 @@ type CommentsQuery struct {
 	Video, Buscar, Cat, VOrden        string
 	SinResp                           bool
 	Pag                               int
+	// Categorías en semicírculo (CA16 de diseno-ejecutivo): la elegida, sin
+	// «Otros» y con la lista entera desplegada.
+	Sector           string
+	SinOtros, CatAll bool
 }
 
 // commentsQuery lee los parámetros con sus listas cerradas.
@@ -102,7 +106,22 @@ func commentsQuery(v url.Values) CommentsQuery {
 	if p, err := strconv.Atoi(v.Get("pag")); err == nil && p > 1 {
 		q.Pag = p
 	}
+	q.Sector = pickOf(v.Get("sector"), categories)
+	q.SinOtros, q.CatAll = v.Get("otros") == "0", v.Get("catall") == "1"
 	return q
+}
+
+// catLink es el parcial con otra categoría elegida en el semicírculo.
+func (q CommentsQuery) catLink(sel string, noOther, all bool) string {
+	q.Sector, q.SinOtros, q.CatAll = sel, noOther, all
+	return q.Partial()
+}
+
+// commentsGauge es el semicírculo de Categorías de unos comentarios: por
+// reglas, con los comentarios de cada día de las últimas dos semanas.
+func commentsGauge(msgs []Message, q CommentsQuery, now time.Time) CatGauge {
+	return catGauge(catGaugeIn{rows: catRows(msgs), msgs: msgs, sel: q.Sector, noOther: q.SinOtros, all: q.CatAll, link: q.catLink,
+		now: now, end: dayStart(now).AddDate(0, 0, 1), step: 24 * time.Hour, n: 14, stepLabel: "Por día", target: "#comentarios"})
 }
 
 // values arma la URL con lo que no es por defecto, para que los links sean cortos.
@@ -119,6 +138,13 @@ func (q CommentsQuery) values() url.Values {
 	set("orden", q.Orden, commentOrders[0].ID)
 	set("dest", q.Dest, commentDests[0].ID)
 	set("video", q.Video, "")
+	set("sector", q.Sector, "")
+	if q.SinOtros {
+		v.Set("otros", "0")
+	}
+	if q.CatAll {
+		v.Set("catall", "1")
+	}
 	if q.Video != "" {
 		set("buscar", q.Buscar, "")
 		set("cat", q.Cat, "")
@@ -187,6 +213,7 @@ type CommentsView struct {
 	ComplaintPct                         float64
 	Days                                 []CommentDay
 	Cats                                 []CatRow
+	Gauge                                CatGauge
 	CatTotal                             int
 	Words                                []Count
 	Authors                              []AuthorRow
@@ -405,6 +432,7 @@ func CommentsSummary(msgs []Message, vids []VideoRecord, likes map[string][]Like
 	}
 
 	v.Cats, v.CatTotal = catRows(period), len(period)
+	v.Gauge = commentsGauge(period, q, now)
 	v.Words = TopWords(period, 16)
 	for name, a := range authors {
 		a.Videos = len(authorVideos[name])
@@ -651,6 +679,7 @@ type CommentsDetail struct {
 	HalfHours          string // en cuánto llegó la mitad de los comentarios
 	ChannelHalf        string // lo mismo, mediana de los otros videos del canal
 	Cats               []CatRow
+	Gauge              CatGauge
 	List               []CommentItem
 	Shown, Page, Pages int
 	PrevPage, NextPage int
@@ -698,6 +727,7 @@ func CommentsVideo(msgs []Message, vids []VideoRecord, likes []LikeSample, q Com
 	}
 	d.People, d.ComplaintPct = len(people), share(complaints, len(all))
 	d.Cats = catRows(all)
+	d.Gauge = commentsGauge(all, q, now)
 
 	if !r.PublishedAt.IsZero() {
 		for _, e := range curveEdges {

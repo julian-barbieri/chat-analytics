@@ -51,8 +51,9 @@ type Server struct {
 	// Claude, para la tarjeta de Canales cuando el análisis está apagado.
 	claudeWarn, claudeModel string
 	claudeUSD               float64
-	settings                *Settings // canales e intervalos editables (ADR 0005); nil: Canales en solo lectura
-	answers                 *Answers  // preguntas marcadas como respondidas (F4); nil: sin el botón
+	settings                *Settings     // canales e intervalos editables (ADR 0005); nil: Canales en solo lectura
+	answers                 *Answers      // preguntas marcadas como respondidas (F4); nil: sin el botón
+	regs                    regularsCache // habituales por canal, una vez por día (Quiénes participan)
 }
 
 // ChatSettings son los intervalos del chat que usa el worker (WorkerConfig).
@@ -128,6 +129,7 @@ func (s *Server) page(w http.ResponseWriter, r *http.Request) {
 
 type Tile struct {
 	Label, Value, Note string
+	Trend              string // "up" (verde), "down" (naranja) o "" (gris)
 }
 
 type Bar struct {
@@ -217,29 +219,6 @@ func catOf(m Message, labels map[string]MessageLabel) (cat string, unlabeled boo
 		return l.Cat, false
 	}
 	return c, len(labels) > 0 && c != CatSpam
-}
-
-// catFolds le pone su flecha a cada fila con mensajes (menos el spam) y arma
-// la lista solo de las desplegadas, con la misma cuenta que la fila.
-func catFolds(rows []CatRow, msgs []Message, labels map[string]MessageLabel, fold foldState) []CatRow {
-	for i, r := range rows {
-		if r.N == 0 || r.Key == CatSpam {
-			continue
-		}
-		rows[i].FoldKey = "cat-" + r.Key
-		rows[i].Fold = fold.link(rows[i].FoldKey)
-		if !rows[i].Fold.Open {
-			continue
-		}
-		var in []Message
-		for _, m := range msgs {
-			if c, _ := catOf(m, labels); c == r.Key {
-				in = append(in, m)
-			}
-		}
-		rows[i].List = foldMsgs(in, len(in))
-	}
-	return rows
 }
 
 const catExampleRunes = 60
@@ -486,15 +465,54 @@ func numbered(prefix string, n int) []string {
 	return out
 }
 
-// catFoldKeys son las claves de las filas plegables de Categorías.
+// catFoldKeys son las claves de Categorías en "abrir": la categoría elegida
+// en el semicírculo (cat-<Cat*>, también el spam, que muestra sus números),
+// sin «Otros» y con la lista entera desplegada.
 func catFoldKeys() []string {
 	var out []string
 	for _, c := range categories {
-		if c != CatSpam {
-			out = append(out, "cat-"+c)
+		out = append(out, "cat-"+c)
+	}
+	return append(out, "sinotros", "catall")
+}
+
+// catPick lee de lo abierto la categoría elegida y los dos botones.
+func catPick(open map[string]bool) (sel string, noOther, all bool) {
+	for _, c := range categories {
+		if open["cat-"+c] {
+			sel = c
+			break
 		}
 	}
-	return out
+	return sel, open["sinotros"], open["catall"]
+}
+
+// catOpen es lo abierto con otra categoría elegida (una sola a la vez).
+func catOpen(open map[string]bool, sel string, noOther, all bool) map[string]bool {
+	next := map[string]bool{}
+	for k, v := range open {
+		if v && !strings.HasPrefix(k, "cat-") && k != "sinotros" && k != "catall" {
+			next[k] = true
+		}
+	}
+	next["cat-"+sel], next["sinotros"], next["catall"] = true, noOther, all
+	return next
+}
+
+// liveGauge es el semicírculo de Categorías de En vivo, con el estado en "abrir".
+func liveGauge(rows []CatRow, msgs []Message, labels map[string]MessageLabel, fold foldState, now time.Time) CatGauge {
+	sel, noOther, all := catPick(fold.Open)
+	link := func(sel string, noOther, all bool) string {
+		q := maps.Clone(fold.Query)
+		if q == nil {
+			q = url.Values{}
+		}
+		q.Set("abrir", foldValue(catOpen(fold.Open, sel, noOther, all)))
+		return "/parcial/vivo/analisis?" + q.Encode()
+	}
+	return catGauge(catGaugeIn{rows: rows, msgs: msgs, labels: labels, sel: sel, noOther: noOther, all: all, link: link,
+		now: now, end: now, step: 15 * time.Minute, n: 12, trend: true, stepLabel: "Cada 15 min",
+		target: "#vivo-analisis", sync: "closest #vivo-analisis:replace"})
 }
 
 // qgFolds es cuántos grupos de preguntas se pueden desplegar: más abajo, un
@@ -886,9 +904,10 @@ func (s *Server) liveAnalysis(w http.ResponseWriter, r *http.Request) {
 	msgs := sinceFor(snap.Msgs, id, now.Add(-24*time.Hour))
 	viewers := s.st.Viewers(id, now.Add(-24*time.Hour))
 	fold := foldState{Open: open, Query: url.Values{"video": {id}, "horas": {strconv.Itoa(hours)}}}
-	data := analysisData(msgs, viewers, []string{id}, partInput{msgs, viewers, []string{id}}, snap.Videos, video.Concurrent, nil, now, hours, scopeLast24, fold)
+	x := liveExtra{hourAgo: viewersAgo(viewers, now), since: now.Add(-24 * time.Hour)}
+	x.likes = liveLikes(map[string][]LikeSample{id: s.st.Likes(id, now.AddDate(0, 0, -regularDays))}, &video, nil, dayStart(now), now)
+	data := analysisData(msgs, viewers, []string{id}, partInput{msgs, viewers, []string{id}}, snap.Videos, video.Concurrent, nil, now, hours, scopeLast24, fold, x)
 	data["Video"], data["Label"], data["Span"], data["Abrir"] = id, label, label+" · últimas 24 h", foldValue(open)
-	data["Monitor"] = monitorView(msgs, scopeLast24)
 	// El análisis con Claude es por canal: un vivo suelto no lo tiene.
 	data["Claude"] = claudeView(claudeInput{Configured: s.analyst != nil, Status: snap.Claude, Now: now})
 	// Sin canal no hay tandas: alertas y preguntas por reglas.
@@ -907,22 +926,15 @@ var (
 	scopeProgram = scope{"del programa en curso", "en el programa en curso", "el programa en curso", "este programa", "de este programa"}
 )
 
-// monitorView es el bloque "Palabras y autores": los mensajes del mismo
-// alcance que el resto del análisis (programa en curso, día del canal o el
-// vivo suelto). Sin categorías: ya están en la tarjeta Categorías.
-func monitorView(msgs []Message, sc scope) map[string]any {
-	return map[string]any{"Total": len(msgs), "Of": sc.of, "Words": TopWords(msgs, 20), "Authors": TopAuthors(msgs, 10)}
-}
-
 // liveTiles son los números de arriba del análisis, sobre los mensajes ya
-// filtrados por el selector. Lo "típico" es la mediana de las franjas de
-// 5 min anteriores con mensajes, y solo se dice con al menos 6.
-func liveTiles(msgs []Message, concurrent int64, sc scope, now time.Time) []Tile {
-	slots := map[int]int{}
+// filtrados por el selector, en el orden del diseño ejecutivo. Cada uno trae
+// su comparación (Trend): lo "típico" del chat es la mediana de las franjas
+// de 5 min anteriores con mensajes, y solo se dice con al menos 6.
+func liveTiles(in tileInput) []Tile {
 	people, recent := map[string]bool{}, map[string]bool{}
 	supers, questions := 0, 0
 	byCur := map[string]int64{}
-	for _, m := range msgs {
+	for _, m := range in.msgs {
 		people[m.Author] = true
 		if m.Super != "" {
 			supers++
@@ -931,36 +943,46 @@ func liveTiles(msgs []Message, concurrent int64, sc scope, now time.Time) []Tile
 		if Classify(m.Text) == CatPregunta {
 			questions++
 		}
-		if m.Source != "chat" || m.At.After(now) {
-			continue
-		}
-		k := int(now.Sub(m.At) / slotStep)
-		slots[k]++
-		if k == 0 {
+		if m.Source == "chat" && !m.At.After(in.now) && in.now.Sub(m.At) < slotStep {
 			recent[m.Author] = true
 		}
 	}
-	var past []float64
-	for k, n := range slots {
-		if k > 0 {
-			past = append(past, float64(n))
-		}
+	cur, diff, ok := chatPace(in.msgs, in.now)
+	rate := Tile{"Mensajes por minuto", decimal(float64(cur) / 5), "en los últimos 5 min", ""}
+	switch {
+	case !ok:
+	case diff > 0:
+		rate.Note, rate.Trend = fmt.Sprintf("%.0f %% sobre lo típico %s", diff, in.sc.typical), "up"
+	case diff < 0:
+		rate.Note, rate.Trend = fmt.Sprintf("%.0f %% bajo lo típico %s", -diff, in.sc.typical), "down"
+	default:
+		rate.Note = "igual que lo típico " + in.sc.typical
 	}
-	rate := "en los últimos 5 min"
-	if len(past) >= 6 {
-		if typ := median(past); typ > 0 {
-			diff := math.Round((float64(slots[0]) - typ) / typ * 100)
-			word := "sobre"
-			if diff < 0 {
-				diff, word = -diff, "bajo"
+	watch := Tile{"Mirando ahora", "—", "sin dato de espectadores", ""}
+	part := Tile{"Participación", "—", "sin dato de espectadores", ""}
+	if in.concurrent > 0 {
+		watch.Value, watch.Note = miles(in.concurrent), "según YouTube"
+		if in.hourAgo > 0 {
+			switch d := math.Round(float64(in.concurrent-in.hourAgo) / float64(in.hourAgo) * 100); {
+			case d > 0:
+				watch.Note, watch.Trend = fmt.Sprintf("%.0f %% más que hace 1 h", d), "up"
+			case d < 0:
+				watch.Note, watch.Trend = fmt.Sprintf("%.0f %% menos que hace 1 h", -d), "down"
+			default:
+				watch.Note = "igual que hace 1 h"
 			}
-			rate = fmt.Sprintf("%.0f %% %s lo típico %s", diff, word, sc.typical)
 		}
-	}
-	watching, wnote := "—", "sin dato de espectadores"
-	if concurrent > 0 {
-		watching = miles(concurrent)
-		wnote = pct(float64(len(recent))*100/float64(concurrent)) + " escribió en los últimos 5 min"
+		p := float64(len(recent)) * 100 / float64(in.concurrent)
+		part.Value, part.Note = pct(p), "escribió en los últimos 5 min"
+		if in.typical > 0 {
+			part.Note = "lo típico del vivo: " + pct(in.typical)
+			switch {
+			case p > in.typical*(1+trendBand):
+				part.Trend = "up"
+			case p < in.typical*(1-trendBand):
+				part.Trend = "down"
+			}
+		}
 	}
 	var snote string
 	switch len(byCur) {
@@ -973,11 +995,10 @@ func liveTiles(msgs []Message, concurrent int64, sc scope, now time.Time) []Tile
 		snote = fmt.Sprintf("en %d monedas", len(byCur))
 	}
 	return []Tile{
-		{"Mensajes por minuto", decimal(float64(slots[0]) / 5), rate},
-		{"Personas que escribieron", miles(len(people)), "en " + sc.short},
-		{"Mirando ahora", watching, wnote},
-		{"Super Chats", miles(supers), snote},
-		{"Preguntas", miles(questions), "por reglas"},
+		watch, part, in.likes, rate,
+		{"Personas que escribieron", miles(len(people)), "en " + in.sc.short, ""},
+		{"Preguntas", miles(questions), "por reglas", ""},
+		{"Super Chats", miles(supers), snote, ""},
 	}
 }
 
@@ -992,17 +1013,47 @@ type partInput struct {
 
 // analysisData arma las tarjetas del análisis con los mensajes ya filtrados
 // (de un vivo, del día del canal o del programa en curso); Momentos usa part.
-func analysisData(msgs []Message, viewers []ViewerSample, ids []string, part0 partInput, videos []Video, concurrent int64, segs []Segment, now time.Time, hours int, sc scope, fold foldState) map[string]any {
+func analysisData(msgs []Message, viewers []ViewerSample, ids []string, part0 partInput, videos []Video, concurrent int64, segs []Segment, now time.Time, hours int, sc scope, fold foldState, x liveExtra) map[string]any {
 	a := Analyze(msgs)
 	titles := videoTitles(videos)
-	part := participationView(part0.msgs, part0.viewers, part0.ids, videos, concurrent, titles, segs, now, hours, fold)
+	part, moments, typical := participationView(part0.msgs, part0.viewers, part0.ids, videos, concurrent, titles, segs, now, hours, fold)
 	part["Window"] = sc.window
 	sup := superView(Supers(msgs, titles))
 	sup["Of"], sup["In"] = sc.of, sc.in
+	tiles := liveTiles(tileInput{msgs: msgs, concurrent: concurrent, hourAgo: x.hourAgo, typical: typical, likes: x.likes, sc: sc, now: now})
+	// La frase de arriba: el mejor momento es el del alcance (Momentos mira 24 h).
+	var best *Moment
+	for i, m := range moments {
+		if !m.Start.Before(x.since) {
+			best = &moments[i]
+			break
+		}
+	}
+	_, diff, paceOK := chatPace(msgs, now)
+	// Una sola pasada de palabras para la frase y "De qué se habla"; en la
+	// frase solo cuentan las que se repiten (2 mensajes o más).
+	top := TopWords(msgs, wordsShown)
+	var words []Count
+	for _, w := range top[:min(2, len(top))] {
+		if w.N >= 2 {
+			words = append(words, w)
+		}
+	}
 	return map[string]any{
 		"Hours": hours, "A": a, "Tech": bars(a.Tech), "Part": part, "Super": sup,
-		"Tiles": liveTiles(msgs, concurrent, sc, now), "Cats": catFolds(catRows(msgs), msgs, nil, fold), "CatTotal": a.Total, "CatOf": sc.of,
+		"Tiles": tiles, "Gauge": liveGauge(catRows(msgs), msgs, nil, fold, now), "CatTotal": a.Total, "CatOf": sc.of,
+		"Frase": liveSummary(diff, paceOK, sc.typical, words, best), "Monitor": monitorView(msgs, top, sc, now, x.regulars),
 	}
+}
+
+// liveExtra es lo de En vivo que no sale de los mensajes del alcance: los
+// likes, los espectadores de hace 1 h, desde cuándo cuenta el mejor momento
+// y los habituales del canal (nil en un vivo suelto).
+type liveExtra struct {
+	likes    Tile
+	hourAgo  int64
+	since    time.Time
+	regulars map[string]bool
 }
 
 // channelAnalysis es el análisis de un canal: "Programa en curso" (el vivo
@@ -1020,13 +1071,25 @@ func (s *Server) channelAnalysis(w http.ResponseWriter, snap Snapshot, ch Channe
 		fold.Query.Set("franja", strconv.FormatInt(sel.at.Unix(), 10))
 		fold.Query.Set("sent", sel.tab)
 	}
-	data := analysisData(ls.msgs, ls.viewers, ls.pids, ls.part, snap.Videos, ls.concurrent, ls.segs, now, hours, ls.sc, fold)
+	x := liveExtra{since: ls.start, regulars: s.regulars(ch.ID, now)}
+	var likes map[string]any
+	x.likes, likes = s.likesView(snap, ch, ls, now)
+	// "Hace 1 h" de los mismos vivos que suma "Mirando ahora": el del programa
+	// o, con todo el día, todos los vivos en curso del canal.
+	var ago [][]ViewerSample
+	for _, v := range snap.Videos {
+		if v.ChannelID == ch.ID && v.LiveStatus == "live" && (ls.prog == "" || v.ID == ls.video) {
+			ago = append(ago, s.st.Viewers(v.ID, now.Add(-time.Hour-hourAgoSlack)))
+		}
+	}
+	x.hourAgo = hourAgoSum(ago, now)
+	data := analysisData(ls.msgs, ls.viewers, ls.pids, ls.part, snap.Videos, ls.concurrent, ls.segs, now, hours, ls.sc, fold, x)
+	data["Likes"] = likes
 	data["Canal"], data["Video"], data["Ver"], data["Label"], data["Span"], data["Note"] = ch.ID, ls.video, ls.ver, channelName(ch), ls.span, ls.note
 	data["Abrir"], data["Motivos"] = foldValue(open), motives
 	if sel.ok {
 		data["Franja"], data["SentTab"] = fold.Query.Get("franja"), sel.tab
 	}
-	data["Monitor"] = monitorView(ls.msgs, ls.sc)
 	cardVer := "dia"
 	if ls.prog != "" {
 		cardVer = "programa"
@@ -1037,7 +1100,7 @@ func (s *Server) channelAnalysis(w http.ResponseWriter, snap Snapshot, ch Channe
 	if s.claudeActive(snap) && len(labels) > 0 {
 		// Categorías por Claude; el CSV sigue por reglas (ADR 0010).
 		rows, pending := catRowsWith(ls.msgs, labels)
-		data["Cats"], data["CatPending"] = catFolds(rows, ls.msgs, labels, fold), pending
+		data["Gauge"], data["CatPending"] = liveGauge(rows, ls.msgs, labels, fold, now), pending
 		data["CatClaude"] = true
 	}
 	data["Alertas"] = alertsData(Alerts(ls.msgs, labels, now), fold)
@@ -1047,8 +1110,11 @@ func (s *Server) channelAnalysis(w http.ResponseWriter, snap Snapshot, ch Channe
 	if !qg.ByRules {
 		// El tile cuenta lo mismo que "Preguntas agrupadas": con dos números
 		// distintos para lo mismo, la persona no sabía cuál creer.
-		tiles := data["Tiles"].([]Tile)
-		tiles[len(tiles)-1] = Tile{"Preguntas", miles(qg.N), "agrupadas por Claude"}
+		for i, t := range data["Tiles"].([]Tile) {
+			if t.Label == "Preguntas" {
+				data["Tiles"].([]Tile)[i] = Tile{"Preguntas", miles(qg.N), "agrupadas por Claude", ""}
+			}
+		}
 	}
 	s.render(w, "vivo-analisis", data)
 }
@@ -1732,7 +1798,9 @@ func dayStrip(segs []Segment, ch ChannelStatus, from, now time.Time, paused bool
 		b.Text = strings.Join(parts, " · ")
 		blocks = append(blocks, b)
 	}
-	// Lo actual primero: lo que está al aire se ve sin scrollear la tira.
+	// Lo actual primero en el HTML: el CSS (row-reverse) lo pone a la derecha,
+	// como en los gráficos, y el scroll de la tira arranca ahí, así lo que
+	// está al aire se ve sin scrollear en un celular.
 	slices.Reverse(blocks)
 	return map[string]any{
 		"Blocks": blocks, "W": max(now.Sub(from).Minutes(), 1), "Banner": ContinuityBanner(segs, now),
@@ -1867,7 +1935,7 @@ func chartWindow(slots []Slot, hours int) []Slot {
 
 // participationView arma la sección de momentos con más participación de uno
 // o varios vivos (los de un canal). concurrent es cuántos miran ahora.
-func participationView(msgs []Message, viewers []ViewerSample, ids []string, videos []Video, concurrent int64, titles map[string]string, segs []Segment, now time.Time, hours int, fold foldState) map[string]any {
+func participationView(msgs []Message, viewers []ViewerSample, ids []string, videos []Video, concurrent int64, titles map[string]string, segs []Segment, now time.Time, hours int, fold foldState) (map[string]any, []Moment, float64) {
 	slots, typical, ok := Participation(msgs, viewers, ids, now)
 	moments := TopMoments(slots, titles)
 	shown := chartWindow(slots, hours)
@@ -1923,11 +1991,19 @@ func participationView(msgs []Message, viewers []ViewerSample, ids []string, vid
 	if len(shown) > 0 {
 		chart["Strip"], chart["Lines"] = programStrip(segs, shown[0].Start, len(shown), now)
 	}
+	// La última franja es la de ahora: el borde derecho dice "Ahora".
+	if ticks, _ := chart["Ticks"].([]Tick); len(ticks) > 0 && ticks[len(ticks)-1].End {
+		ticks[len(ticks)-1].Label = "Ahora"
+	}
+	typ := typical
+	if !ok {
+		typ = 0 // sin espectadores no hay participación típica para comparar
+	}
 	return map[string]any{
 		"Chart": chart, "Moments": rows, "Why": why,
 		"Windows": []int{chartHours, 24}, "Outside": outsideNote,
 		"ByPct": ok, "Typical": pct(typical), "Concurrent": concurrent, "Missing": concurrent > 0 && missing,
-	}
+	}, moments, typ
 }
 
 // Mark es el número de un momento del top arriba del gráfico; Tick, una hora
@@ -1966,16 +2042,14 @@ func viewersLine(slots []Slot, span string) (ViewersLine, bool) {
 	if peak.Viewers == 0 {
 		return ViewersLine{}, false
 	}
-	// Lo más nuevo a la izquierda, como las barras: se recorre al revés.
-	rev := slices.Clone(slots)
-	slices.Reverse(rev)
+	// De izquierda (lo más viejo) a derecha (ahora), como las barras.
 	var path strings.Builder
-	for i, s := range rev {
+	for i, s := range slots {
 		if s.Viewers == 0 {
 			continue // corta el tramo: el siguiente arranca con otro M, no baja a 0
 		}
 		y := 100 - float64(s.Viewers)/float64(peak.Viewers)*100
-		if i == 0 || rev[i-1].Viewers == 0 {
+		if i == 0 || slots[i-1].Viewers == 0 {
 			fmt.Fprintf(&path, "M%d %.2fH%d", i, y, i+1)
 		} else {
 			fmt.Fprintf(&path, "V%.2fH%d", y, i+1)
@@ -2065,8 +2139,8 @@ func participationChartCmp(slots []Slot, moments []Moment, typical float64, ok b
 		if v > 0 {
 			h = max(v/scale*100, 1)
 		}
-		// Lo más nuevo a la izquierda: la franja i va en la posición len-1-i.
-		pos := float64(len(slots) - 1 - i)
+		// De izquierda a derecha: lo más nuevo (ahora) en el borde derecho.
+		pos := float64(i)
 		b := Bar{X: pos + 0.1, Y: 100 - h, W: 0.8, H: h, N: s.Authors, Label: slotTitle(s, titles)}
 		if r := rank[s.Start]; ok && r > 0 {
 			b.Class = "top"
@@ -2074,7 +2148,7 @@ func participationChartCmp(slots []Slot, moments []Moment, typical float64, ok b
 			marks = append(marks, Mark{Left: (pos + 0.5) / float64(w) * 100, Rank: r})
 		}
 		if cmp != nil && ok && scale > 0 {
-			k, p := clockKey(s.Start), len(slots)-1-i
+			k, p := clockKey(s.Start), i
 			if bd, has := cmp.Band[k]; has {
 				bands = append(bands, Bar{X: pos, Y: 100 - bd.P75/scale*100, W: 1, H: (bd.P75 - bd.P25) / scale * 100})
 				median[p], hasMed[p] = bd.Med, true
@@ -2102,13 +2176,14 @@ func participationChartCmp(slots []Slot, moments []Moment, typical float64, ok b
 	if len(slots) > 0 && len(slots) < slotCount {
 		span = "desde las " + slots[0].Start.Local().Format("15:04")
 	}
-	// Lo más nuevo a la izquierda: las horas se cuentan desde el final, para
-	// que el borde de ahora (End) siempre tenga rótulo, y salen de izquierda a
-	// derecha (el CSS alinea la primera y la última por su posición).
+	// Las horas se cuentan desde el final, para que el borde de ahora (End,
+	// a la derecha) siempre tenga rótulo, y salen de izquierda a derecha (el
+	// CSS alinea la primera y la última por su posición).
 	var ticks []Tick
 	for i := len(slots); i >= 0 && len(slots) > 0; i -= step {
-		ticks = append(ticks, Tick{Left: 100 - float64(i)/float64(w)*100, Label: slots[0].Start.Add(time.Duration(i) * slotStep).Local().Format("15:04"), End: i == len(slots)})
+		ticks = append(ticks, Tick{Left: float64(i) / float64(w) * 100, Label: slots[0].Start.Add(time.Duration(i) * slotStep).Local().Format("15:04"), End: i == len(slots)})
 	}
+	slices.Reverse(ticks)
 	out := map[string]any{"Bars": bars, "W": w, "Marks": marks, "Ticks": ticks, "ByPct": ok}
 	if !ok {
 		out["Max"] = fmt.Sprintf("máx. %d personas", peak.Authors)
@@ -2137,8 +2212,6 @@ func participationChartCmp(slots []Slot, moments []Moment, typical float64, ok b
 		aria += fmt.Sprintf("todavía sin franjas con dato de espectadores y al menos %d personas", minPersonasTop)
 	}
 	if len(bands) > 0 {
-		// Las franjas van al revés que las posiciones: de izquierda a derecha.
-		slices.Reverse(bands)
 		out["Bands"], out["Median"] = bands, stepPath(median, hasMed, scale)
 		aria += "; comparado con " + cmp.Label + ": " + plural(over, "franja", "franjas") + " por encima de lo normal"
 	}
