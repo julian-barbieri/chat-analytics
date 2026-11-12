@@ -1,10 +1,10 @@
 # Spec: la tira "Hoy en el canal" sin huecos falsos entre programas del mismo vivo
 
-- **Estado:** borrador
+- **Estado:** aprobada
 - **Tipo:** bug
 - **Rama:** `fix/tira-programas-sin-hueco`
 - **Origen:** mensaje del usuario (captura de En vivo: "EL PASE ENTR… 11:59 a 12:32 terminó" y "CRISTINA SIN… 12:35 a ahora al aire")
-- **Aprobada por / fecha:** —
+- **Aprobada por / fecha:** Julian Barbieri, 2026-11-12
 
 ## Contexto
 
