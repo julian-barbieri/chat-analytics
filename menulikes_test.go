@@ -241,8 +241,9 @@ func TestTalkCardLive(t *testing.T) {
 	if b := w.Body.String(); w.Code != 200 || !strings.Contains(b, `id="claude-card"`) || strings.Contains(b, "Temas:") || strings.Contains(b, "plegar-tema") {
 		t.Errorf("respuesta del botón (%d) con los temas:\n%s", w.Code, b)
 	}
-	// Todo el día: por reglas.
-	if c := card(getBody(h, "/parcial/vivo/analisis?canal=UC1&video=v1&ver=dia"), `id="palabras"`); !strings.Contains(c, `<span class="chip">por reglas</span>`) {
+	// Sin vivo (todo el día): por reglas.
+	st.SetVideos("Radio Test", nil)
+	if c := card(getBody(h, "/parcial/vivo/analisis?canal=UC1&video=v1"), `id="palabras"`); !strings.Contains(c, `<span class="chip">por reglas</span>`) {
 		t.Errorf("todo el día: los temas van por reglas:\n%s", c)
 	}
 }

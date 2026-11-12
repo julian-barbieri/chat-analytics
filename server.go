@@ -410,17 +410,15 @@ func (s *Server) liveSection(w http.ResponseWriter, r *http.Request) {
 // quotaPaused dice si se llegó al tope de cuota: el worker no revisa videos ni busca vivos.
 func (s *Server) quotaPaused(snap Snapshot) bool { return s.budget > 0 && snap.Units >= s.budget }
 
-// keepView son el "ver", las "horas", lo plegado que está abierto y la
-// ventana de los motivos del análisis, que manda el chat (con hx-include),
-// para no perderlos cuando se recarga la sección.
-func keepView(q url.Values) (ver, hours, open, motives string) {
-	if v := q.Get("ver"); v == "dia" || v == "programa" {
-		ver = v
-	}
+// keepView son las "horas", lo plegado que está abierto y la ventana de los
+// motivos del análisis, que manda el chat (con hx-include), para no perderlos
+// cuando se recarga la sección. Un "ver" de antes (en-vivo-unificado) se
+// ignora: el alcance sale de si hay vivo.
+func keepView(q url.Values) (hours, open, motives string) {
 	if h := q.Get("horas"); h == "24" || h == strconv.Itoa(chartHours) {
 		hours = h
 	}
-	return ver, hours, foldValue(foldParam(q)), motiveParam(q)
+	return hours, foldValue(foldParam(q)), motiveParam(q)
 }
 
 // motiveWindows son las ventanas de "Por qué hay mensajes negativos" y "Qué
@@ -604,9 +602,9 @@ func (f foldState) link(sec string) Fold {
 	return Fold{Open: f.Open[sec], Href: "/parcial/vivo/analisis?" + q.Encode()}
 }
 
-// analysisQuery es la consulta de "Programa en curso" o "Todo el día" de un canal.
-func analysisQuery(canal, video, ver string, hours int, motives string) url.Values {
-	q := url.Values{"canal": {canal}, "video": {video}, "ver": {ver}, "horas": {strconv.Itoa(hours)}}
+// analysisQuery es la consulta del análisis de un canal.
+func analysisQuery(canal, video string, hours int, motives string) url.Values {
+	q := url.Values{"canal": {canal}, "video": {video}, "horas": {strconv.Itoa(hours)}}
 	if motives != "" {
 		q.Set("motivos", motives)
 	}
@@ -639,8 +637,8 @@ func (s *Server) liveChat(w http.ResponseWriter, r *http.Request) {
 		// canal: pickChannel se queda con el pedido mientras exista.
 		w.Header().Set("HX-Retarget", "#vivo")
 		w.Header().Set("HX-Reswap", "outerHTML")
-		ver, hours, open, motives := keepView(q)
-		s.render(w, "vivo", map[string]any{"Canal": sel.Canal, "Video": sel.Video, "Ver": ver, "Horas": hours, "Abrir": open, "Motivos": motives})
+		hours, open, motives := keepView(q)
+		s.render(w, "vivo", map[string]any{"Canal": sel.Canal, "Video": sel.Video, "Horas": hours, "Abrir": open, "Motivos": motives})
 		return
 	}
 	// El feed es del canal: los vivos de hoy, así al cambiar de vivo no se
@@ -729,9 +727,11 @@ func (s *Server) channelCard(snap Snapshot, sel liveSel, btns []LiveButton, now 
 	week := s.st.Lives(now.Add(-7 * 24 * time.Hour))
 	live := liveOf(snap.Videos, sel.Canal)
 	from := dayStart(now)
-	day := dayStrip(ProgramSegments(week, sel.Canal, live, from, now), sel.Ch, from, now, paused)
-	c.Strip, c.Banner, c.StripAria = day["Blocks"].([]StripBlock), day["Banner"].(string), day["Aria"].(string)
+	// Desde las 12:00 de ayer, como Programas (Hoy): de acá salen las claves
+	// de los links de la tira.
 	segs := ProgramSegments(week, sel.Canal, live, claudeFrom(now), now)
+	day := dayStrip(ProgramSegments(week, sel.Canal, live, from, now), segs, sel.Ch, from, now, paused)
+	c.Strip, c.Banner, c.StripAria = day["Blocks"].([]StripBlock), day["Banner"].(string), day["Aria"].(string)
 	if cur, ok := currentSegment(snap.Videos, segs, sel.Canal, sel.Video); ok && video.ID != "" {
 		c.Since = "desde las " + cur.Start.Local().Format("15:04")
 		c.Nth = nthLive(segs, cur.VideoID, now)
@@ -885,7 +885,7 @@ func (s *Server) liveAnalysis(w http.ResponseWriter, r *http.Request) {
 	open := foldParam(q)
 	for _, c := range snap.Channels {
 		if c.ID == q.Get("canal") && c.ID != "" {
-			s.channelAnalysis(w, snap, c, q.Get("video"), q.Get("ver"), hours, open, motiveParam(q), localRequest(r), slotPick{q.Get("franja"), q.Get("sent"), q.Get("pfranja")})
+			s.channelAnalysis(w, snap, c, q.Get("video"), hours, open, motiveParam(q), localRequest(r), slotPick{q.Get("franja"), q.Get("sent"), q.Get("pfranja")})
 			return
 		}
 	}
@@ -1072,10 +1072,10 @@ type liveExtra struct {
 // actual con el programa actual, desde el inicio del tramo menos 5 min) o
 // "Todo el día del canal" (sus vivos desde las 00:00 locales). Nunca entran
 // mensajes de otro canal.
-func (s *Server) channelAnalysis(w http.ResponseWriter, snap Snapshot, ch ChannelStatus, want, ver string, hours int, open map[string]bool, motives string, local bool, pick slotPick) {
+func (s *Server) channelAnalysis(w http.ResponseWriter, snap Snapshot, ch ChannelStatus, want string, hours int, open map[string]bool, motives string, local bool, pick slotPick) {
 	now := s.clock()
-	ls := s.channelScope(snap, ch, want, ver, now)
-	fold := foldState{Open: open, Query: analysisQuery(ch.ID, ls.video, ls.ver, hours, motives)}
+	ls := s.channelScope(snap, ch, want, now)
+	fold := foldState{Open: open, Query: analysisQuery(ch.ID, ls.video, hours, motives)}
 	// La franja elegida en "Cómo fue cambiando" viaja como "abrir": solo si
 	// es una franja del gráfico, y la pestaña de una lista cerrada.
 	sel := pick.valid(sentChartFrom(ls, now), now)
@@ -1103,7 +1103,12 @@ func (s *Server) channelAnalysis(w http.ResponseWriter, snap Snapshot, ch Channe
 	x.topics, x.topicsNote, x.rulesNote = talkClaude(&card)
 	data := analysisData(ls.msgs, ls.viewers, ls.pids, ls.part, snap.Videos, ls.concurrent, ls.segs, now, hours, ls.sc, fold, x)
 	data["Likes"] = likes
-	data["Canal"], data["Video"], data["Ver"], data["Label"], data["Span"], data["Note"] = ch.ID, ls.video, ls.ver, channelName(ch), ls.span, ls.note
+	data["Canal"], data["Video"], data["Label"], data["Span"] = ch.ID, ls.video, channelName(ch), ls.span
+	if ls.prog != "" {
+		// Con el programa al aire, el día del canal como contexto (CA2).
+		data["DayMsgs"] = miles(ls.dayMsgs)
+		data["DayOf"] = map[string]string{"Personas que escribieron": miles(ls.dayPeople) + " en el día"}
+	}
 	data["Abrir"], data["Motivos"] = foldValue(open), motives
 	data["PFranja"] = data["Part"].(map[string]any)["PFranja"]
 	if sel.ok {
@@ -1134,24 +1139,27 @@ func (s *Server) channelAnalysis(w http.ResponseWriter, snap Snapshot, ch Channe
 	s.render(w, "vivo-analisis", data)
 }
 
-// liveScope es lo que mira el análisis de un canal: "Programa en curso" (el
-// vivo actual con el programa actual, desde el inicio del tramo menos 5 min)
-// o "Todo el día del canal" (sus vivos desde las 00:00 locales). Nunca entran
-// mensajes de otro canal.
+// liveScope es lo que mira el análisis de un canal: con un vivo al aire, el
+// programa en curso (el vivo actual con el programa actual, desde el inicio
+// del tramo menos 5 min) y, como contexto, cuántos mensajes y personas hubo en
+// el día; sin vivo, lo de hoy del canal (sus vivos desde las 00:00 locales).
+// No hay selector (en-vivo-unificado): el día entero por programa está en
+// Programas. Nunca entran mensajes de otro canal.
 type liveScope struct {
-	ver, video, prog string // prog: el programa en curso; "" con todo el día
-	start            time.Time
-	segs             []Segment
-	msgs             []Message
-	viewers          []ViewerSample
-	pids             []string
-	concurrent       int64
-	span, note       string
-	sc               scope
-	part             partInput // Momentos: las últimas 24 h del canal
+	video, prog        string // prog: el programa en curso; "" sin vivo
+	start              time.Time
+	segs               []Segment
+	msgs               []Message
+	viewers            []ViewerSample
+	pids               []string
+	concurrent         int64
+	span               string
+	sc                 scope
+	part               partInput // Momentos: las últimas 24 h del canal
+	dayMsgs, dayPeople int       // con programa: los del día del canal
 }
 
-func (s *Server) channelScope(snap Snapshot, ch ChannelStatus, want, ver string, now time.Time) liveScope {
+func (s *Server) channelScope(snap Snapshot, ch ChannelStatus, want string, now time.Time) liveScope {
 	from, from24 := dayStart(now), now.Add(-24*time.Hour)
 	var samples []LiveSample
 	var lives []Video
@@ -1177,18 +1185,10 @@ func (s *Server) channelScope(snap Snapshot, ch ChannelStatus, want, ver string,
 			ids[l.VideoID] = true
 		}
 	}
-	ls := liveScope{ver: ver, segs: ProgramSegments(samples, ch.ID, live, from, now), sc: scopeDay, start: from}
+	ls := liveScope{segs: ProgramSegments(samples, ch.ID, live, from, now), sc: scopeDay, start: from}
 	ls.part = s.channelPart(snap, ids24, from24)
-	if ls.ver != "dia" && ls.ver != "programa" {
-		ls.ver = "dia"
-		if len(lives) > 0 {
-			ls.ver = "programa"
-		}
-	}
 	if len(lives) > 0 {
 		ls.video = lives[0].ID
-	}
-	if ls.ver == "programa" && len(lives) > 0 {
 		v := lives[0]
 		prog := ProgramName(v.Title, v.Channel)
 		start := from
@@ -1203,10 +1203,15 @@ func (s *Server) channelScope(snap Snapshot, ch ChannelStatus, want, ver string,
 		ls.prog, ls.start = prog, start
 		ls.viewers, ls.pids, ls.concurrent = s.st.Viewers(v.ID, start.Add(-segmentLead)), []string{v.ID}, v.Concurrent
 		ls.span, ls.sc = programLabel(prog)+" (programa en curso)", scopeProgram
+		people := map[string]bool{}
+		for _, m := range snap.Msgs {
+			if ids[m.VideoID] && !m.At.Before(from) {
+				ls.dayMsgs++
+				people[m.Author] = true
+			}
+		}
+		ls.dayPeople = len(people)
 		return ls
-	}
-	if ls.ver == "programa" {
-		ls.note = "No hay un programa al aire ahora: se muestra todo el día del canal."
 	}
 	for _, m := range snap.Msgs {
 		if ids[m.VideoID] && !m.At.Before(from) {
@@ -1223,7 +1228,7 @@ func (s *Server) channelScope(snap Snapshot, ch ChannelStatus, want, ver string,
 	for _, v := range lives {
 		ls.concurrent += v.Concurrent
 	}
-	ls.span = "todo el día del canal"
+	ls.span = "hoy"
 	return ls
 }
 
@@ -1629,7 +1634,7 @@ func (s *Server) answerPost(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "No pude guardar la marca: probá de nuevo.", http.StatusInternalServerError)
 		return
 	}
-	ls := s.channelScope(snap, ch, r.PostForm.Get("video"), r.PostForm.Get("ver"), now)
+	ls := s.channelScope(snap, ch, r.PostForm.Get("video"), now)
 	labels := s.st.Labels(messageIDs(ls.msgs))
 	s.render(w, "vivo-preguntas", map[string]any{"QG": s.questionsData(snap, ls, labels, foldState{}), "A": Analyze(ls.msgs)})
 }
@@ -1722,7 +1727,7 @@ func (s *Server) claudeAnalyze(w http.ResponseWriter, r *http.Request) {
 		if r.PostForm.Get("horas") == "24" {
 			hours = 24
 		}
-		in.Fold = foldState{Open: foldParam(r.PostForm), Query: analysisQuery(ch.ID, video, "programa", hours, motiveParam(r.PostForm))}
+		in.Fold = foldState{Open: foldParam(r.PostForm), Query: analysisQuery(ch.ID, video, hours, motiveParam(r.PostForm))}
 		// Los temas van en "De qué se habla", como en el refresco del análisis.
 		c := claudeView(in)
 		talkClaude(&c)
@@ -1782,16 +1787,24 @@ func (s *Server) claudeInput(snap Snapshot, ch ChannelStatus, want, ver string, 
 }
 
 // StripBlock es un tramo de la tira "Hoy en el canal". Text va en el
-// aria-label y en el <title> del bloque.
+// aria-label y en el <title> del bloque; Href, en un programa que terminó,
+// lleva a su detalle en Programas.
 type StripBlock struct {
-	Class, Program, Range, State, Note, Text string
-	X, W                                     float64 // en minutos desde las 00:00, para el SVG
+	Class, Program, Range, State, Note, Text, Href string
+	X, W                                           float64 // en minutos desde las 00:00, para el SVG
 }
 
 var stripClass = map[string]string{SegEnded: "fin", SegLive: "aire", SegNone: "sin"}
 
-// dayStrip arma la tira "Hoy en el canal" y el cartel de continuidad.
-func dayStrip(segs []Segment, ch ChannelStatus, from, now time.Time, paused bool) map[string]any {
+// dayStrip arma la tira "Hoy en el canal" y el cartel de continuidad. full
+// son los tramos desde las 12:00 de ayer, como en Programas (Hoy): un programa
+// que empezó antes de las 00:00 en la tira arranca a las 00:00, y su clave
+// tiene que ser la de su inicio real para que Programas lo encuentre.
+func dayStrip(segs, full []Segment, ch ChannelStatus, from, now time.Time, paused bool) map[string]any {
+	keys := map[string]string{}
+	for _, sg := range full {
+		keys[sg.VideoID+"|"+sg.Program+"|"+sg.End.UTC().Format(time.RFC3339)] = segmentKey(ch.ID, sg)
+	}
 	var blocks []StripBlock
 	for i, sg := range segs {
 		end := sg.End
@@ -1804,6 +1817,9 @@ func dayStrip(segs []Segment, ch ChannelStatus, from, now time.Time, paused bool
 			X: sg.Start.Sub(from).Minutes(), W: max(end.Sub(sg.Start).Minutes(), 1)}
 		if sg.State == SegNone && current {
 			b.Note = searchText(ch, now, paused)
+		}
+		if key, ok := keys[sg.VideoID+"|"+sg.Program+"|"+sg.End.UTC().Format(time.RFC3339)]; ok && sg.State == SegEnded && sg.Program != "" {
+			b.Href = "/programas?" + url.Values{"canal": {ch.ID}, "tramo": {key}}.Encode()
 		}
 		parts := []string{r}
 		if sg.Program != "" {

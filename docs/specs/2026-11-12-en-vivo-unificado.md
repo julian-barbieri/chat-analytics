@@ -1,6 +1,6 @@
 # Spec: En vivo sin selector programa/día y resúmenes de ayer que faltan
 
-- **Estado:** aprobada
+- **Estado:** implementada
 - **Tipo:** mejora
 - **Rama:** `feat/en-vivo-unificado`
 - **Origen:** pedido del usuario (2026-11-12), puntos 6 y 4; maquetas en
@@ -29,31 +29,31 @@ monitor estaba apagado) se resume cuando el monitor vuelve a andar.
 
 ## Criterios de aceptación
 
-- [ ] CA1: En vivo no tiene más los botones "Programa en curso" / "Todo el día del
+- [x] CA1: En vivo no tiene más los botones "Programa en curso" / "Todo el día del
   canal". Con vivo al aire el alcance es el programa en curso; sin vivo, lo de hoy
   del canal (como hoy con "Esperando el próximo vivo"). Un `ver=` de un link viejo se
   ignora sin error ni reflejo en el HTML. — test de `channelScope` y de render.
-- [ ] CA2: con programa al aire, las tarjetas Mensajes y Personas (y Likes, si hay
+- [x] CA2: con programa al aire, las tarjetas Mensajes y Personas (y Likes, si hay
   dato) suman abajo el total del día del canal ("4.910 en el día"); la comparación
   con lo típico (`Trend`) sigue. — test de `liveTiles` con un día de dos programas.
-- [ ] CA3: en la tira "Hoy en el canal", cada programa terminado es un link a su
+- [x] CA3: en la tira "Hoy en el canal", cada programa terminado es un link a su
   detalle en Programas (`/programas?canal=…&tramo=<segmentKey>`); el que está al aire
   y los ratos sin vivo no. — test de `dayStrip`.
-- [ ] CA4: la tarjeta de Claude de En vivo muestra siempre el programa en curso (se va
+- [x] CA4: la tarjeta de Claude de En vivo muestra siempre el programa en curso (se va
   el caso "Resúmenes de Claude" de `ver=dia`, `server.go:2512`); sin vivo, el link a
   Programas de hoy como ahora. — test de `claudeView`.
-- [ ] CA5: el analista también pide el resumen de los programas que terminaron **ayer**
+- [x] CA5: el analista también pide el resumen de los programas que terminaron **ayer**
   (desde las 00:00 de ayer) y no tienen análisis final, después de los de hoy y con el
   mismo tope del día; nunca más viejos. — `TestPendingSegments` (o el test del
   analista) con un tramo de ayer sin análisis, uno de ayer con análisis y uno de
   anteayer.
-- [ ] CA6: la clave del tramo de ayer que resume el analista es la misma que usa
+- [x] CA6: la clave del tramo de ayer que resume el analista es la misma que usa
   Programas con `dia=ayer`, así el detalle encuentra el resumen. — test que compara
   `segmentKey` del analista con la de `programSegs` para un programa de ayer.
 - [ ] CA7: README y AGENTS.md dicen que ya no hay selector en En vivo y que los
   programas de ayer sin resumen se resumen al volver a andar (puede gastar del tope de
   hoy). Vista previa de En vivo con y sin vivo, claro, oscuro y celular.
-- [ ] Gates de `CLAUDE.md` → "Definición de terminado" en verde.
+- [x] Gates de `CLAUDE.md` → "Definición de terminado" en verde.
 
 ## Diseño propuesto
 
@@ -66,6 +66,10 @@ monitor estaba apagado) se resume cuando el monitor vuelve a andar.
   (como Programas) y los de hoy como ahora; acepta los terminados desde las 00:00 de
   ayer. `done` se arma con los análisis desde esa hora. El orden (más nuevos primero)
   deja los de hoy adelante.
+
+Ajustes al implementar: el total del día va debajo del título ("N mensajes · M en
+el día") y en "Personas que escribieron" (no hay una tarjeta "Mensajes"); los likes
+siguen siendo del vivo. Un `ver=` viejo se ignora y ya no viaja en ningún link.
 
 ## Fuera de alcance
 

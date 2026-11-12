@@ -205,7 +205,7 @@ func (r *analystRun) step(now time.Time) bool {
 		return false
 	}
 	snap := r.st.Status()
-	from := claudeFrom(now)
+	from := pendingFrom(now)
 	done := map[string]bool{}
 	for _, ch := range snap.Channels {
 		for _, a := range r.st.Analyses(ch.ID, from) {
@@ -371,6 +371,11 @@ func retryDelay(try int, retryAfter time.Duration) time.Duration {
 // que cruza la medianoche entra entero.
 func claudeFrom(now time.Time) time.Time { return dayStart(now).Add(-12 * time.Hour) }
 
+// pendingFrom es desde cuándo el analista mira programas terminados y sus
+// análisis: los de ayer también (en-vivo-unificado), con los tramos desde las
+// 12:00 de anteayer, como Programas (Ayer).
+func pendingFrom(now time.Time) time.Time { return claudeFrom(now).AddDate(0, 0, -1) }
+
 // segmentKey identifica un tramo: canal|vivo|programa|inicio.
 func segmentKey(channelID string, seg Segment) string {
 	return channelID + "|" + seg.VideoID + "|" + seg.Program + "|" + seg.Start.UTC().Format(time.RFC3339)
@@ -436,16 +441,23 @@ type pendingSeg struct {
 	Seg     Segment
 }
 
-// pendingSegments son los programas de hoy que terminaron y no tienen
+// pendingSegments son los programas de hoy y de ayer que terminaron y no tienen
 // análisis final, del que terminó último al primero. El último tramo de un
 // vivo que no figura al aire espera segmentGap sin muestras: puede ser el
 // programa en curso si la lista de videos todavía no se revisó (por ejemplo,
 // al arrancar).
 func pendingSegments(channels []ChannelStatus, samples []LiveSample, videos []Video, done map[string]bool, now time.Time) []pendingSeg {
-	from, today := claudeFrom(now), dayStart(now)
+	from, midnight := claudeFrom(now), dayStart(now)
+	yesterday := midnight.AddDate(0, 0, -1)
 	var out []pendingSeg
 	for _, ch := range channels {
 		segs := ProgramSegments(samples, ch.ID, liveOf(videos, ch.ID), from, now)
+		today := map[string]bool{} // los que terminaron hoy: van con los de hoy
+		for _, sg := range segs {
+			if !sg.End.Before(midnight) {
+				today[segmentKey(ch.ID, sg)] = true
+			}
+		}
 		last := map[string]int{}
 		for i, sg := range segs {
 			if sg.State != SegNone {
@@ -453,10 +465,21 @@ func pendingSegments(channels []ChannelStatus, samples []LiveSample, videos []Vi
 			}
 		}
 		for i, sg := range segs {
-			if sg.State != SegEnded || sg.End.Before(today) || done[segmentKey(ch.ID, sg)] {
+			if sg.State != SegEnded || sg.End.Before(midnight) || done[segmentKey(ch.ID, sg)] {
 				continue
 			}
 			if last[sg.VideoID] == i && now.Sub(sg.End) <= segmentGap {
+				continue
+			}
+			out = append(out, pendingSeg{ch, sg})
+		}
+		// Los de ayer que terminaron sin resumen (por ejemplo, con el monitor
+		// apagado): con los tramos de Programas (Ayer), desde las 12:00 de
+		// anteayer hasta las 00:00 de hoy, así la clave es la misma. Los que
+		// cruzan la medianoche ya están con los de hoy.
+		for _, sg := range ProgramSegments(samples, ch.ID, nil, yesterday.Add(-12*time.Hour), midnight) {
+			key := segmentKey(ch.ID, sg)
+			if sg.State != SegEnded || sg.End.Before(yesterday) || done[key] || today[key] {
 				continue
 			}
 			out = append(out, pendingSeg{ch, sg})

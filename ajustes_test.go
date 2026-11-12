@@ -71,7 +71,7 @@ func TestLiveSlotDetail(t *testing.T) {
 	st.Add(chatRun("b1", "b1", "LA MAÑANA", at, 10*time.Second, 8))
 	st.AddViewers(at, []Video{{ID: "b1", LiveStatus: "live", Concurrent: 100}})
 	srv := &Server{st: st, budget: 9000, now: func() time.Time { return now }}
-	base := "/parcial/vivo/analisis?canal=UCB&video=b2&ver=dia"
+	base := "/parcial/vivo/analisis?canal=UCB&video=b2"
 	slot := strconv.FormatInt(at.Truncate(slotStep).Unix(), 10)
 	body := getBody(srv.Routes(), base)
 	if !strings.Contains(body, "pfranja="+slot) || !strings.Contains(body, `class="pbar`) {
@@ -233,7 +233,7 @@ func TestLivePageNoTopLiked(t *testing.T) {
 	now := noonLocal(t)
 	st := liveStore(t, now)
 	st.AddVideos(now, []Video{{ID: "x1", Title: "Video con likes", ChannelID: "UCB", Channel: "B", PublishedAt: now.Add(-time.Hour), Likes: 50, LiveStatus: "none"}})
-	body := getBody((&Server{st: st, budget: 9000, now: func() time.Time { return now }}).Routes(), "/parcial/vivo/analisis?canal=UCB&video=b2&ver=dia")
+	body := getBody((&Server{st: st, budget: 9000, now: func() time.Time { return now }}).Routes(), "/parcial/vivo/analisis?canal=UCB&video=b2")
 	if strings.Contains(body, "Lo que más gustó") {
 		t.Error("sigue Lo que más gustó")
 	}
