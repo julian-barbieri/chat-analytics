@@ -34,6 +34,7 @@ type Store struct {
 	quota     string // archivo con la cuota gastada en el día, para que sobreviva a reinicios
 	vpath     string // serie de espectadores por vivo, aparte para no tocar el formato de datos.jsonl
 	lpath     string // muestras de los vivos en curso por canal (datos.vivos.jsonl), también aparte
+	npath     string // revisiones que encontraron un canal sin vivo (datos.sinvivo.jsonl)
 	apath     string // análisis de Claude (datos.analisis.jsonl), aparte de los mensajes
 	cpath     string // gasto del día en Claude (datos.claude.json)
 	bpath     string // tandas de Claude con las etiquetas por mensaje (datos.etiquetas.jsonl)
@@ -53,6 +54,7 @@ type Store struct {
 	archive   map[string]VideoRecord // por ID: el último dato visto
 	saved     map[string]time.Time   // cuándo se escribió por última vez cada video en vdpath
 	lives     []LiveSample
+	noLive    []NoLiveCheck // revisiones que encontraron un canal sin vivo (datos.sinvivo.jsonl)
 	channels  []ChannelStatus
 	pending   []ChannelStatus // de la configuración, sin resolver todavía
 	seen      map[string]bool
@@ -81,6 +83,15 @@ type ViewerSample struct {
 type LiveSample struct {
 	At                                 time.Time
 	VideoID, ChannelID, Channel, Title string
+}
+
+// NoLiveCheck es una revisión de videos (completa o rápida) que encontró un
+// canal sin ningún vivo en curso. Con las LiveSample dice cuándo el monitor
+// estaba mirando: sin ninguna de las dos, el monitor estaba apagado (pantalla
+// Sin vivo). Solo hora e ID del canal; los vivos ya están en datos.vivos.jsonl.
+type NoLiveCheck struct {
+	At        time.Time
+	ChannelID string
 }
 
 // ChannelStatus es cómo está cada canal de -canal, para la vista. Va solo en
@@ -148,6 +159,7 @@ type quotaDay struct {
 func OpenStore(path string) (*Store, error) {
 	base := strings.TrimSuffix(path, ".jsonl")
 	s := &Store{path: path, quota: base + ".cuota.json", vpath: base + ".espectadores.jsonl", lpath: base + ".vivos.jsonl",
+		npath: base + ".sinvivo.jsonl",
 		apath: base + ".analisis.jsonl", cpath: base + ".claude.json", bpath: base + ".etiquetas.jsonl",
 		vdpath: base + ".videos.jsonl", archive: map[string]VideoRecord{}, saved: map[string]time.Time{},
 		lkpath: base + ".likes.jsonl", lastLike: map[string]LikeSample{},
@@ -192,6 +204,11 @@ func OpenStore(path string) (*Store, error) {
 		return nil, err
 	}
 	s.lives = lives
+	noLive, err := loadJSONL(s.npath, func(c NoLiveCheck) bool { return c.ChannelID != "" && !c.At.Before(cutoff) })
+	if err != nil {
+		return nil, err
+	}
+	s.noLive = noLive
 	if err := s.loadVideos(cutoff); err != nil {
 		return nil, err
 	}
@@ -409,6 +426,44 @@ func (s *Store) AddLives(at time.Time, vids []Video) {
 	for _, l := range add {
 		enc.Encode(l)
 	}
+}
+
+// AddNoLive guarda que una revisión de at encontró esos canales sin vivo. Va
+// en modo append, como AddLives; la compactación es al abrir.
+func (s *Store) AddNoLive(at time.Time, channelIDs []string) {
+	if len(channelIDs) == 0 {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	add := make([]NoLiveCheck, 0, len(channelIDs))
+	for _, id := range channelIDs {
+		add = append(add, NoLiveCheck{At: at, ChannelID: id})
+	}
+	s.noLive = append(s.noLive, add...)
+	// Si no se puede abrir el archivo, las revisiones quedan igual en memoria.
+	f, err := os.OpenFile(s.npath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	enc := json.NewEncoder(f)
+	for _, c := range add {
+		enc.Encode(c)
+	}
+}
+
+// NoLiveChecks devuelve una copia de las revisiones sin vivo desde since.
+func (s *Store) NoLiveChecks(since time.Time) []NoLiveCheck {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var out []NoLiveCheck
+	for _, c := range s.noLive {
+		if !c.At.Before(since) {
+			out = append(out, c)
+		}
+	}
+	return out
 }
 
 // FirstLive es la hora de la muestra de vivos más vieja guardada (cero si no

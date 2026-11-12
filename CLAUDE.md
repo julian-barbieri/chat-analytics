@@ -173,7 +173,7 @@ solo, `/factory`.
   toca el dashboard o lo que muestra): `go run ./tools/preview -datos <checkout
   principal>/datos.jsonl` levanta la rama en `http://localhost:8081` con una copia
   temporal de los datos (`datos.jsonl`, `datos.cuota.json`, `datos.espectadores.jsonl`,
-  `datos.vivos.jsonl`, `datos.videos.jsonl`, `datos.likes.jsonl`, `datos.analisis.jsonl` y `datos.etiquetas.jsonl`; no `datos.claude.json` ni
+  `datos.vivos.jsonl`, `datos.videos.jsonl`, `datos.likes.jsonl`, `datos.sinvivo.jsonl`, `datos.analisis.jsonl` y `datos.etiquetas.jsonl`; no `datos.claude.json` ni
   `datos.canales.json`) y una API simulada; `go run ./tools/preview -cortar` la corta y
   borra la copia. Siempre se corta antes de cerrar la tarea.
 - Modelo y esfuerzo fijos en el frontmatter de cada agente (no heredan la sesión):

@@ -6,8 +6,8 @@ import (
 	"time"
 )
 
-// Handlers de la pantalla Sin vivo. Leen solo copias del Store (Status y
-// Lives) y nunca llaman a YouTube: no gastan cuota.
+// Handlers de la pantalla Sin vivo. Leen solo copias del Store (Status,
+// Lives y NoLiveChecks) y nunca llaman a YouTube: no gastan cuota.
 
 // noLivePeriods son los períodos de la pantalla: lista cerrada.
 var noLivePeriods = []option{{"7d", "Últimos 7 días"}, {"30d", "Últimos 30 días"}}
@@ -71,13 +71,8 @@ func (s *Server) noLiveData(v url.Values) map[string]any {
 		return data
 	}
 	_, days := dayRange(q.Periodo, now)
-	live := map[string]bool{}
-	for _, vid := range snap.Videos {
-		if vid.ChannelID == ch.ID && vid.LiveStatus == "live" {
-			live[vid.ID] = true
-		}
-	}
-	view := NoLiveCuts(s.st.Lives(days[len(days)-1]), ch.ID, live, days, now)
+	since := days[len(days)-1]
+	view := NoLiveCuts(s.st.Lives(since), s.st.NoLiveChecks(since), ch.ID, days, now)
 	if len(view.Cuts) > noLiveShown {
 		data["More"] = len(view.Cuts) - noLiveShown
 		view.Cuts = view.Cuts[:noLiveShown]
@@ -93,9 +88,9 @@ func (s *Server) noLiveData(v url.Values) map[string]any {
 	}
 	data["View"], data["Name"], data["In"] = view, channelName(ch), in
 	data["Tiles"] = []Tile{
-		{"Cortes hoy", miles(view.CutsToday), "ratos sin vivo de hasta 2 h", ""},
+		{"Cortes hoy", miles(view.CutsToday), "ratos sin vivo con el monitor andando", ""},
 		{"Sin vivo hoy", durText(time.Duration(view.MinToday) * time.Minute), "sumando los cortes de hoy", ""},
-		{"Al aire", onAir, in + ", sin los ratos de más de 2 h", ""},
+		{"Al aire", onAir, in + ", sin contar el monitor apagado", ""},
 		{"Corte más largo", longest, in, ""},
 	}
 	return data

@@ -1,6 +1,6 @@
 # Spec: Sin vivo distingue monitor apagado de corte
 
-- **Estado:** aprobada
+- **Estado:** implementada
 - **Tipo:** mejora
 - **Rama:** `feat/sin-vivo-monitor-apagado`
 - **Origen:** pedido del usuario con captura de Sin vivo (2026-11-12)
@@ -28,27 +28,27 @@ alerta y no cuenta en los números).
 
 ## Criterios de aceptación
 
-- [ ] CA1: el worker guarda una revisión sin vivo (`NoLiveCheck{At, ChannelID}`)
+- [x] CA1: el worker guarda una revisión sin vivo (`NoLiveCheck{At, ChannelID}`)
   por cada canal resuelto que una revisión completa o una búsqueda rápida
   encontró sin vivo en curso, en `datos.sinvivo.jsonl`; con vivo no guarda nada
   nuevo (ya está `datos.vivos.jsonl`). Sin cuota extra. — `TestFlowAgainstFakeAPI`
   (o un test del worker con la API falsa) cuenta las líneas y `yt.Units` no cambia.
-- [ ] CA2: retención de 30 días al abrir (tmp + `os.Rename`), como `datos.vivos.jsonl`.
+- [x] CA2: retención de 30 días al abrir (tmp + `os.Rename`), como `datos.vivos.jsonl`.
   — test del store con una muestra vencida.
-- [ ] CA3: un rato entre dos muestras de vivo con al menos una revisión sin vivo en
+- [x] CA3: un rato entre dos muestras de vivo con al menos una revisión sin vivo en
   el medio es **corte**, aunque dure 1 min y aunque pase de 2 h. — `TestNoLiveCuts`
   (tabla: 1 min, 3 min, 5 h).
-- [ ] CA4: un rato sin ninguna muestra (ni de vivo ni sin vivo) de más de
+- [x] CA4: un rato sin ninguna muestra (ni de vivo ni sin vivo) de más de
   `segmentGap` es **monitor apagado**: gris, no figura en Cortes ni en los números.
   Si un corte lo toca, el corte va desde la última evidencia antes hasta la primera
   después que lo prueben (no se estira sobre lo apagado). — `TestNoLiveCuts`.
-- [ ] CA5: "Al aire" = aire ÷ (aire + cortes), sin lo apagado; los textos de las
+- [x] CA5: "Al aire" = aire ÷ (aire + cortes), sin lo apagado; los textos de las
   tarjetas y la leyenda dicen "monitor apagado" en vez de "más de 2 h", y se va
   `maxCut` / la clase `largo`. — test de `noLiveData` y vista previa.
-- [ ] CA6: un corte de 1 min se ve en la tira (`.np.corte` ya tiene `min-width: 3px`).
+- [x] CA6: un corte de 1 min se ve en la tira (`.np.corte` ya tiene `min-width: 3px`).
   — vista previa, claro/oscuro y celular.
-- [ ] CA7: la vista previa copia `datos.sinvivo.jsonl`. — test de `tools/preview`.
-- [ ] Gates de `CLAUDE.md` → "Definición de terminado" en verde.
+- [x] CA7: la vista previa copia `datos.sinvivo.jsonl`. — test de `tools/preview`.
+- [x] Gates de `CLAUDE.md` → "Definición de terminado" en verde.
 
 ## Diseño propuesto
 
@@ -66,6 +66,11 @@ alerta y no cuenta en los números).
 - `nolivepage.go`, `templates/sinvivo.html`, `layout.html`: textos, leyenda, clase
   `.np.apagado` (mismo token gris que hoy `largo`). Lo futuro de hoy sigue en blanco.
 - `tools/preview`, README y AGENTS.md (mapa, datos y privacidad): el archivo nuevo.
+
+De paso, para que los gates queden en verde: `sentimentChart` (`batch.go`) ponía los
+rótulos por hora con `Truncate(time.Hour)`, que cuenta en UTC; con una zona no corrida
+en horas enteras (la de `noonLocal`) caían a mitad de hora y `TestSentimentChartWide`
+fallaba también en `main`. Ahora se alinean a la hora en punto local.
 
 Alternativa descartada: guardar una muestra por revisión aunque haya vivo (más
 simple de leer, ~3× más líneas sin dato nuevo).

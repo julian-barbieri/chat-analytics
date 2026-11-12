@@ -536,7 +536,10 @@ func sentimentChart(slots []SentSlot, segs []Segment, from, now time.Time) SentC
 		// Barras del mismo ancho que con el programa en curso (slotPx por
 		// franja): el gráfico se desplaza de costado, con un rótulo por hora.
 		c.Px = n * slotPx
-		for h := from.Truncate(time.Hour).Add(time.Hour); h.Before(now.Add(-30 * time.Minute)); h = h.Add(time.Hour) {
+		// La hora en punto local: Truncate cuenta en UTC y con una zona que no
+		// está corrida en horas enteras los rótulos caerían a mitad de hora.
+		d := dayStart(from)
+		for h := d.Add(from.Sub(d).Truncate(time.Hour)).Add(time.Hour); h.Before(now.Add(-30 * time.Minute)); h = h.Add(time.Hour) {
 			c.Ticks = append(c.Ticks, Tick{Left: float64(h.Sub(from)) / float64(slotStep) / float64(n) * 100, Label: h.Local().Format("15:04")})
 		}
 	}
