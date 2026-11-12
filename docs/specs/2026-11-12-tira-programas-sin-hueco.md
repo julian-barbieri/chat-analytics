@@ -1,6 +1,6 @@
 # Spec: la tira "Hoy en el canal" sin huecos falsos entre programas del mismo vivo
 
-- **Estado:** aprobada
+- **Estado:** implementada
 - **Tipo:** bug
 - **Rama:** `fix/tira-programas-sin-hueco`
 - **Origen:** mensaje del usuario (captura de En vivo: "EL PASE ENTR… 11:59 a 12:32 terminó" y "CRISTINA SIN… 12:35 a ahora al aire")
@@ -25,17 +25,17 @@ vivo sin hueco real termina donde empieza el siguiente ("11:59 a 12:35").
 
 ## Criterios de aceptación
 
-- [ ] CA1: tramo terminado del vivo `a` hasta 12:32 y siguiente tramo del vivo
+- [x] CA1: tramo terminado del vivo `a` hasta 12:32 y siguiente tramo del vivo
   `a` desde 12:35 → el bloque anterior dice "… a 12:35" y su ancho llega hasta
   12:35 — `TestDayStripSameLiveNoGap`.
-- [ ] CA2: si entre los dos tramos del mismo vivo pasó más de `segmentGap`
+- [x] CA2: si entre los dos tramos del mismo vivo pasó más de `segmentGap`
   (7 min), o lo que sigue es otro vivo o un "sin vivo", el bloque termina en
   su última muestra como hoy — `TestDayStripSameLiveNoGap` (casos de tabla).
-- [ ] CA3: el link del bloque a Programas (`tramo=`) sigue siendo el mismo —
+- [x] CA3: el link del bloque a Programas (`tramo=`) sigue siendo el mismo —
   `TestDayStripSameLiveNoGap` comprueba `Href`.
-- [ ] CA4: `ProgramSegments`, `segmentKey`, Programas y Sin vivo no cambian —
+- [x] CA4: `ProgramSegments`, `segmentKey`, Programas y Sin vivo no cambian —
   `TestProgramSegments` y los tests de Sin vivo siguen en verde sin tocarlos.
-- [ ] Gates de `CLAUDE.md` → "Definición de terminado" en verde; vista previa
+- [x] Gates de `CLAUDE.md` → "Definición de terminado" en verde; vista previa
   de En vivo en claro, oscuro y celular.
 
 ## Diseño propuesto

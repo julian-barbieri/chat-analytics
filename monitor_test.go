@@ -9903,6 +9903,61 @@ func TestDayStripNewestRight(t *testing.T) {
 	}
 }
 
+// TestDayStripSameLiveNoGap (spec tira-programas-sin-hueco): en la tira, un
+// programa que terminó y al que le sigue otro del mismo vivo sin hueco real
+// termina donde empieza el siguiente; las muestras cada 3 min no son un corte.
+func TestDayStripSameLiveNoGap(t *testing.T) {
+	now := noonLocal(t) // 12:00
+	from := dayStart(now)
+	at := func(h, m int) time.Time { return from.Add(time.Duration(h)*time.Hour + time.Duration(m)*time.Minute) }
+	a := Segment{VideoID: "a", Program: "EL PASE", Start: at(10, 59), End: at(11, 32), State: SegEnded}
+	cases := []struct {
+		name      string
+		rest      []Segment
+		wantRange string
+		wantW     float64
+	}{
+		{"mismo vivo, 3 min después", []Segment{
+			{VideoID: "a", Program: "CRISTINA", Start: at(11, 35), End: now, State: SegLive},
+		}, "10:59 a 11:35", 36},
+		{"mismo vivo después de un sin vivo de más de segmentGap", []Segment{
+			{Start: at(11, 32), End: at(11, 40), State: SegNone},
+			{VideoID: "a", Program: "CRISTINA", Start: at(11, 40), End: now, State: SegLive},
+		}, "10:59 a 11:32", 33},
+		{"otro vivo", []Segment{
+			{VideoID: "b", Program: "CRISTINA", Start: at(11, 35), End: now, State: SegLive},
+		}, "10:59 a 11:32", 33},
+		{"sigue un sin vivo", []Segment{
+			{Start: at(11, 32), End: now, State: SegNone},
+		}, "10:59 a 11:32", 33},
+		{"dos vivos a la vez: el siguiente del mismo vivo", []Segment{
+			{VideoID: "b", Program: "OTRO", Start: at(11, 0), End: at(11, 50), State: SegEnded},
+			{VideoID: "a", Program: "CRISTINA", Start: at(11, 35), End: now, State: SegLive},
+		}, "10:59 a 11:35", 36},
+	}
+	for _, c := range cases {
+		segs := append([]Segment{a}, c.rest...)
+		blocks := dayStrip(segs, segs, ChannelStatus{ID: "UC1"}, from, now, false)["Blocks"].([]StripBlock)
+		var got *StripBlock
+		for i := range blocks {
+			if blocks[i].Program == "EL PASE" {
+				got = &blocks[i]
+			}
+		}
+		if got == nil {
+			t.Fatalf("%s: no está el bloque de EL PASE", c.name)
+		}
+		if got.Range != c.wantRange || got.W != c.wantW {
+			t.Errorf("%s: %q con ancho %v, quiero %q con %v", c.name, got.Range, got.W, c.wantRange, c.wantW)
+		}
+		// El link a Programas sigue siendo el del tramo, con su clave de siempre.
+		href := "/programas?" + url.Values{"canal": {"UC1"}, "tramo": {segmentKey("UC1", a)}}.Encode()
+		if got.Href != href {
+			t.Errorf("%s: link %q, quiero %q", c.name, got.Href, href)
+		}
+	}
+}
+
 // questionsServer arma En vivo con n grupos de preguntas de Claude: el grupo
 // i tiene n-i preguntas, así el orden es el de creación.
 func questionsServer(t *testing.T, now time.Time, n int) http.Handler {

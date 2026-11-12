@@ -1807,7 +1807,7 @@ func dayStrip(segs, full []Segment, ch ChannelStatus, from, now time.Time, pause
 	}
 	var blocks []StripBlock
 	for i, sg := range segs {
-		end := sg.End
+		end := stripEnd(segs, i)
 		current := sg.State == SegLive || sg.State == SegNone && i == len(segs)-1
 		r := sg.Start.Local().Format("15:04") + " a " + end.Local().Format("15:04")
 		if current {
@@ -1840,6 +1840,26 @@ func dayStrip(segs, full []Segment, ch ChannelStatus, from, now time.Time, pause
 		"Blocks": blocks, "W": max(now.Sub(from).Minutes(), 1), "Banner": ContinuityBanner(segs, now),
 		"Aria": fmt.Sprintf("Hoy en el canal desde las %s: %d tramos", from.Local().Format("15:04"), len(blocks)),
 	}
+}
+
+// stripEnd es dónde termina en la tira el tramo i. Un programa que terminó y
+// al que le sigue otro del mismo vivo a lo sumo segmentGap después termina
+// donde empieza el siguiente: las muestras son cada 3 min y ese hueco no fue
+// un corte. Solo es para dibujar: End sigue siendo la última muestra.
+func stripEnd(segs []Segment, i int) time.Time {
+	sg := segs[i]
+	if sg.State != SegEnded {
+		return sg.End
+	}
+	for _, next := range segs[i+1:] {
+		if next.State != SegNone && next.VideoID == sg.VideoID {
+			if next.Start.After(sg.End) && next.Start.Sub(sg.End) <= segmentGap {
+				return next.Start
+			}
+			break
+		}
+	}
+	return sg.End
 }
 
 // Nota fija de la tarjeta y del informe para que nadie lea los totales como ingresos.
