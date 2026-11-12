@@ -1,12 +1,12 @@
 # Spec: Rankings con barras, segmentos en cinta y preguntas dentro de Categorías
 
-- **Estado:** borrador
+- **Estado:** aprobada
 - **Tipo:** mejora
 - **Rama:** `feat/rankings-segmentos-preguntas`
 - **Origen:** pedido del usuario con capturas (2026-11-12), puntos 2, 3 y 5; maquetas
   en https://claude.ai/artifact/EgkYGxJybkC2KWBcTGv4Vd (opciones recomendadas).
   Tanda 2 de 3.
-- **Aprobada por / fecha:** —
+- **Aprobada por / fecha:** Julian Barbieri, 2026-11-12
 
 ## Contexto
 
