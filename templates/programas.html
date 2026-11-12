@@ -98,7 +98,7 @@
         {{template "fold-msgs" .List}}
       </details>{{else}}<div class="plegable tsolo">{{.Text}} · {{.Count}}</div>{{end}}{{end}}
       {{else if .CatsClaude}}<h3>Categorías <span class="ia">Claude</span></h3>
-      <div class="cats">{{range .Cats}}<div class="catline" title="{{.Label}}: {{.N}}">{{template "catrow" .}}</div>{{end}}</div>
+      {{template "cgauge" .Gauge}}
       <p class="muted">Por Claude, con las tandas; el spam, por reglas{{if .CatsPending}}. {{.CatsPending}} todavía sin etiquetar (por reglas){{end}}. Los temas salen del resumen cuando termina el programa.</p>
       {{else}}<h3>Temas de conversación <span class="chip">por reglas</span></h3>
       {{range .Topics}}<div class="catrow" title="{{.Label}}: {{.N}} mensajes">

@@ -67,12 +67,12 @@ func (s *Server) commentsData(v url.Values) map[string]any {
 		d, ok := CommentsVideo(msgs, vids, s.st.Likes(q.Video, now.Add(-retention)), q, now)
 		data["Detail"], data["Found"] = d, ok
 		data["Tiles"] = []Tile{
-			{"Comentarios", miles(d.Total), "de " + miles(d.Video.Comments) + " según YouTube"},
-			{"Personas", miles(d.People), "distintas"},
-			{"Preguntas", miles(d.Questions), plural(d.Open, "sin respuesta", "sin respuestas")},
-			{"Quejas", pct(d.ComplaintPct), "de los comentarios"},
-			{"Likes del video", miles(d.Video.Likes), likesNote(d)},
-			{"Likes en comentarios", miles(d.Likes), "sumados"},
+			{"Comentarios", miles(d.Total), "de " + miles(d.Video.Comments) + " según YouTube", ""},
+			{"Personas", miles(d.People), "distintas", ""},
+			{"Preguntas", miles(d.Questions), plural(d.Open, "sin respuesta", "sin respuestas"), ""},
+			{"Quejas", pct(d.ComplaintPct), "de los comentarios", ""},
+			{"Likes del video", miles(d.Video.Likes), likesNote(d), ""},
+			{"Likes en comentarios", miles(d.Likes), "sumados", ""},
 		}
 		if d.LikeCurve != nil {
 			data["LikeCurve"] = likeCurveChart(d.LikeCurve)
@@ -104,13 +104,13 @@ func (s *Server) commentsData(v url.Values) map[string]any {
 	period := map[string]string{"7d": "en los últimos 7 días", "30d": "en los últimos 30 días", "pub": "de videos publicados en 30 días"}[q.Periodo]
 	data["Period"] = period
 	data["Tiles"] = []Tile{
-		{"Comentarios", miles(view.Total), period},
-		{"Likes nuevos", miles(view.LikesNew), period},
-		{"Likes c/1.000 vistas", view.LikesPer1000, "de los videos de la tabla"},
-		{"Personas distintas", miles(view.People), "que comentaron"},
-		{"Videos con comentarios", miles(view.WithComments) + " de " + miles(view.InScope), "en la tabla de abajo"},
-		{"Preguntas sin respuesta", miles(view.OpenQuestions), "al momento de guardarlas"},
-		{"Quejas", pct(view.ComplaintPct), "de los comentarios"},
+		{"Comentarios", miles(view.Total), period, ""},
+		{"Likes nuevos", miles(view.LikesNew), period, ""},
+		{"Likes c/1.000 vistas", view.LikesPer1000, "de los videos de la tabla", ""},
+		{"Personas distintas", miles(view.People), "que comentaron", ""},
+		{"Videos con comentarios", miles(view.WithComments) + " de " + miles(view.InScope), "en la tabla de abajo", ""},
+		{"Preguntas sin respuesta", miles(view.OpenQuestions), "al momento de guardarlas", ""},
+		{"Quejas", pct(view.ComplaintPct), "de los comentarios", ""},
 	}
 	data["Chart"] = dayChart(view.Days)
 	return data

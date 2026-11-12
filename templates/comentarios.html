@@ -19,7 +19,7 @@
 {{define "cchart"}}<div class="pmarks" aria-hidden="true">{{range .Pubs}}<span style="left: {{printf "%.2f" .Left}}%" title="{{.Title}}">▲</span>{{end}}</div>
   <div class="pchart">
     <svg viewBox="0 0 {{.W}} 100" preserveAspectRatio="none" role="img" aria-label="{{.Aria}}">
-      {{range .Bars}}<g><title>{{.Label}}</title><rect class="hit" x="{{.X}}" y="0" width="{{.W}}" height="100"></rect><rect class="bar{{if .Class}} {{.Class}}{{end}}" x="{{.X}}" y="{{.Y}}" width="{{.W}}" height="{{.H}}"></rect></g>{{end}}
+      {{range .Bars}}<g><title>{{.Label}}</title><rect class="hit" x="{{.X}}" y="0" width="{{.W}}" height="100"></rect><rect class="bar{{if .Class}} {{.Class}}{{end}}" rx="1.5" ry="1.5" x="{{.X}}" y="{{.Y}}" width="{{.W}}" height="{{.H}}"></rect></g>{{end}}
       {{with .Likes}}<path class="likesl" d="{{.}}"></path>{{end}}
       <line class="base" x1="0" x2="{{.W}}" y1="100" y2="100"></line>
     </svg>
@@ -63,8 +63,7 @@
   </section>
   <section class="card" aria-labelledby="ccat-h">
     <div class="chead"><h2 id="ccat-h">Categorías</h2><span class="muted">{{plural .View.CatTotal "comentario" "comentarios"}}</span></div>
-    <div class="cstack" role="img" aria-label="{{range $i, $c := .View.Cats}}{{if $i}}, {{end}}{{$c.Label}} {{printf "%.0f" $c.Share}} %{{end}}">{{range .View.Cats}}{{if .N}}<span class="seg {{.Key}}" style="width: {{printf "%.1f" .Share}}%"></span>{{end}}{{end}}</div>
-    <div class="cats">{{range .View.Cats}}<div class="catline" title="{{.Label}}: {{.N}}">{{template "catrow" .}}</div>{{end}}</div>
+    {{template "cgauge" .View.Gauge}}
     <p class="muted">Por reglas simples, igual que el CSV.</p>
   </section>
 </div>
@@ -153,8 +152,7 @@
 <div class="grid2">
   <section class="card" aria-labelledby="cvcat-h">
     <div class="chead"><h2 id="cvcat-h">Categorías</h2><span class="muted">{{plural $d.Total "comentario" "comentarios"}}</span></div>
-    <div class="cstack" role="img" aria-label="{{range $i, $c := $d.Cats}}{{if $i}}, {{end}}{{$c.Label}} {{printf "%.0f" $c.Share}} %{{end}}">{{range $d.Cats}}{{if .N}}<span class="seg {{.Key}}" style="width: {{printf "%.1f" .Share}}%"></span>{{end}}{{end}}</div>
-    <div class="cats">{{range $d.Cats}}<div class="catline" title="{{.Label}}: {{.N}}">{{template "catrow" .}}</div>{{end}}</div>
+    {{template "cgauge" $d.Gauge}}
   </section>
 </div>
 

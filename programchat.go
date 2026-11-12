@@ -26,7 +26,7 @@ const (
 // el orden en que se escribe "abrir". tema1…tema5 son los temas del resumen,
 // qg1…qg30 los grupos de preguntas de las tandas (maspreguntas, los que pasan
 // de qgTop) y cq1…cq8 las preguntas del resumen, por posición como en En vivo.
-var programFolds = slices.Concat([]string{"chat", "maspreguntas"}, numbered("tema", 5), numbered("qg", qgFolds), numbered("cq", cqFolds))
+var programFolds = slices.Concat([]string{"chat", "maspreguntas"}, numbered("tema", 5), numbered("qg", qgFolds), numbered("cq", cqFolds), catFoldKeys())
 
 // chatSents son las opciones del filtro de sentimiento ("sin": sin etiqueta).
 var chatSents = []struct{ Key, Label, Class string }{

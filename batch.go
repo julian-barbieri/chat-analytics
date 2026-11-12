@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
-	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -298,6 +297,7 @@ const (
 	alertMsgsMax    = 10
 	motivesShown    = 3
 	sentChartSpan   = 3 * time.Hour // ventana del gráfico con "Programa en curso"
+	sentWideSlots   = 37            // más franjas que esas 3 h: ancho fijo por franja y desplazamiento
 )
 
 // SentSlot son los mensajes etiquetados por sentimiento de un canal en una
@@ -392,12 +392,21 @@ func sentimentTypical(history, today []SentSlot) (SentPct, string, bool) {
 }
 
 // SentCard es una de las tres tarjetas del sentimiento.
-type SentCard struct{ Class, Label, Pct, Diff string }
+type SentCard struct {
+	Class, Label, Pct, Diff string
+	W                       float64 // % sin redondear, para la barra apilada
+}
+
+// SentLead es el tono que más pesa, en grande arriba de la barra ("62 %
+// positivo").
+type SentLead struct{ Pct, Word string }
 
 // SentimentView es lo de arriba de la tarjeta "Sentimiento del chat".
 type SentimentView struct {
 	Header, Banner, Typical string
 	Cards                   []SentCard
+	Lead                    *SentLead
+	Aria                    string // la barra apilada en texto
 }
 
 // sentimentCards arma las tarjetas de los últimos 5 min contra lo típico y el
@@ -419,7 +428,7 @@ func sentimentCards(recent SentSlot, typ SentPct, where string, ok bool, cause s
 		class, label string
 		now, typ     float64
 	}{{"pos", "Positivo", p.Pos, typ.Pos}, {"neu", "Neutro", p.Neu, typ.Neu}, {"neg", "Negativo", p.Neg, typ.Neg}} {
-		card := SentCard{Class: c.class, Label: c.label, Pct: strconv.Itoa(round(c.now)) + " %"}
+		card := SentCard{Class: c.class, Label: c.label, Pct: strconv.Itoa(round(c.now)) + " %", W: c.now}
 		if ok {
 			switch d := round(c.now) - round(c.typ); {
 			case d > 0:
@@ -432,6 +441,16 @@ func sentimentCards(recent SentSlot, typ SentPct, where string, ok bool, cause s
 		}
 		v.Cards = append(v.Cards, card)
 	}
+	var parts []string
+	lead := v.Cards[0]
+	for _, c := range v.Cards {
+		parts = append(parts, c.Label+" "+c.Pct)
+		if c.W > lead.W {
+			lead = c
+		}
+	}
+	v.Lead = &SentLead{Pct: lead.Pct, Word: strings.ToLower(lead.Label)}
+	v.Aria = strings.Join(parts, ", ")
 	if ok && recent.Total() >= minSentMsgs && round(p.Neg) >= round(typ.Neg)+sentRisePts {
 		v.Banner = fmt.Sprintf("El negativo sube: %d %% en los últimos 5 min, contra %d %% típico %s.", round(p.Neg), round(typ.Neg), where)
 		if cause != "" {
@@ -468,6 +487,7 @@ type SentProg struct {
 // SentChart es "Cómo fue cambiando · cada 5 min".
 type SentChart struct {
 	W     float64
+	Px    int // ancho fijo en px con todo el día (se desplaza); 0: el de la tarjeta
 	Bars  []SentStack
 	Lines []SentLine
 	Strip []SentProg
@@ -481,10 +501,25 @@ type SentChart struct {
 // de programas de abajo.
 func sentimentChart(slots []SentSlot, segs []Segment, from, now time.Time) SentChart {
 	from = slotOf(from)
+	merged := mergeSlots(slots)
 	n := max(int(now.Sub(from)/slotStep)+1, 1)
+	wide := n > sentWideSlots
+	if wide {
+		// Todo el día: arranca en la primera franja con datos, así las horas
+		// vacías de la madrugada no achican las barras.
+		first := now
+		for _, s := range merged {
+			if s.Total() > 0 && !s.Start.Before(from) && s.Start.Before(first) {
+				first = s.Start
+			}
+		}
+		from = slotOf(first)
+		n = max(int(now.Sub(from)/slotStep)+1, 1)
+		wide = n > sentWideSlots
+	}
 	c := SentChart{W: float64(n)}
 	withData := 0
-	for _, s := range mergeSlots(slots) {
+	for _, s := range merged {
 		i := int(s.Start.Sub(from) / slotStep)
 		if i < 0 || i >= n || s.Total() == 0 {
 			continue
@@ -492,11 +527,20 @@ func sentimentChart(slots []SentSlot, segs []Segment, from, now time.Time) SentC
 		withData++
 		b := sentStack(s)
 		b.Start = s.Start
-		b.X, b.W = float64(n-1-i)+0.1, 0.8 // lo más nuevo a la izquierda
+		b.X, b.W = float64(i)+0.1, 0.8 // lo más nuevo a la derecha
 		c.Bars = append(c.Bars, b)
 	}
 	c.Strip, c.Lines = programStrip(segs, from, n, now)
-	c.Ticks = []Tick{{Left: 0, Label: now.Local().Format("15:04") + " en curso", End: true}, {Left: 100, Label: from.Local().Format("15:04")}}
+	c.Ticks = []Tick{{Left: 0, Label: from.Local().Format("15:04")}}
+	if wide {
+		// Barras del mismo ancho que con el programa en curso (slotPx por
+		// franja): el gráfico se desplaza de costado, con un rótulo por hora.
+		c.Px = n * slotPx
+		for h := from.Truncate(time.Hour).Add(time.Hour); h.Before(now.Add(-30 * time.Minute)); h = h.Add(time.Hour) {
+			c.Ticks = append(c.Ticks, Tick{Left: float64(h.Sub(from)) / float64(slotStep) / float64(n) * 100, Label: h.Local().Format("15:04")})
+		}
+	}
+	c.Ticks = append(c.Ticks, Tick{Left: 100, Label: now.Local().Format("15:04") + " en curso", End: true})
 	c.Aria = fmt.Sprintf("Sentimiento del chat cada 5 min desde las %s: %s", from.Local().Format("15:04"), plural(withData, "franja con datos", "franjas con datos"))
 	return c
 }
@@ -524,8 +568,7 @@ func sentStack(s SentSlot) SentStack {
 func programStrip(segs []Segment, from time.Time, n int, now time.Time) (strip []SentProg, lines []SentLine) {
 	w := float64(max(n, 1))
 	end := from.Add(time.Duration(n) * slotStep)
-	// Espejado: lo más nuevo a la izquierda, así que x cuenta desde end.
-	x := func(t time.Time) float64 { return float64(end.Sub(t)) / float64(slotStep) }
+	x := func(t time.Time) float64 { return float64(t.Sub(from)) / float64(slotStep) }
 	for _, p := range chartPrograms(segs, from, end, now) {
 		if p.start.After(from) {
 			lines = append(lines, SentLine{X: x(p.start)})
@@ -534,11 +577,9 @@ func programStrip(segs []Segment, from time.Time, n int, now time.Time) (strip [
 		if p.live {
 			r = p.real.Local().Format("15:04") + " a ahora"
 		}
-		strip = append(strip, SentProg{Left: x(p.end) * 100 / w, Width: x(p.start)*100/w - x(p.end)*100/w,
+		strip = append(strip, SentProg{Left: x(p.start) * 100 / w, Width: x(p.end)*100/w - x(p.start)*100/w,
 			Name: p.name, Hour: p.real.Local().Format("15:04"), Range: r})
 	}
-	// El más nuevo primero, también en la lista de texto.
-	slices.Reverse(strip)
 	return strip, lines
 }
 

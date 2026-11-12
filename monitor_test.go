@@ -651,7 +651,7 @@ func TestDashboardWithoutRemovedSections(t *testing.T) {
 		// Palabras y autores pasaron al bloque "Todo el monitor" del análisis (CA1.18).
 		// Filtros y Temas (por reglas) se quitaron después (CA1.1 de canales-editables-claude-vivo).
 		{"/parcial/vivo/analisis?video=v1", []string{"Momentos con más participación",
-			"Palabras y autores de las últimas 24 h", "Palabras más repetidas", "Quiénes más escriben"},
+			"De qué se habla", "Palabras más repetidas", "Quiénes más escriben"},
 			[]string{"Spam e insultos repetidos", "4. Filtros", "5. Momentos", "Chat por programa", "Videos recientes",
 				"Filtros para YouTube Studio", "Temas (por reglas)"}},
 	}
@@ -1976,7 +1976,7 @@ func TestParticipationChart(t *testing.T) {
 			t.Fatalf("barras = %d", len(bars))
 		}
 		for i, b := range bars {
-			if !near(b.X, float64(slotCount-1-i)+0.1) || !near(b.W, 0.8) || !near(b.Y, 100-b.H) { // lo más nuevo a la izquierda
+			if !near(b.X, float64(i)+0.1) || !near(b.W, 0.8) || !near(b.Y, 100-b.H) { // lo más nuevo a la derecha
 				t.Errorf("barra %d: X %v, W %v, Y %v, H %v", i, b.X, b.W, b.Y, b.H)
 			}
 		}
@@ -2005,13 +2005,13 @@ func TestParticipationChart(t *testing.T) {
 			}
 		}
 		marks := c["Marks"].([]Mark)
-		if len(marks) != 2 || marks[0].Rank != 1 || !near(marks[0].Left, 187.5/288*100) ||
-			marks[1].Rank != 2 || !near(marks[1].Left, 87.5/288*100) {
+		if len(marks) != 2 || marks[0].Rank != 1 || !near(marks[0].Left, 100.5/288*100) ||
+			marks[1].Rank != 2 || !near(marks[1].Left, 200.5/288*100) {
 			t.Errorf("marcas = %+v", marks)
 		}
 		ticks := c["Ticks"].([]Tick)
-		if len(ticks) != 9 || !near(ticks[0].Left, 0) || !near(ticks[1].Left, 12.5) || !near(ticks[8].Left, 100) || !ticks[0].End ||
-			ticks[0].Label != hm(288) || ticks[1].Label != hm(252) || ticks[8].Label != hm(0) {
+		if len(ticks) != 9 || !near(ticks[0].Left, 0) || !near(ticks[1].Left, 12.5) || !near(ticks[8].Left, 100) || !ticks[8].End ||
+			ticks[8].Label != hm(288) || ticks[1].Label != hm(36) || ticks[0].Label != hm(0) {
 			t.Errorf("ticks = %+v", ticks)
 		}
 		if y, ok := c["TypicalY"].(float64); !ok || !near(y, 80) {
@@ -2126,11 +2126,11 @@ func TestParticipationChartViewers(t *testing.T) {
 			viewers map[int]int64
 			want    string
 		}{
-			// Lo más nuevo a la izquierda: la franja i va en la posición n-1-i.
-			{36, map[int]int64{2: 100, 3: 200, 5: 50}, "M30 75.00H31M32 0.00H33V50.00H34"},
-			// Tramo desde el borde izquierdo (lo más nuevo) y franja aislada al final (la más vieja).
-			{36, map[int]int64{0: 10, 34: 20, 35: 20}, "M0 0.00H1V0.00H2M35 50.00H36"},
-			{72, map[int]int64{71: 3}, "M0 0.00H1"},
+			// De izquierda a derecha: la franja i va en la posición i.
+			{36, map[int]int64{2: 100, 3: 200, 5: 50}, "M2 50.00H3V0.00H4M5 75.00H6"},
+			// Franja aislada al principio (la más vieja) y tramo hasta el borde derecho (lo más nuevo).
+			{36, map[int]int64{0: 10, 34: 20, 35: 20}, "M0 50.00H1M34 0.00H35V0.00H36"},
+			{72, map[int]int64{71: 3}, "M71 0.00H72"},
 		}
 		for _, c := range cases {
 			if got := line(t, chart(window(c.n, c.viewers))).Path; got != c.want {
@@ -2172,7 +2172,7 @@ func TestParticipationChartViewers(t *testing.T) {
 		if !strings.Contains(l.Aria, "; máximo de 500 a las "+hm(10)+";") {
 			t.Errorf("aria = %q, quería la primera franja (%s)", l.Aria, hm(10))
 		}
-		if l.Path != "M21 0.00H22M60 0.00H61V0.00H62" {
+		if l.Path != "M10 0.00H11V0.00H12M50 0.00H51" {
 			t.Errorf("Path = %q", l.Path)
 		}
 	})
@@ -2477,15 +2477,15 @@ func TestLiveParticipationView(t *testing.T) {
 		"<title>" + span + " · LA MAÑANA · 6 mensajes · 6 personas · 150 mirando (4,0 %) · N.º 1 de los 5 con más participación</title>",
 		"sin dato de espectadores", `class="bar top"`, `class="pmarks"`, `>1</span>`, `class="pticks"`,
 		"Participación típica del vivo: 4,0 %", "150 mirando ahora", "máx. 4,0 %",
-		"<th scope=\"col\">Momento</th>", "<td class=\"n\">150</td>", "<td class=\"n\">6</td>", "4,0 %",
+		`<ol class="moms">`, "<dt>Mirando</dt><dd>150</dd>", "<dt>Personas</dt><dd>6</dd>", "4,0 %",
 		peak.Local().Format("02/01 15:04") + " a " + peak.Add(5*time.Minute).Local().Format("15:04"), "LA MAÑANA",
 		`<details class="plegable mom"><summary id="plegar-mom1"`, "abrir=mom1", "Para el reel:", `target="_blank" rel="noopener"`,
 		// v1 está en curso: YouTube ignora t=, así que se linkea el vivo y se dice cuánto retroceder.
 		`href="https://www.youtube.com/watch?v=v1"`, "Abrí el vivo y retrocedé ~",
 		"&lt;script&gt;x&lt;/script&gt;", "dólar blue", "Solo 1" + e2,
 	}, []string{hidden, e0, e1, "watch?v=v1&amp;t="})
-	if n := strings.Count(body, "<th"); n != 4 {
-		t.Errorf("v1: la tabla tiene %d columnas, quería 4", n)
+	if n := strings.Count(body, "<dt>"); n != 3 {
+		t.Errorf("v1: el momento tiene %d números, quería 3", n)
 	}
 	// El chat de v1 empezó hace menos de 3 h: el gráfico muestra el mínimo de 3 h.
 	if n := strings.Count(body, "<g><title>"); n != minChartSlots {
@@ -2495,19 +2495,19 @@ func TestLiveParticipationView(t *testing.T) {
 	// El canal oculta el contador: gráfico de personas y E0, sin aviso aparte.
 	check("v2", get("/parcial/vivo/analisis?video=v2"), []string{
 		e0, "máx. 6 personas", "Personas que escribieron en el chat cada 5 minutos desde las ", "; máximo de 6 personas a las " + hm,
-	}, []string{hidden, "<table", `class="bar top"`, e1, e2})
+	}, []string{hidden, `class="moms"`, `class="bar top"`, e1, e2})
 	// Tiene espectadores pero no hay muestras de esas franjas.
 	check("v3", get("/parcial/vivo/analisis?video=v3"), []string{
 		"80 mirando ahora", "quedan fuera del ranking y de la participación típica", "sin dato de espectadores", e0,
-	}, []string{hidden, "<table", e1, e2})
+	}, []string{hidden, `class="moms"`, e1, e2})
 	// Con dato pero nadie llega a 3 personas.
 	check("v4", get("/parcial/vivo/analisis?video=v4"), []string{
 		e1, "40 mirando ahora", "todavía sin franjas con dato de espectadores y al menos 3 personas",
-	}, []string{hidden, "<table", e0, e2})
+	}, []string{hidden, `class="moms"`, e0, e2})
 	// Los 5: sin mensaje de que faltan.
 	body = get("/parcial/vivo/analisis?video=v5")
 	check("v5", body, []string{"7,0 %", "3,0 %"}, []string{hidden, e0, e1, e2})
-	if n := strings.Count(body, `<tr class="mom">`); n != 5 {
+	if n := strings.Count(body, `<li class="mom">`); n != 5 {
 		t.Errorf("v5: %d momentos, quería 5", n)
 	}
 }
@@ -2665,8 +2665,8 @@ func TestParticipationChartEdges(t *testing.T) {
 			t.Errorf("altos = %v, %v, %v", bars[0].H, bars[144].H, bars[287].H)
 		}
 		marks := c["Marks"].([]Mark)
-		if len(marks) != 3 || !near(marks[0].Left, 287.5/288*100) || marks[0].Rank != 1 ||
-			!near(marks[2].Left, 0.5/288*100) || marks[2].Rank != 3 {
+		if len(marks) != 3 || !near(marks[0].Left, 0.5/288*100) || marks[0].Rank != 1 ||
+			!near(marks[2].Left, 287.5/288*100) || marks[2].Rank != 3 {
 			t.Errorf("marcas = %+v", marks)
 		}
 		if c["Max"] != "máx. 200,0 %" {
@@ -2791,15 +2791,15 @@ func TestLiveParticipationViewEdges(t *testing.T) {
 				t.Errorf("%s: no debería tener %q", name, bad)
 			}
 		}
-		// Cada momento es una fila de 4 celdas con su detalle plegado en la primera.
-		mains := strings.Split(body, `<tr class="mom">`)[1:]
+		// Cada momento es una tarjeta con 3 números y su detalle plegado.
+		mains := strings.Split(body, `<li class="mom">`)[1:]
 		if n := strings.Count(body, `<details class="plegable mom"`); n != len(mains) {
-			t.Errorf("%s: %d momentos plegados para %d filas", name, n, len(mains))
+			t.Errorf("%s: %d momentos plegados para %d tarjetas", name, n, len(mains))
 		}
 		for i, row := range mains {
-			row = row[:strings.Index(row, "</tr>")]
-			if n := strings.Count(row, "<td"); n != 4 {
-				t.Errorf("%s: la fila %d tiene %d celdas", name, i+1, n)
+			row = row[:strings.Index(row, "</li>")]
+			if n := strings.Count(row, "<dd>"); n != 3 {
+				t.Errorf("%s: la tarjeta %d tiene %d números", name, i+1, n)
 			}
 		}
 		if strings.Contains(body, "colspan=") {
@@ -2813,7 +2813,7 @@ func TestLiveParticipationViewEdges(t *testing.T) {
 		"&lt;script&gt;alert(1)&lt;/script&gt;</span>",          // programa en la tabla
 		"· &lt;script&gt;alert(1)&lt;/script&gt; · 10 mensajes", // programa en el <title>
 		"&lt;img src=x onerror=alert(2)&gt; hola",               // ejemplo
-		"200,0 %", "máx. 200,0 %", "<td class=\"n\">5</td>", "<td class=\"n\">10</td>",
+		"200,0 %", "máx. 200,0 %", "<dt>Mirando</dt><dd>5</dd>", "<dt>Personas</dt><dd>10</dd>",
 		`style="left: 0.00%"`, `style="left: 100.00%"`, "Solo 1 de 5",
 		// Vivo de 48 h en curso y momento de hace 30 min: link al vivo, sin t=, y cuánto retroceder.
 		`href="https://www.youtube.com/watch?v=x1"`, "Abrí el vivo y retrocedé ~0 h 3",
@@ -2828,7 +2828,7 @@ func TestLiveParticipationViewEdges(t *testing.T) {
 
 	body = section5(t, get("/parcial/vivo/analisis?video=x2"))
 	common("x2", body)
-	if !strings.Contains(body, "Solo 4 de 5: el resto de las franjas") || strings.Count(body, `<tr class="mom">`) != 4 {
+	if !strings.Contains(body, "Solo 4 de 5: el resto de las franjas") || strings.Count(body, `<li class="mom">`) != 4 {
 		t.Errorf("x2: E2 con 4 momentos")
 	}
 	if !strings.Contains(body, "&lt;b&gt;PROG&lt;/b&gt;") {
@@ -2868,7 +2868,7 @@ func TestLiveParticipationViewEdges(t *testing.T) {
 			}
 		}
 	}
-	for _, want := range []string{"minmax(min(400px, 100%), 1fr)", "height: 240px", "height: 180px", ".bar.top { fill: var(--warn-text); }",
+	for _, want := range []string{"minmax(min(400px, 100%), 1fr)", "height: 240px", "height: 180px", ".bar.top { fill: var(--series-1); }",
 		"vector-effect: non-scaling-stroke", "overflow-wrap: anywhere", ".pticks span:nth-child(even) { display: none; }"} {
 		if !strings.Contains(page, want) {
 			t.Errorf("CSS: falta %q", want)
@@ -2942,24 +2942,25 @@ func TestParticipationChartWindow(t *testing.T) {
 		slots[c.n-1].N, slots[c.n-1].Authors, slots[c.n-1].Viewers, slots[c.n-1].Pct = 3, 3, 100, 3
 		ch := participationChart(slots, TopMoments(slots, nil), 1, true, nil)
 		ticks := ch["Ticks"].([]Tick)
-		// Lo más nuevo a la izquierda: los rótulos se cuentan desde el borde de ahora.
-		if len(ticks) != c.n/c.step+1 || len(ticks) > 9 || ticks[1].Label != hm(c.n-c.step) || !near(ticks[1].Left, float64(c.step)/float64(c.n)*100) {
+		// Lo más nuevo a la derecha: los rótulos se cuentan desde el borde de ahora.
+		k := len(ticks) - 2
+		if len(ticks) != c.n/c.step+1 || len(ticks) > 9 || ticks[k].Label != hm(c.n-c.step) || !near(ticks[k].Left, float64(c.n-c.step)/float64(c.n)*100) {
 			t.Errorf("%d franjas: ticks = %+v, quería uno cada %d", c.n, ticks, c.step)
 		}
-		// Solo el rótulo del borde izquierdo (ahora) es End.
+		// Solo el rótulo del borde derecho (ahora) es End.
 		for _, k := range ticks {
-			if k.End != near(k.Left, 0) {
+			if k.End != near(k.Left, 100) {
 				t.Errorf("%d franjas: tick %+v con End mal puesto", c.n, k)
 			}
 		}
-		if last := ticks[len(ticks)-1]; near(last.Left, 100) != (c.n%c.step == 0) {
-			t.Errorf("%d franjas: último tick %+v", c.n, last)
+		if first := ticks[0]; near(first.Left, 0) != (c.n%c.step == 0) {
+			t.Errorf("%d franjas: primer tick %+v", c.n, first)
 		}
 		if ch["W"] != c.n || len(ch["Bars"].([]Bar)) != c.n {
 			t.Errorf("%d franjas: W = %v", c.n, ch["W"])
 		}
 		marks := ch["Marks"].([]Mark)
-		if len(marks) != 1 || !near(marks[0].Left, 0.5/float64(c.n)*100) {
+		if len(marks) != 1 || !near(marks[0].Left, (float64(c.n)-0.5)/float64(c.n)*100) {
 			t.Errorf("%d franjas: marcas = %+v", c.n, marks)
 		}
 		aria := ch["Aria"].(string)
@@ -4532,7 +4533,7 @@ func TestClaudeCardOff(t *testing.T) {
 			// El orden de En vivo (CA1.7), con la tarjeta de Claude apagada en su lugar.
 			for _, want := range []string{
 				`id="claude-card"`, `id="alertas"`, "Momentos con más participación", "Preguntas para producción", "Categorías",
-				"Palabras y autores ", "Super Chats y Super Stickers",
+				"De qué se habla", "Super Chats y Super Stickers",
 			} {
 				i := strings.Index(body, want)
 				if i < 0 {
@@ -5952,7 +5953,7 @@ func TestDashboardTabs(t *testing.T) {
 			if w.Code != 200 {
 				t.Fatalf("%s = %d", cur.href, w.Code)
 			}
-			for _, want := range []string{"<h1>Monitor de YouTube</h1>", `<a href="/export.csv">Descargar CSV para Claude</a>`} {
+			for _, want := range []string{"<h1>Monitor de audiencia</h1>", `<a href="/export.csv">Descargar CSV para Claude</a>`} {
 				if !strings.Contains(body, want) {
 					t.Errorf("falta %q", want)
 				}
@@ -6021,7 +6022,8 @@ func TestHowItAirs(t *testing.T) {
 	}
 }
 
-// TestLiveTiles (CA1.6): los tiles del alcance elegido.
+// TestLiveTiles (CA4 de diseno-ejecutivo): los siete números de arriba, en
+// orden, con su comparación (Trend: up verde, down naranja, "" gris).
 func TestLiveTiles(t *testing.T) {
 	now := noonToday()
 	chat := func(n int, ago time.Duration, author string) []Message {
@@ -6044,31 +6046,50 @@ func TestLiveTiles(t *testing.T) {
 			Super: SuperChat, Currency: cur, AmountMicros: micros}
 	}
 	ask := Message{ID: "q", Source: "chat", VideoID: "v1", Author: "Ana", Text: "¿A qué hora vuelve?", At: now.Add(-2 * time.Hour)}
+	noLikes := Tile{Label: "Likes del vivo", Value: "—", Note: "sin dato todavía"}
+	likes := Tile{Label: "Likes del vivo", Value: "1.200", Note: "+40 en la última media hora", Trend: "up"}
+	noWatch := Tile{Label: "Mirando ahora", Value: "—", Note: "sin dato de espectadores"}
+	noPart := Tile{Label: "Participación", Value: "—", Note: "sin dato de espectadores"}
+	tile := func(label, value, note, trend string) Tile {
+		return Tile{Label: label, Value: value, Note: note, Trend: trend}
+	}
 	cases := []struct {
-		name       string
-		msgs       []Message
-		concurrent int64
-		sc         scope
-		want       []Tile
+		name string
+		in   tileInput
+		want []Tile
 	}{
-		{"sin mensajes", nil, 0, scopeProgram, []Tile{
-			{"Mensajes por minuto", "0,0", "en los últimos 5 min"}, {"Personas que escribieron", "0", "en este programa"},
-			{"Mirando ahora", "—", "sin dato de espectadores"}, {"Super Chats", "0", ""}, {"Preguntas", "0", "por reglas"}}},
-		{"menos de 6 franjas", append(past(5, 2), chat(4, time.Minute, "a")...), 300, scopeDay, []Tile{
-			{"Mensajes por minuto", "0,8", "en los últimos 5 min"}, {"Personas que escribieron", "13", "en el día"},
-			{"Mirando ahora", "300", "1,0 % escribió en los últimos 5 min"}, {"Super Chats", "0", ""}, {"Preguntas", "0", "por reglas"}}},
-		{"sobre lo típico", append(append(past(6, 2), chat(4, time.Minute, "a")...), ask), 0, scopeProgram, []Tile{
-			{"Mensajes por minuto", "0,8", "100 % sobre lo típico de este programa"}, {"Personas que escribieron", "16", "en este programa"},
-			{"Mirando ahora", "—", "sin dato de espectadores"}, {"Super Chats", "0", ""}, {"Preguntas", "1", "por reglas"}}},
-		{"bajo lo típico, una moneda", append(append(past(6, 4), chat(2, time.Minute, "a")...), pay("1", "ARS", 50_000_000_000), pay("2", "ARS", 2_300_000_000)), 0, scopeDay, []Tile{
-			{"Mensajes por minuto", "0,4", "50 % bajo lo típico del día"}, {"Personas que escribieron", "22", "en el día"},
-			{"Mirando ahora", "—", "sin dato de espectadores"}, {"Super Chats", "2", "ARS 52.300,00"}, {"Preguntas", "0", "por reglas"}}},
-		{"dos monedas", []Message{pay("1", "ARS", 5_000_000), pay("2", "USD", 2_000_000)}, 50, scopeLast24, []Tile{
-			{"Mensajes por minuto", "0,0", "en los últimos 5 min"}, {"Personas que escribieron", "2", "en las últimas 24 h"},
-			{"Mirando ahora", "50", "0,0 % escribió en los últimos 5 min"}, {"Super Chats", "2", "en 2 monedas"}, {"Preguntas", "0", "por reglas"}}},
+		{"sin mensajes", tileInput{likes: noLikes, sc: scopeProgram}, []Tile{
+			noWatch, noPart, noLikes, tile("Mensajes por minuto", "0,0", "en los últimos 5 min", ""), tile("Personas que escribieron", "0", "en este programa", ""),
+			tile("Preguntas", "0", "por reglas", ""), tile("Super Chats", "0", "", "")}},
+		{"menos de 6 franjas", tileInput{msgs: append(past(5, 2), chat(4, time.Minute, "a")...), concurrent: 300, likes: likes, sc: scopeDay}, []Tile{
+			tile("Mirando ahora", "300", "según YouTube", ""), tile("Participación", "1,0 %", "escribió en los últimos 5 min", ""), likes,
+			tile("Mensajes por minuto", "0,8", "en los últimos 5 min", ""), tile("Personas que escribieron", "13", "en el día", ""),
+			tile("Preguntas", "0", "por reglas", ""), tile("Super Chats", "0", "", "")}},
+		{"más que hace 1 h y bajo la típica", tileInput{msgs: chat(4, time.Minute, "a"), concurrent: 300, hourAgo: 250, typical: 2, likes: likes, sc: scopeProgram}, []Tile{
+			tile("Mirando ahora", "300", "20 % más que hace 1 h", "up"), tile("Participación", "1,0 %", "lo típico del vivo: 2,0 %", "down"), likes,
+			tile("Mensajes por minuto", "0,8", "en los últimos 5 min", ""), tile("Personas que escribieron", "3", "en este programa", ""),
+			tile("Preguntas", "0", "por reglas", ""), tile("Super Chats", "0", "", "")}},
+		{"menos que hace 1 h y sobre la típica", tileInput{msgs: chat(4, time.Minute, "a"), concurrent: 100, hourAgo: 200, typical: 1, likes: likes, sc: scopeProgram}, []Tile{
+			tile("Mirando ahora", "100", "50 % menos que hace 1 h", "down"), tile("Participación", "3,0 %", "lo típico del vivo: 1,0 %", "up"), likes,
+			tile("Mensajes por minuto", "0,8", "en los últimos 5 min", ""), tile("Personas que escribieron", "3", "en este programa", ""),
+			tile("Preguntas", "0", "por reglas", ""), tile("Super Chats", "0", "", "")}},
+		{"sobre lo típico", tileInput{msgs: append(append(past(6, 2), chat(4, time.Minute, "a")...), ask), likes: noLikes, sc: scopeProgram}, []Tile{
+			noWatch, noPart, noLikes, tile("Mensajes por minuto", "0,8", "100 % sobre lo típico de este programa", "up"),
+			tile("Personas que escribieron", "16", "en este programa", ""), tile("Preguntas", "1", "por reglas", ""), tile("Super Chats", "0", "", "")}},
+		{"bajo lo típico, una moneda", tileInput{msgs: append(append(past(6, 4), chat(2, time.Minute, "a")...), pay("1", "ARS", 50_000_000_000), pay("2", "ARS", 2_300_000_000)), likes: noLikes, sc: scopeDay}, []Tile{
+			noWatch, noPart, noLikes, tile("Mensajes por minuto", "0,4", "50 % bajo lo típico del día", "down"),
+			tile("Personas que escribieron", "22", "en el día", ""), tile("Preguntas", "0", "por reglas", ""), tile("Super Chats", "2", "ARS 52.300,00", "")}},
+		{"igual que lo típico", tileInput{msgs: append(past(6, 2), chat(2, time.Minute, "a")...), likes: noLikes, sc: scopeProgram}, []Tile{
+			noWatch, noPart, noLikes, tile("Mensajes por minuto", "0,4", "igual que lo típico de este programa", ""),
+			tile("Personas que escribieron", "14", "en este programa", ""), tile("Preguntas", "0", "por reglas", ""), tile("Super Chats", "0", "", "")}},
+		{"dos monedas", tileInput{msgs: []Message{pay("1", "ARS", 5_000_000), pay("2", "USD", 2_000_000)}, concurrent: 50, likes: noLikes, sc: scopeLast24}, []Tile{
+			tile("Mirando ahora", "50", "según YouTube", ""), tile("Participación", "0,0 %", "escribió en los últimos 5 min", ""), noLikes,
+			tile("Mensajes por minuto", "0,0", "en los últimos 5 min", ""), tile("Personas que escribieron", "2", "en las últimas 24 h", ""),
+			tile("Preguntas", "0", "por reglas", ""), tile("Super Chats", "2", "en 2 monedas", "")}},
 	}
 	for _, c := range cases {
-		if got := liveTiles(c.msgs, c.concurrent, c.sc, now); fmt.Sprint(got) != fmt.Sprint(c.want) {
+		c.in.now = now
+		if got := liveTiles(c.in); fmt.Sprint(got) != fmt.Sprint(c.want) {
 			t.Errorf("%s:\n got %v\nwant %v", c.name, got, c.want)
 		}
 	}
@@ -6183,7 +6204,7 @@ func TestLiveScreenOrder(t *testing.T) {
 		if regexp.MustCompile(`<h[23][^>]*>\s*[0-9]+\.\s`).MatchString(body) {
 			t.Errorf("%s: hay títulos numerados", ver)
 		}
-		for _, want := range []string{"Palabras y autores ", "Palabras más repetidas", "Quiénes más escriben"} {
+		for _, want := range []string{"De qué se habla", "Palabras más repetidas", "Quiénes más escriben"} {
 			if !strings.Contains(body, want) {
 				t.Errorf("%s: falta %q", ver, want)
 			}
@@ -6232,8 +6253,8 @@ func TestLiveRemovedSections(t *testing.T) {
 				t.Fatalf("falta el bloque Todo el monitor:\n%s", body)
 			}
 			monitor := body[i:]
-			if j := strings.Index(monitor, "</section>"); j >= 0 {
-				monitor = monitor[:j]
+			if j := strings.Index(monitor, "</section>\n</div>"); j >= 0 {
+				monitor = monitor[:j] // las dos tarjetas: De qué se habla y Quiénes participan
 			}
 			for _, not := range []string{"<h3>Categorías</h3>", "Por reglas simples; el detalle fino"} {
 				if strings.Contains(monitor, not) {
@@ -6663,7 +6684,7 @@ func TestProgramsPage(t *testing.T) {
 		want, not  []string
 	}{
 		{"hoy", "/programas", []string{
-			"<h1>Monitor de YouTube</h1>", "Programas de hoy · " + today,
+			"<h1>Monitor de audiencia</h1>", "Programas de hoy · " + today,
 			`<label class="field" for="f-canal"><span class="lbl">Canal</span>`, `<label class="field" for="f-dia"><span class="lbl">Día</span>`,
 			`id="f-canal" class="sel" name="canal" hx-get="/parcial/programas" hx-trigger="change"`, `hx-push-url="true"`,
 			`<option value="" selected>Todos los canales</option>`, `<option value="hoy" selected>Hoy</option>`,
@@ -7194,7 +7215,7 @@ func TestTemplateTokens(t *testing.T) {
 			t.Errorf("%s: claro %q, oscuro %q", name, light[name], dark[name])
 		}
 	}
-	if light["--text-muted"] != "#6b6a65" || light["--link"] != "#1f63b8" {
+	if light["--text-muted"] != "#667085" || light["--link"] != "#1d4ed8" {
 		t.Errorf("--text-muted %q y --link %q no son los del diseño", light["--text-muted"], light["--link"])
 	}
 	allowed := map[string]bool{"width": true, "left": true, "flex-grow": true}
@@ -9244,7 +9265,7 @@ func TestSentimentChart(t *testing.T) {
 		t.Fatalf("W %v, barras %d", c.W, len(c.Bars))
 	}
 	b := c.Bars[0]
-	if b.Low || math.Abs(b.X-10.1) > 1e-9 || b.NegH != 20 || b.NeuY != 20 || b.PosY+b.PosH != 100 ||
+	if b.Low || math.Abs(b.X-2.1) > 1e-9 || b.NegH != 20 || b.NeuY != 20 || b.PosY+b.PosH != 100 ||
 		b.Label != from.Add(10*time.Minute).Format("15:04")+": 40 % positivo, 40 % neutro, 20 % negativo (50 mensajes)" {
 		t.Errorf("barra: %+v", b)
 	}
@@ -9252,15 +9273,15 @@ func TestSentimentChart(t *testing.T) {
 		t.Errorf("umbral del color: %+v / %+v", c.Bars[1], c.Bars[2])
 	}
 	// El eje va de from alineado a 5 min a 13 franjas después, con lo más
-	// nuevo a la izquierda: x cuenta desde el final.
-	cut := 13 - float64(from.Add(20*time.Minute).Sub(slotOf(from)))/float64(slotStep)
+	// nuevo a la derecha.
+	cut := float64(from.Add(20*time.Minute).Sub(slotOf(from))) / float64(slotStep)
 	if len(c.Lines) != 1 || math.Abs(c.Lines[0].X-cut) > 1e-9 {
 		t.Errorf("líneas: %+v", c.Lines)
 	}
 	hm := func(t time.Time) string { return t.Local().Format("15:04") }
-	want := []SentProg{ // el más nuevo primero y a la izquierda
-		{Name: "LA TARDE", Hour: hm(from.Add(20 * time.Minute)), Range: hm(from.Add(20*time.Minute)) + " a ahora", Left: 0, Width: cut * 100 / 13},
-		{Name: "LA MAÑANA", Hour: hm(from.Add(-2 * time.Hour)), Range: hm(from.Add(-2*time.Hour)) + " a " + hm(from.Add(20*time.Minute)), Left: cut * 100 / 13, Width: (13 - cut) * 100 / 13},
+	want := []SentProg{ // de izquierda a derecha: el más nuevo al final
+		{Name: "LA MAÑANA", Hour: hm(from.Add(-2 * time.Hour)), Range: hm(from.Add(-2*time.Hour)) + " a " + hm(from.Add(20*time.Minute)), Left: 0, Width: cut * 100 / 13},
+		{Name: "LA TARDE", Hour: hm(from.Add(20 * time.Minute)), Range: hm(from.Add(20*time.Minute)) + " a ahora", Left: cut * 100 / 13, Width: (13 - cut) * 100 / 13},
 	}
 	if len(c.Strip) != len(want) {
 		t.Fatalf("franja: %+v", c.Strip)
@@ -9271,7 +9292,7 @@ func TestSentimentChart(t *testing.T) {
 			t.Errorf("programa %d: %+v, quería %+v", i, g, w)
 		}
 	}
-	if c.Ticks[0].Label != now.Format("15:04")+" en curso" || !c.Ticks[0].End || c.Ticks[0].Left != 0 || c.Ticks[1].Left != 100 || !strings.Contains(c.Aria, "3 franjas con datos") {
+	if c.Ticks[1].Label != now.Format("15:04")+" en curso" || !c.Ticks[1].End || c.Ticks[1].Left != 100 || c.Ticks[0].Left != 0 || !strings.Contains(c.Aria, "3 franjas con datos") {
 		t.Errorf("ticks %+v, aria %q", c.Ticks, c.Aria)
 	}
 	// La tarjeta entera: SVG con role, aria-label, <title> por barra y la leyenda.
@@ -9289,7 +9310,7 @@ func TestSentimentChart(t *testing.T) {
 	}
 	st.AddBatch(ClaudeBatch{At: now, ChannelID: "UCB", From: now.Add(-4 * time.Minute), To: now.Add(-time.Second), Labels: ls})
 	body := getBody(srv.Routes(), "/parcial/vivo/analisis?canal=UCB&video=b2&ver=programa")
-	for _, w := range []string{"Cómo fue cambiando · cada 5 min", `class="schart"`, `role="group" aria-label="Sentimiento del chat cada 5 min desde las`,
+	for _, w := range []string{"Cómo fue cambiando · cada 5 min", `class="schart"`, `class="clima"`, `class="cbar"`, `role="group" aria-label="Sentimiento del chat cada 5 min desde las`,
 		"<title>", "Menos de 5 mensajes: sin color", `class="sprogs"`, "a ahora · LA TARDE", "30 mensajes analizados en los últimos 5 min", "Positivo", "67 %", "Negativo", "33 %",
 		"Por qué hay mensajes negativos", "Qué está gustando", "todavía sin historia para comparar"} {
 		if !strings.Contains(body, w) {
@@ -9741,10 +9762,10 @@ func BenchmarkSentimentView(b *testing.B) {
 	}
 }
 
-// TestDayStripNewestFirst (CA1 de ajustes-en-vivo-programas): en "Hoy en el
-// canal" el tramo actual va primero y los anteriores siguen del más nuevo al
-// más viejo.
-func TestDayStripNewestFirst(t *testing.T) {
+// TestDayStripNewestRight (CA12 de diseno-ejecutivo): en "Hoy en el canal"
+// el tramo actual se ve a la derecha, como en los gráficos; en el HTML va
+// primero para que el scroll de la tira arranque ahí.
+func TestDayStripNewestRight(t *testing.T) {
 	now := noonLocal(t)
 	from := dayStart(now)
 	segs := []Segment{
@@ -9757,8 +9778,14 @@ func TestDayStripNewestFirst(t *testing.T) {
 	for _, b := range blocks {
 		got = append(got, b.Program+"/"+b.State)
 	}
+	// En el HTML lo actual va primero: el CSS (row-reverse) lo dibuja a la
+	// derecha y el scroll de la tira arranca ahí.
 	if want := []string{"B/" + SegLive, "/" + SegNone, "A/" + SegEnded}; !slices.Equal(got, want) {
 		t.Errorf("orden %v, quiero %v", got, want)
+	}
+	css, err := os.ReadFile("templates/layout.html")
+	if err != nil || !regexp.MustCompile(`\.tira \{[^}]*flex-direction: row-reverse`).Match(css) {
+		t.Errorf("la tira tiene que ir con flex-direction: row-reverse (lo actual a la derecha)")
 	}
 }
 
@@ -9839,7 +9866,7 @@ func TestQuestionsTop5(t *testing.T) {
 func TestProgramsTabName(t *testing.T) {
 	_, srv := programServer(t, noonToday(), false)
 	body := getBody(srv.Routes(), "/programas")
-	if !strings.Contains(body, `aria-current="page">Programas</a>`) || !strings.Contains(body, "<title>Programas · Monitor de YouTube") {
+	if !strings.Contains(body, `aria-current="page">Programas</a>`) || !strings.Contains(body, "<title>Programas · Monitor de audiencia") {
 		t.Errorf("falta la pestaña Programas")
 	}
 	if strings.Contains(body, "Programas de hoy</a>") || strings.Contains(body, "<title>Programas de hoy") {
@@ -9880,14 +9907,14 @@ func TestMonitorProgramScope(t *testing.T) {
 		{ID: "oth", Source: "chat", VideoID: "zz", Author: "Ajeno", Text: "ajeno", At: now.Add(-time.Minute)},
 	})
 	h := (&Server{st: st, budget: 9000, now: func() time.Time { return now }}).Routes()
-	for ver, title := range map[string]string{"programa": "Palabras y autores del programa en curso", "dia": "Palabras y autores de hoy"} {
+	for ver, title := range map[string]string{"programa": "Palabras más repetidas del programa en curso", "dia": "Palabras más repetidas de hoy"} {
 		body := getBody(h, "/parcial/vivo/analisis?canal=UCB&video=b2&ver="+ver)
 		i := strings.Index(body, `id="monitor"`)
 		if i < 0 {
 			t.Fatalf("%s: falta el bloque", ver)
 		}
 		block := body[i:]
-		block = block[:strings.Index(block, "</section>")]
+		block = block[:strings.Index(block, "</section>\n</div>")] // las dos tarjetas
 		if !strings.Contains(block, title) || strings.Contains(block, "Todo el monitor") || strings.Contains(block, "Ajeno") {
 			t.Errorf("%s:\n%s", ver, block)
 		}
@@ -9982,9 +10009,9 @@ func TestProgramSentimentAverage(t *testing.T) {
 	}
 }
 
-// TestParticipationChartNewestLeft (CA2): la franja más nueva va a la
-// izquierda; marcas, horas y línea de oyentes se espejan.
-func TestParticipationChartNewestLeft(t *testing.T) {
+// TestParticipationChartNewestRight (CA12 de diseno-ejecutivo): la franja
+// más nueva va a la derecha; marcas, horas y línea de oyentes también.
+func TestParticipationChartNewestRight(t *testing.T) {
 	now := noonLocal(t)
 	t0 := now.Truncate(slotStep).Add(-3 * slotStep)
 	var slots []Slot
@@ -9999,27 +10026,28 @@ func TestParticipationChartNewestLeft(t *testing.T) {
 	c := participationChart(slots, []Moment{newest}, 3, true, nil)
 	hm := func(t time.Time) string { return t.Local().Format("15:04") }
 	for _, b := range c["Bars"].([]Bar) {
-		if strings.HasPrefix(b.Label, hm(slots[3].Start)+" a ") && b.X != 0.1 {
-			t.Errorf("la franja más nueva tiene X %v, quería 0.1", b.X)
+		if strings.HasPrefix(b.Label, hm(slots[3].Start)+" a ") && b.X != 3.1 {
+			t.Errorf("la franja más nueva tiene X %v, quería 3.1", b.X)
 		}
-		if strings.HasPrefix(b.Label, hm(slots[0].Start)+" a ") && b.X != 3.1 {
-			t.Errorf("la franja más vieja tiene X %v, quería 3.1", b.X)
+		if strings.HasPrefix(b.Label, hm(slots[0].Start)+" a ") && b.X != 0.1 {
+			t.Errorf("la franja más vieja tiene X %v, quería 0.1", b.X)
 		}
 	}
-	if m := c["Marks"].([]Mark); len(m) != 1 || m[0].Left != 12.5 {
-		t.Errorf("marcas: %+v, quería la N.º 1 en 12.5 %%", m)
+	if m := c["Marks"].([]Mark); len(m) != 1 || m[0].Left != 87.5 {
+		t.Errorf("marcas: %+v, quería la N.º 1 en 87.5 %%", m)
 	}
 	ticks := c["Ticks"].([]Tick)
-	if len(ticks) == 0 || !ticks[0].End || ticks[0].Left != 0 || ticks[0].Label != hm(slots[3].Start.Add(slotStep)) {
-		t.Errorf("ticks: %+v, quería el borde de ahora a la izquierda (0 %%)", ticks)
+	last := ticks[len(ticks)-1]
+	if len(ticks) == 0 || !last.End || last.Left != 100 || last.Label != hm(slots[3].Start.Add(slotStep)) {
+		t.Errorf("ticks: %+v, quería el borde de ahora a la derecha (100 %%)", ticks)
 	}
 	for i := 1; i < len(ticks); i++ {
-		if ticks[i].Left <= ticks[i-1].Left {
+		if ticks[i].Left <= ticks[i-1].Left || ticks[i-1].End {
 			t.Errorf("ticks fuera de orden: %+v", ticks)
 		}
 	}
-	if p := c["Viewers"].(ViewersLine).Path; p != "M0 0.00H1V50.00H4" && p != "M0 0.00H1V50.00H2V50.00H3V50.00H4" {
-		t.Errorf("Path = %q, quería la línea arrancando por la franja más nueva", p)
+	if p := c["Viewers"].(ViewersLine).Path; p != "M0 50.00H3V0.00H4" && p != "M0 50.00H1V50.00H2V50.00H3V0.00H4" {
+		t.Errorf("Path = %q, quería la línea terminando en la franja más nueva", p)
 	}
 }
 
@@ -10558,8 +10586,9 @@ func TestCatRowsShare(t *testing.T) {
 	if rows[len(rows)-1].Key != CatOtro {
 		t.Errorf("Otros no va al final: %+v", rows)
 	}
-	srvRows := renderString(t, "categorias", map[string]any{"Cats": rows, "CatTotal": 4})
-	for _, w := range []string{`class="cstack"`, `class="seg elogio" style="width: 50.0%"`, `<span class="num">50 %</span>`} {
+	g := catGauge(catGaugeIn{rows: rows, msgs: msgs, link: func(string, bool, bool) string { return "#" }})
+	srvRows := renderString(t, "categorias", map[string]any{"Gauge": g, "CatTotal": 4})
+	for _, w := range []string{`class="cgauge`, `<a class="gsec elogio on"`, `<span class="num gp">50,0 %</span>`} {
 		if !strings.Contains(srvRows, w) {
 			t.Errorf("falta %q en:\n%s", w, srvRows)
 		}
@@ -10847,6 +10876,9 @@ func TestClaudeTopicsFold(t *testing.T) {
 	if !strings.Contains(open, `<details class="plegable" open><summary id="plegar-tema1"`) || !strings.Contains(open, `name="abrir" value="tema1"`) {
 		t.Fatalf("abierto: no sigue abierto tras el refresco")
 	}
+	// Solo en la tarjeta de Claude: Categorías también muestra sus últimos mensajes.
+	open = open[strings.Index(open, `id="claude-card"`):]
+	open = open[:strings.Index(open, "</section>")]
 	if n := strings.Count(open, "tema msg "); n != maxFoldMsgs || !strings.Contains(open, "y 5 más") {
 		t.Errorf("abierto: %d mensajes, quiero %d y «y 5 más»", n, maxFoldMsgs)
 	}
@@ -10854,6 +10886,8 @@ func TestClaudeTopicsFold(t *testing.T) {
 		t.Errorf("los más nuevos primero")
 	}
 	old := getBody(h, base+"&abrir=tema2")
+	old = old[strings.Index(old, `id="claude-card"`):]
+	old = old[:strings.Index(old, "</section>")]
 	if n := strings.Count(old, "tema msg "); n != 3 || !strings.Contains(old, "tema msg 1.") || !strings.Contains(old, "y 6 más") {
 		t.Errorf("tema viejo: %d mensajes, quiero sus 3 ejemplos y «y 6 más»", n)
 	}
@@ -10881,8 +10915,10 @@ func TestCategoriesCard(t *testing.T) {
 	}
 }
 
-// TestCategoriesFold (CA4): cada categoría con mensajes es plegable (menos el
-// spam), con los más nuevos primero, tope y "y N más"; también por reglas.
+// TestCategoriesFold (CA4, y CA16 de diseno-ejecutivo): la categoría elegida
+// en el semicírculo muestra sus últimos mensajes y, con «Ver los N
+// mensajes», la lista con los más nuevos primero, tope y "y N más"; el spam
+// no muestra los suyos; también por reglas.
 func TestCategoriesFold(t *testing.T) {
 	now := noonLocal(t)
 	st := liveStore(t, now)
@@ -10897,35 +10933,41 @@ func TestCategoriesFold(t *testing.T) {
 	st.AddBatch(ClaudeBatch{At: now, ChannelID: "UCB", From: cur[0].At, To: now, Labels: labels})
 	base := "/parcial/vivo/analisis?canal=UCB&video=b2&ver=programa"
 	h := (&Server{st: st, budget: 9000, now: func() time.Time { return now }, analyst: NewAnalyst()}).Routes()
-	closed := getBody(h, base)
-	if !strings.Contains(closed, `<details class="plegable cat"><summary id="plegar-cat-elogio"`) || !strings.Contains(closed, "abrir=cat-elogio") {
-		t.Errorf("cerrada: falta la flecha de Elogios")
+	card := func(body string) string {
+		i := strings.Index(body, `<section id="categorias"`)
+		if i < 0 {
+			t.Fatalf("falta la tarjeta")
+		}
+		c := body[i:]
+		return c[:strings.Index(c, `<p class="muted">Por `)] // hasta la nota de abajo de la tarjeta
 	}
-	if strings.Contains(closed, "plegar-cat-spam") || strings.Contains(closed, "plegar-cat-queja") {
-		t.Errorf("spam o una categoría vacía no se despliegan")
+	// Sin elegir: la más grande sin contar Otros, con sus 4 últimos mensajes.
+	closed := card(getBody(h, base))
+	if !strings.Contains(closed, `<a class="grow on" href="#cat-detalle"`) || !strings.Contains(closed, "Elogios") ||
+		strings.Count(closed, "<li><div class=\"meta\">") != catLastShown || !strings.Contains(closed, "abrir=cat-elogio%2Ccatall") {
+		t.Errorf("sin elegir:\n%s", closed)
 	}
-	open := getBody(h, base+"&abrir=cat-elogio")
-	i := strings.Index(open, `<section id="categorias"`)
-	if i < 0 {
-		t.Fatalf("falta la tarjeta")
+	open := getBody(h, base+"&abrir=cat-elogio,catall")
+	c := card(open)
+	if !strings.Contains(open, `name="abrir" value="cat-elogio,catall"`) || !strings.Contains(c, "Ver menos") {
+		t.Fatalf("lista entera: no sigue abierta:\n%s", c)
 	}
-	card := open[i:]
-	card = card[:strings.Index(card, "</section>")]
-	if !strings.Contains(card, `<details class="plegable cat" open><summary id="plegar-cat-elogio"`) || !strings.Contains(open, `name="abrir" value="cat-elogio"`) {
-		t.Fatalf("abierta: no sigue abierta:\n%s", card)
+	if n := strings.Count(c, `<ul class="qlist fmsgs">`); n != 1 || !strings.Contains(c, "y 5 más") || !strings.Contains(c, "autor-s-") {
+		t.Errorf("lista entera: falta la lista con tope, «y 5 más» y el autor")
 	}
-	if n := strings.Count(card, "<li"); n != maxFoldMsgs || !strings.Contains(card, "y 5 más") || !strings.Contains(card, "autor-s-") {
-		t.Errorf("abierta: %d mensajes, quiero %d, «y 5 más» y el autor", n, maxFoldMsgs)
-	}
-	if a, b := strings.Index(card, "mensaje s 24<"), strings.Index(card, "mensaje s 5<"); a < 0 || b < 0 || a > b {
+	if a, b := strings.Index(c, "mensaje s 24<"), strings.Index(c, "mensaje s 5<"); a < 0 || b < 0 || a > b {
 		t.Errorf("los más nuevos primero")
 	}
-	// Por reglas (Claude apagado), igual: "hola" de liveStore es Otros.
-	rules := getBody((&Server{st: st, budget: 9000, now: func() time.Time { return now }}).Routes(), base+"&abrir=cat-otro")
-	if !strings.Contains(rules, `<details class="plegable cat" open><summary id="plegar-cat-otro"`) {
-		t.Errorf("por reglas: falta Otros plegable")
+	spam := card(getBody(h, base+"&abrir=cat-spam"))
+	if !strings.Contains(spam, "Los mensajes de spam no se muestran") || strings.Contains(spam, "promo.com") {
+		t.Errorf("spam: muestra sus mensajes")
 	}
-	if got := foldParam(url.Values{"abrir": {"cat-elogio,cat-spam,cat-x"}}); !got["cat-elogio"] || got["cat-spam"] || got["cat-x"] {
+	// Por reglas (Claude apagado), igual: "hola" de liveStore es Otros.
+	rules := card(getBody((&Server{st: st, budget: 9000, now: func() time.Time { return now }}).Routes(), base+"&abrir=cat-otro"))
+	if !strings.Contains(rules, `<h3 id="cat-detalle-h"><span class="sw otro" aria-hidden="true"></span> Otros</h3>`) {
+		t.Errorf("por reglas: falta Otros elegida")
+	}
+	if got := foldParam(url.Values{"abrir": {"cat-elogio,cat-spam,cat-x,sinotros"}}); !got["cat-elogio"] || !got["cat-spam"] || got["cat-x"] || !got["sinotros"] {
 		t.Errorf("foldParam con categorías: %v", got)
 	}
 }
@@ -11213,10 +11255,10 @@ func TestCompareChart(t *testing.T) {
 		t.Errorf("la escala no cubre la banda: %v", c["Max"])
 	}
 	bands, _ := c["Bands"].([]Bar)
-	if len(bands) != 2 || bands[0].X != 0 || math.Abs(bands[0].Y-0) > 0.01 || math.Abs(bands[0].H-20) > 0.01 {
+	if len(bands) != 2 || bands[0].X != 2 || bands[1].X != 3 || math.Abs(bands[1].Y-0) > 0.01 || math.Abs(bands[1].H-20) > 0.01 {
 		t.Errorf("banda = %+v", bands)
 	}
-	if c["Median"] != "M0 10.00H1V60.00H2" {
+	if c["Median"] != "M2 60.00H3V10.00H4" {
 		t.Errorf("mediana = %v", c["Median"])
 	}
 	bars := c["Bars"].([]Bar)
@@ -11227,7 +11269,7 @@ func TestCompareChart(t *testing.T) {
 		t.Errorf("aria = %v", c["Aria"])
 	}
 	l := participationChartCmp(slots, nil, 2.5, true, nil, &ChartCompare{Label: "martes 03/11", Line: map[string]float64{"10:00": 6, "10:05": 1}})
-	if l["CmpLine"] != "M2 83.33H3V0.00H4" || l["Max"] != "máx. 6,0 %" || l["Bands"] != nil {
+	if l["CmpLine"] != "M0 0.00H1V83.33H2" || l["Max"] != "máx. 6,0 %" || l["Bands"] != nil {
 		t.Errorf("línea = %v, máx %v", l["CmpLine"], l["Max"])
 	}
 	if !strings.Contains(l["Aria"].(string), "comparado con martes 03/11") {
@@ -11608,15 +11650,15 @@ func TestProgramParticipationAxis(t *testing.T) {
 		days       int // días anteriores con history (0: 3)
 	}{
 		// LA TARDE lleva 2 h (10:00 a 12:00: 25 franjas); con emisiones de 3 h, el eje es de 3 h:
-		// 11 franjas vacías a la izquierda, con el fin esperado en el borde.
-		{"al aire con historia", "LA TARDE", day.Add(10 * time.Hour), []run{{0, 3 * time.Hour}}, `<svg viewBox="-11 0 36 100"`, "13:00", 25, 1008, 0},
+		// 11 franjas vacías a la derecha, con el fin esperado en el borde.
+		{"al aire con historia", "LA TARDE", day.Add(10 * time.Hour), []run{{0, 3 * time.Hour}}, `<svg viewBox="0 0 36 100"`, "13:00", 25, 1008, 0},
 		// Sin historia y más de 1 h al aire: lo transcurrido, como antes.
 		{"al aire sin historia", "LA TARDE", day.Add(10 * time.Hour), nil, `<svg viewBox="0 0 25 100"`, "", 25, 700, 0},
 		// Recién empezado y sin historia: 1 h como mínimo.
-		{"recién empezado", "NUEVO", now.Add(-10 * time.Minute), nil, `<svg viewBox="-9 0 12 100"`, now.Add(50 * time.Minute).Local().Format("15:04"), 3, 336, 0},
+		{"recién empezado", "NUEVO", now.Add(-10 * time.Minute), nil, `<svg viewBox="0 0 12 100"`, now.Add(50 * time.Minute).Local().Format("15:04"), 3, 336, 0},
 		// Sale dos veces por día: cuenta la salida que empieza a la misma hora (1 h 30), no el día entero.
 		{"dos salidas por día", "NUEVO", now.Add(-10 * time.Minute), []run{{-10 * time.Hour, time.Hour}, {0, 90 * time.Minute}},
-			`<svg viewBox="-15 0 18 100"`, now.Add(80 * time.Minute).Local().Format("15:04"), 3, 504, 0},
+			`<svg viewBox="0 0 18 100"`, now.Add(80 * time.Minute).Local().Format("15:04"), 3, 504, 0},
 		// Cerrado: su largo real aunque las anteriores duren más.
 		{"cerrado", "LA MAÑANA", day.Add(8 * time.Hour), []run{{0, 3 * time.Hour}}, `<svg viewBox="0 0 24 100"`, "", 24, 672, 0},
 		// CA2 (programas-largo-esperado): una sola emisión anterior de 9 h no
@@ -11660,7 +11702,7 @@ func TestProgramParticipationAxis(t *testing.T) {
 		if px := fmt.Sprintf(`<div class="pfijo" style="width: %dpx">`, c.px); !strings.Contains(body, px) {
 			t.Errorf("%s: falta el ancho fijo %s", c.name, px)
 		}
-		if c.end != "" && !strings.Contains(body, `<span class="end" style="left: 0.00%">`+c.end+`</span>`) {
+		if c.end != "" && !strings.Contains(body, `<span class="end" style="left: 100.00%">`+c.end+`</span>`) {
 			t.Errorf("%s: falta el rótulo del fin esperado %s", c.name, c.end)
 		}
 		// Sin fin esperado, padChart no corre: no suma su texto al aria (CA2 de
@@ -11731,7 +11773,7 @@ func TestProgramDetailClaudeCats(t *testing.T) {
 	now := noonToday()
 	_, srv, key := claudeProgramServer(t, now)
 	body := getBody(srv.Routes(), "/parcial/programas/detalle?tramo="+url.QueryEscape(key))
-	for _, w := range []string{`<h3>Categorías <span class="ia">Claude</span></h3>`, "Preguntas</strong>", "Elogios</strong>"} {
+	for _, w := range []string{`<h3>Categorías <span class="ia">Claude</span></h3>`, `<span class="gl">Preguntas</span>`, `<span class="gl">Elogios</span>`, `class="cgauge`} {
 		if !strings.Contains(body, w) {
 			t.Errorf("falta %q", w)
 		}
@@ -12465,5 +12507,500 @@ func TestProgramQuestionsMore(t *testing.T) {
 	}
 	if strings.Contains(body, "pf-maspreguntas") || strings.Contains(body, "más</summary>") {
 		t.Error("con 2 grupos no va el plegado")
+	}
+}
+
+// TestLiveSummary (CA3 de diseno-ejecutivo): la frase de arriba de En vivo,
+// armada con reglas; cada parte solo si hay dato.
+func TestLiveSummary(t *testing.T) {
+	now := noonToday()
+	best := &Moment{Slot: Slot{Start: now.Add(-25 * time.Minute), Pct: 7.8}, Rank: 1}
+	hm := now.Add(-25 * time.Minute).Local().Format("15:04")
+	words := []Count{{"dolar", 9}, {"congreso", 7}, {"lluvia", 2}}
+	cases := []struct {
+		name   string
+		diff   float64
+		paceOK bool
+		of     string
+		words  []Count
+		best   *Moment
+		want   string
+	}{
+		{"sin nada", 0, false, "de este programa", nil, nil, ""},
+		{"más activo", 18, true, "de este programa", nil, nil, "El chat está 18 % más activo que lo típico de este programa."},
+		{"menos activo", -30.4, true, "del día", nil, nil, "El chat está 30 % menos activo que lo típico del día."},
+		{"ritmo típico", 3, true, "del día", nil, nil, "El chat va a su ritmo típico."},
+		{"una palabra", 0, false, "", words[:1], nil, "Lo que más se repite: «dolar»."},
+		{"todo", 18, true, "de este programa", words, best,
+			"El chat está 18 % más activo que lo típico de este programa. Lo que más se repite: «dolar» y «congreso». El mejor momento fue a las " + hm + " (7,8 % de participación)."},
+	}
+	for _, c := range cases {
+		if got := liveSummary(c.diff, c.paceOK, c.of, c.words, c.best); got != c.want {
+			t.Errorf("%s:\n got %q\nwant %q", c.name, got, c.want)
+		}
+	}
+}
+
+// TestLiveLikes (CA5 y CA10 de diseno-ejecutivo): el número de likes del
+// vivo o del día y las barras cada 30 min de hoy.
+func TestLiveLikes(t *testing.T) {
+	now := noonToday()
+	day := dayStart(now)
+	at := func(id string, ago time.Duration, n int64) LikeSample {
+		return LikeSample{VideoID: id, At: now.Add(-ago), Likes: n}
+	}
+	samples := map[string][]LikeSample{
+		"b2": {at("b2", 2*time.Hour, 100), at("b2", 40*time.Minute, 150), at("b2", 10*time.Minute, 190)},
+		"b1": {at("b1", 3*time.Hour, 10), at("b1", 150*time.Minute, 30)},
+		"b3": {at("b3", 2*time.Hour, 100)},
+	}
+	tile := func(label, value, note, trend string) Tile {
+		return Tile{Label: label, Value: value, Note: note, Trend: trend}
+	}
+	cases := []struct {
+		name    string
+		samples map[string][]LikeSample
+		cur     *Video
+		ids     []string
+		want    Tile
+	}{
+		{"vivo que sube", samples, &Video{ID: "b2", Likes: 190}, nil, tile("Likes del vivo", "190", "+40 en la última media hora", "up")},
+		{"vivo quieto", samples, &Video{ID: "b3", Likes: 100}, nil, tile("Likes del vivo", "100", "sin likes nuevos en la última media hora", "")},
+		{"vivo sin dato", nil, &Video{ID: "b9"}, nil, tile("Likes del vivo", "—", "sin dato todavía", "")},
+		{"día del canal", samples, nil, []string{"b1", "b2"}, tile("Likes de hoy", "110", "ganados hoy por los vivos del canal", "up")},
+		{"día sin dato", nil, nil, []string{"b1"}, tile("Likes de hoy", "—", "sin dato todavía", "")},
+	}
+	for _, c := range cases {
+		if got := liveLikes(c.samples, c.cur, c.ids, day, now); got != c.want {
+			t.Errorf("%s:\n got %+v\nwant %+v", c.name, got, c.want)
+		}
+	}
+	ch := likesTodayChart(map[string][]LikeSample{"b2": samples["b2"]}, day, now)
+	if len(ch.Bars) != 25 {
+		t.Fatalf("barras: %d, quería 25 (de las 00:00 a ahora)", len(ch.Bars))
+	}
+	if ch.Bars[22].N != 50 || ch.Bars[23].N != 40 || ch.Bars[24].N != 0 {
+		t.Errorf("barras: 22=%d 23=%d 24=%d", ch.Bars[22].N, ch.Bars[23].N, ch.Bars[24].N)
+	}
+	if last := ch.Ticks[len(ch.Ticks)-1]; last.Label != "Ahora" || !last.End || last.Left != 100 || ch.Ticks[0].Left != 0 {
+		t.Errorf("ticks: %+v", ch.Ticks)
+	}
+	if !strings.Contains(ch.Aria, "90 en total") || ch.Bars[24].Class != "now" {
+		t.Errorf("aria %q, clase de la última %q", ch.Aria, ch.Bars[24].Class)
+	}
+}
+
+// TestRisingWords (CA8 de diseno-ejecutivo): ▲ en las palabras que en los
+// últimos 30 min pesan el doble que antes, con al menos 3 menciones.
+func TestRisingWords(t *testing.T) {
+	now := noonToday()
+	var msgs []Message
+	add := func(ago time.Duration, texts ...string) {
+		for i, tx := range texts {
+			msgs = append(msgs, Message{ID: fmt.Sprint(ago, i), Source: "chat", Author: "a", Text: tx, At: now.Add(-ago - time.Duration(i)*time.Second)})
+		}
+	}
+	add(time.Minute, "dolar congreso", "dolar congreso", "dolar congreso", "dolar congreso", "congreso", "river", "river", "river", "lluvia", "lluvia")
+	add(2*time.Hour, "dolar congreso", "dolar congreso", "congreso", "congreso", "congreso", "congreso", "congreso", "congreso", "congreso", "congreso",
+		"nada", "nada", "nada", "nada", "nada", "nada", "nada", "nada", "nada", "nada")
+	got := risingWords(msgs, TopWords(msgs, 8), now)
+	if !got["dolar"] || !got["river"] || got["congreso"] || got["lluvia"] || len(got) != 2 {
+		t.Errorf("en alza: %v, quería dolar y river", got)
+	}
+	// Todo es de la última media hora: no hay con qué comparar.
+	if got := risingWords(msgs[:10], TopWords(msgs[:10], 8), now); len(got) != 0 {
+		t.Errorf("sin historia: %v", got)
+	}
+}
+
+// TestTopShare (CA9 de diseno-ejecutivo): cuánto escriben los más activos.
+func TestTopShare(t *testing.T) {
+	var msgs []Message
+	for i, a := range []string{"A", "A", "A", "A", "A", "A", "B", "B", "B", "C"} {
+		msgs = append(msgs, Message{ID: fmt.Sprint(i), Source: "chat", Author: a, Text: "hola"})
+	}
+	if got := topShare(msgs, 2); got != 90 {
+		t.Errorf("topShare = %v, quería 90", got)
+	}
+	if got := topShare(nil, 10); got != 0 {
+		t.Errorf("sin mensajes: %v", got)
+	}
+}
+
+// TestRegulars (CA9 de diseno-ejecutivo): habituales son los que escribieron
+// en el chat del canal otro día de los 7 anteriores; el conjunto se arma una
+// vez por día y por canal.
+func TestRegulars(t *testing.T) {
+	now := noonLocal(t)
+	msgs := []Message{
+		{ID: "1", Source: "chat", Author: "Ana", Text: "hola"}, {ID: "2", Source: "chat", Author: "Ana", Text: "otra"},
+		{ID: "3", Source: "chat", Author: "Beto", Text: "buenas"},
+		{ID: "4", Source: "chat", Author: "Mod", Role: "moderador", Text: "bienvenidos"},
+		{ID: "5", Source: "chat", Author: "Spam", Text: "entrá a http://x.com"},
+	}
+	if reg, nue := regularSplit(msgs, map[string]bool{"Ana": true, "Mod": true}); reg != 1 || nue != 1 {
+		t.Errorf("habituales %d, nuevos %d; quería 1 y 1", reg, nue)
+	}
+	st := liveStore(t, now)
+	ayer := now.AddDate(0, 0, -1)
+	for _, s := range livesEvery("b0", "UCB", "Radio B", "🔴 [EN VIVO] LA TARDE | RADIO B", ayer.Add(-time.Hour), ayer) {
+		st.AddLives(s.At, []Video{{ID: s.VideoID, ChannelID: s.ChannelID, Channel: s.Channel, Title: s.Title, LiveStatus: "live"}})
+	}
+	st.Add([]Message{
+		{ID: "y1", Source: "chat", VideoID: "b0", Author: "Ana", Text: "ayer", At: ayer.Add(-30 * time.Minute)},
+		{ID: "y2", Source: "chat", VideoID: "b0", Author: "Mod", Role: "moderador", Text: "ayer", At: ayer.Add(-30 * time.Minute)},
+		{ID: "y3", Source: "chat", VideoID: "zz", Author: "Otro", Text: "de otro canal", At: ayer.Add(-30 * time.Minute)},
+	})
+	srv := &Server{st: st, budget: 9000, now: func() time.Time { return now }}
+	got := srv.regulars("UCB", now)
+	// m1 de Ana es de hoy: no cuenta; sí su mensaje de ayer.
+	if !got["Ana"] || got["Mod"] || got["Otro"] || len(got) != 1 {
+		t.Errorf("habituales: %v, quería solo Ana", got)
+	}
+	// El mismo día no se vuelve a leer: Caro no aparece hasta mañana.
+	st.Add([]Message{{ID: "y4", Source: "chat", VideoID: "b0", Author: "Caro", Text: "ayer", At: ayer.Add(-20 * time.Minute)}})
+	if srv.regulars("UCB", now.Add(time.Hour))["Caro"] {
+		t.Errorf("se volvió a leer en el mismo día")
+	}
+	if !srv.regulars("UCB", now.Add(24*time.Hour))["Caro"] {
+		t.Errorf("al día siguiente se tiene que volver a armar")
+	}
+}
+
+// TestTopLiked (CA10 de diseno-ejecutivo): lo que más gustó del canal en 7
+// días, vivos, videos y shorts juntos.
+func TestTopLiked(t *testing.T) {
+	now := noonToday()
+	since := now.AddDate(0, 0, -7)
+	recs := []VideoRecord{
+		{ID: "v1", ChannelID: "UCB", Title: "Video uno", PublishedAt: now.AddDate(0, 0, -2), Likes: 300},
+		{ID: "s1", ChannelID: "UCB", Title: "Short", PublishedAt: now.AddDate(0, 0, -1), Short: true, Likes: 500},
+		{ID: "b2", ChannelID: "UCB", Title: "Vivo", PublishedAt: now.AddDate(0, 0, -20), Live: true, Likes: 900},
+		{ID: "old", ChannelID: "UCB", Title: "Viejo", PublishedAt: now.AddDate(0, 0, -10), Likes: 9999},
+		{ID: "x", ChannelID: "UCX", Title: "Ajeno", PublishedAt: now.AddDate(0, 0, -1), Likes: 5000},
+		{ID: "z", ChannelID: "UCB", Title: "Sin likes", PublishedAt: now.AddDate(0, 0, -1)},
+	}
+	got := topLiked(recs, "UCB", map[string]bool{"b2": true}, since, 5)
+	want := []LikedRow{
+		{Kind: "Vivo", Class: "vivo", Title: "Vivo", Likes: "900", Href: "https://www.youtube.com/watch?v=b2"},
+		{Kind: "Short", Class: "short", Title: "Short", Likes: "500", Href: "https://www.youtube.com/watch?v=s1"},
+		{Kind: "Video", Class: "video", Title: "Video uno", Likes: "300", Href: "https://www.youtube.com/watch?v=v1"},
+	}
+	if !slices.Equal(got, want) {
+		t.Errorf("got %+v\nwant %+v", got, want)
+	}
+	if got := topLiked(recs, "UCB", nil, since, 1); len(got) != 1 || got[0].Title != "Short" {
+		t.Errorf("con n=1 y sin el vivo en curso: %+v", got)
+	}
+}
+
+// TestExecutiveLive (CA2, CA3, CA4, CA7, CA9, CA10, CA11 de diseno-ejecutivo):
+// la pantalla En vivo con el diseño nuevo.
+func TestExecutiveLive(t *testing.T) {
+	now := noonLocal(t)
+	st := liveStore(t, now)
+	ayer := now.AddDate(0, 0, -1)
+	for _, s := range livesEvery("b0", "UCB", "Radio B", "🔴 [EN VIVO] LA TARDE | RADIO B", ayer.Add(-time.Hour), ayer) {
+		st.AddLives(s.At, []Video{{ID: s.VideoID, ChannelID: s.ChannelID, Channel: s.Channel, Title: s.Title, LiveStatus: "live"}})
+	}
+	st.Add([]Message{
+		{ID: "y1", Source: "chat", VideoID: "b0", Author: "Ana", Text: "ayer", At: ayer.Add(-30 * time.Minute)},
+		{ID: "d1", Source: "chat", VideoID: "b2", Program: "LA TARDE", Author: "Ana", Text: "sube el dolar", At: now.Add(-3 * time.Minute)},
+		{ID: "d2", Source: "chat", VideoID: "b2", Program: "LA TARDE", Author: "Beto", Text: "el dolar otra vez", At: now.Add(-2 * time.Minute)},
+		{ID: "sc", Source: "chat", VideoID: "b2", Program: "LA TARDE", Author: "Caro", Text: "gracias", At: now.Add(-2 * time.Minute),
+			Super: SuperChat, Currency: "ARS", AmountMicros: 5_000_000_000, AmountText: "ARS 5.000"},
+	})
+	st.AddLikes(now.Add(-time.Hour), []Video{{ID: "b2", LiveStatus: "live", Likes: 100}})
+	st.AddLikes(now.Add(-5*time.Minute), []Video{{ID: "b2", LiveStatus: "live", Likes: 140}})
+	st.AddVideos(now.Add(-time.Minute), []Video{{ID: "s1", ChannelID: "UCB", Channel: "Radio B", Title: "El short del día", PublishedAt: now.Add(-time.Hour), LiveStatus: "none", Short: true, Likes: 77}})
+	vids := st.Status().Videos
+	vids[0].Likes = 140
+	st.SetVideos("Radio B", vids)
+	h := (&Server{st: st, budget: 9000, now: func() time.Time { return now }}).Routes()
+
+	card := getBody(h, "/parcial/vivo/canal?canal=UCB&video=b2")
+	for _, w := range []string{`class="card hero"`, `<span class="live">EN VIVO</span>`, `<strong class="prog">LA TARDE</strong>`} {
+		if !strings.Contains(card, w) {
+			t.Errorf("tarjeta Canal: falta %q", w)
+		}
+	}
+	body := getBody(h, "/parcial/vivo/analisis?canal=UCB&video=b2&ver=programa")
+	inOrder := func(what string, parts []string) {
+		last := -1
+		for _, p := range parts {
+			i := strings.Index(body, p)
+			if i < 0 {
+				t.Errorf("%s: falta %q", what, p)
+				continue
+			}
+			if i < last {
+				t.Errorf("%s: %q fuera de orden", what, p)
+			}
+			last = i
+		}
+	}
+	inOrder("frase y números", []string{`<p class="frase">`, "Lo que más se repite: «dolar».", `class="tiles"`,
+		">Mirando ahora<", ">Participación<", ">Likes del vivo<", ">Mensajes por minuto<", ">Personas que escribieron<", ">Preguntas<", ">Super Chats<"})
+	inOrder("tarjetas", []string{`id="monitor"`, `id="palabras"`, "De qué se habla", `class="wbar"`, `id="participan"`, "Quiénes participan",
+		"habituales", "Quiénes más escriben", `id="likes"`, "Lo que más gustó · 7 días", "El short del día", `id="supers"`, `tile sbig"`, "Por programa"})
+	for _, w := range []string{`<div class="v">140</div>`, "&#43;40 en la última media hora", `tile up"`, `<span class="ktag">habitual</span>`, `<span class="kind short">Short</span>`} {
+		if !strings.Contains(body, w) {
+			t.Errorf("falta %q", w)
+		}
+	}
+	page := getBody(h, "/?canal=UCB")
+	for _, w := range []string{"<h1>Monitor de audiencia</h1>", "Alphamedia · YouTube"} {
+		if !strings.Contains(page, w) {
+			t.Errorf("encabezado: falta %q", w)
+		}
+	}
+}
+
+// TestViewersAgo (hallazgo 1 de la revisión de diseno-ejecutivo): "hace 1 h"
+// suma todos los vivos que suma "Mirando ahora"; si a uno le falta la
+// muestra, no se compara.
+func TestViewersAgo(t *testing.T) {
+	now := noonToday()
+	at := func(ago time.Duration, n int64) ViewerSample { return ViewerSample{At: now.Add(-ago), Viewers: n} }
+	a := []ViewerSample{at(2*time.Hour, 50), at(65*time.Minute, 100), at(58*time.Minute, 120), at(time.Minute, 300)}
+	b := []ViewerSample{at(62*time.Minute, 30)}
+	if got := viewersAgo(a, now); got != 120 {
+		t.Errorf("viewersAgo = %d, quería 120 (la más cercana a hace 1 h)", got)
+	}
+	if got := viewersAgo([]ViewerSample{at(80*time.Minute, 9)}, now); got != 0 {
+		t.Errorf("fuera de los 10 min: %d", got)
+	}
+	if got := hourAgoSum([][]ViewerSample{a, b}, now); got != 150 {
+		t.Errorf("dos vivos: %d, quería 150", got)
+	}
+	if got := hourAgoSum([][]ViewerSample{a, nil}, now); got != 0 {
+		t.Errorf("a un vivo le falta la muestra: %d, quería 0", got)
+	}
+}
+
+// TestMonitorTags (hallazgo 2 de la revisión de diseno-ejecutivo): en
+// "Quiénes más escriben" el moderador y el dueño dicen "del canal" y el que
+// solo mandó spam no lleva marca, como en la barra habituales / nuevos.
+func TestMonitorTags(t *testing.T) {
+	now := noonToday()
+	var msgs []Message
+	add := func(author, role, text string, n int) {
+		for i := range n {
+			msgs = append(msgs, Message{ID: fmt.Sprint(author, i), Source: "chat", Author: author, Role: role, Text: text, At: now.Add(-time.Duration(i) * time.Second)})
+		}
+	}
+	add("Mod", "moderador", "bienvenidos", 5)
+	add("Ana", "", "hola radio", 4)
+	add("Beto", "", "buenas tardes", 3)
+	add("Spam", "", "entrá a http://x.com", 2)
+	v := monitorView(msgs, TopWords(msgs, 8), scopeProgram, now, map[string]bool{"Ana": true, "Mod": true})
+	got := map[string]string{}
+	for _, a := range v["Authors"].([]TalkerRow) {
+		got[a.Key] = a.Tag
+	}
+	want := map[string]string{"Mod": "del canal", "Ana": "habitual", "Beto": "nuevo", "Spam": ""}
+	if !maps.Equal(got, want) {
+		t.Errorf("marcas = %v, quería %v", got, want)
+	}
+}
+
+// TestSentimentChartWide (CA14 de diseno-ejecutivo): con todo el día, el
+// gráfico arranca en la primera franja con datos, cada franja mide slotPx y
+// hay un rótulo por hora; con el programa en curso ocupa el ancho de la tarjeta.
+func TestSentimentChartWide(t *testing.T) {
+	now := noonLocal(t)
+	day := dayStart(now)
+	slots := []SentSlot{
+		sentSlot(day.Add(6*time.Hour), "LA MAÑANA", 10, 2),
+		sentSlot(day.Add(9*time.Hour), "LA MAÑANA", 10, 2),
+		sentSlot(now.Add(-5*time.Minute), "LA TARDE", 10, 2),
+	}
+	c := sentimentChart(slots, nil, day, now)
+	// noonLocal da un poco antes de las 12: las franjas se cuentan con now.
+	n := int(now.Sub(day.Add(6*time.Hour))/slotStep) + 1
+	if c.W != float64(n) || c.Px != n*slotPx || len(c.Bars) != 3 || c.Bars[0].X != 0.1 {
+		t.Fatalf("W %v, Px %d, barras %d, X0 %v; quería %d franjas desde las 06:00 de %d px", c.W, c.Px, len(c.Bars), c.Bars[0].X, n, slotPx)
+	}
+	hm := func(t time.Time) string { return t.Local().Format("15:04") }
+	first, last := c.Ticks[0], c.Ticks[len(c.Ticks)-1]
+	if first.Label != "06:00" || first.Left != 0 || !last.End || last.Left != 100 || last.Label != hm(now)+" en curso" || len(c.Ticks) != 7 {
+		t.Errorf("ticks: %+v, quería 06:00, uno por hora y el de ahora", c.Ticks)
+	}
+	if p := sentimentChart(slots, nil, now.Add(-sentChartSpan), now); p.Px != 0 {
+		t.Errorf("programa en curso: Px %d, quería el ancho de la tarjeta (0)", p.Px)
+	}
+	tpl, _ := templatesFS.ReadFile("templates/partials.html")
+	if !strings.Contains(string(tpl), `<div class="sscroll"><div class="sfijo" style="width: {{.}}px">`) {
+		t.Errorf("falta el contenedor que se desplaza (sscroll) con el ancho fijo")
+	}
+	css, _ := templatesFS.ReadFile("templates/layout.html")
+	if !regexp.MustCompile(`\.sscroll \{[^}]*direction: rtl`).Match(css) {
+		t.Errorf("el desplazamiento tiene que arrancar a la derecha (direction: rtl)")
+	}
+}
+
+// TestBarStyle (CA15 de diseno-ejecutivo): las barras de participación van
+// redondeadas, con el acento suave y las del top en el acento fuerte.
+func TestBarStyle(t *testing.T) {
+	slots := make([]Slot, 12)
+	t0 := noonToday().Add(-time.Hour)
+	for i := range slots {
+		slots[i] = Slot{Start: t0.Add(time.Duration(i) * slotStep), N: 3 + i, Authors: 3 + i, Viewers: 100, Pct: float64(3+i) * 100 / 100}
+	}
+	var buf bytes.Buffer
+	if err := tmpl.ExecuteTemplate(&buf, "part-chart", participationChart(slots, TopMoments(slots, nil), 4, true, nil)); err != nil {
+		t.Fatal(err)
+	}
+	body := buf.String()
+	if !strings.Contains(body, `class="bar top"`) || !regexp.MustCompile(`<rect class="bar[^"]*" rx="0\.2" ry="1\.5"`).MatchString(body) {
+		t.Errorf("las barras tienen que ir redondeadas (rx, ry):\n%s", body[:min(len(body), 600)])
+	}
+	css, _ := templatesFS.ReadFile("templates/layout.html")
+	for _, w := range []string{".bar { fill: var(--bar-soft); }", ".bar.top { fill: var(--series-1); }", ".pmarks span { color: var(--series-1);"} {
+		if !strings.Contains(string(css), w) {
+			t.Errorf("CSS: falta %q", w)
+		}
+	}
+}
+
+// TestCatGauge (CA16 de diseno-ejecutivo): el semicírculo de Categorías, la
+// categoría elegida y su detalle, con y sin «Otros».
+func TestCatGauge(t *testing.T) {
+	now := noonToday()
+	var msgs []Message
+	labels := map[string]MessageLabel{}
+	add := func(cat string, n int, ago time.Duration) {
+		for i := range n {
+			id := fmt.Sprintf("%s%d-%d", cat, i, ago)
+			text := "hola"
+			if cat == CatSpam {
+				text = "entrá a http://x.com"
+			}
+			msgs = append(msgs, Message{ID: id, Source: "chat", Author: fmt.Sprint("a", i%3), Text: text, At: now.Add(-ago - time.Duration(i)*time.Minute)})
+			if cat != CatSpam {
+				labels[id] = MessageLabel{ID: id, Cat: cat}
+			}
+		}
+	}
+	add(CatInsulto, 6, time.Minute)
+	add(CatQueja, 4, time.Minute)
+	add(CatElogio, 2, time.Minute)
+	add(CatOtro, 8, time.Minute)
+	add(CatSpam, 1, time.Minute)
+	link := func(sel string, noOther, all bool) string {
+		return fmt.Sprintf("sel=%s&no=%v&all=%v", sel, noOther, all)
+	}
+	in := func(sel string, noOther, all bool) catGaugeIn {
+		rows, _ := catRowsWith(msgs, labels)
+		return catGaugeIn{rows: rows, msgs: msgs, labels: labels, sel: sel, noOther: noOther, all: all, link: link,
+			now: now, end: now, step: 15 * time.Minute, n: 4, trend: true, stepLabel: "Cada 15 min"}
+	}
+
+	g := catGauge(in("", false, false))
+	var keys []string
+	for _, s := range g.Sectors {
+		keys = append(keys, s.Key)
+		if s.D == "" || !strings.HasPrefix(s.D, "M") {
+			t.Errorf("%s: sin sector %q", s.Key, s.D)
+		}
+		if s.On != (s.Key == CatInsulto) {
+			t.Errorf("%s: On %v (sin elegir va la más grande sin contar Otros)", s.Key, s.On)
+		}
+	}
+	if want := []string{CatInsulto, CatQueja, CatElogio, CatSpam, CatOtro}; !slices.Equal(keys, want) || g.Total != 21 {
+		t.Fatalf("sectores %v, total %d; quería %v y 21", keys, g.Total, want)
+	}
+	if g.Sectors[0].Share != "28,6 %" || g.Sectors[1].Href != "sel=queja&no=false&all=false" || g.OtherHref != "sel=insulto&no=true&all=false" {
+		t.Errorf("sector 0 %+v, href %q, otros %q", g.Sectors[0], g.Sectors[1].Href, g.OtherHref)
+	}
+	d := g.Sel
+	if d == nil || d.Key != CatInsulto || d.N != 6 || d.People != 3 || d.Share != "28,6 %" || len(d.Last) != 4 || len(d.Bars) != 4 ||
+		d.AllHref != "sel=insulto&no=false&all=true" || d.List != nil || d.Step != "Cada 15 min" {
+		t.Fatalf("detalle: %+v", d)
+	}
+	if !d.Bars[3].Now || d.Bars[3].H != 100 {
+		t.Errorf("la última franja (ahora) tiene todos los insultos: %+v", d.Bars)
+	}
+
+	// Sin «Otros»: el total y los % se cuentan sin ellos.
+	g = catGauge(in(CatQueja, true, false))
+	if g.Total != 13 || len(g.Sectors) != 4 || g.Sel.Key != CatQueja || g.Sel.Share != "30,8 %" || !g.NoOther || g.OtherHref != "sel=queja&no=false&all=false" {
+		t.Errorf("sin Otros: total %d, sectores %d, elegida %+v", g.Total, len(g.Sectors), g.Sel)
+	}
+	// Una categoría sin mensajes no se puede elegir; el spam no muestra los suyos.
+	if g = catGauge(in(CatPregunta, false, false)); g.Sel.Key != CatInsulto {
+		t.Errorf("pregunta sin mensajes: elegida %s", g.Sel.Key)
+	}
+	if g = catGauge(in(CatSpam, false, true)); g.Sel.Hidden == "" || g.Sel.Last != nil || g.Sel.List != nil {
+		t.Errorf("spam: %+v", g.Sel)
+	}
+	// "Ver los N mensajes": la lista entera de la categoría.
+	if g = catGauge(in(CatInsulto, false, true)); g.Sel.List == nil || len(g.Sel.List.Msgs) != 6 || !g.Sel.All {
+		t.Errorf("lista: %+v", g.Sel.List)
+	}
+
+	// En vivo: si la categoría sube en la última media hora.
+	msgs, labels = nil, map[string]MessageLabel{}
+	add(CatOtro, 10, time.Hour)
+	add(CatInsulto, 5, time.Minute)
+	add(CatOtro, 5, 10*time.Minute)
+	if g = catGauge(in(CatInsulto, false, false)); g.Sel.Trend != "▲ 50 pts en la última media hora" || g.Sel.TrendClass != "bad" {
+		t.Errorf("tendencia: %q %q", g.Sel.Trend, g.Sel.TrendClass)
+	}
+}
+
+// TestCatGaugeScreens (CA16 de diseno-ejecutivo): el semicírculo en En vivo,
+// Programas y Comentarios, con su estado en la URL.
+func TestCatGaugeScreens(t *testing.T) {
+	now := noonLocal(t)
+	st := liveStore(t, now)
+	st.Add([]Message{
+		{ID: "e1", Source: "chat", VideoID: "b2", Program: "LA TARDE", Author: "Beto", Text: "excelente programa", At: now.Add(-2 * time.Minute)},
+		{ID: "q1", Source: "chat", VideoID: "b2", Program: "LA TARDE", Author: "Caro", Text: "¿a qué hora vuelve?", At: now.Add(-3 * time.Minute)},
+	})
+	h := (&Server{st: st, budget: 9000, now: func() time.Time { return now }}).Routes()
+	base := "/parcial/vivo/analisis?canal=UCB&video=b2&ver=programa"
+	body := getBody(h, base)
+	for _, w := range []string{`class="cgauge`, `id="cat-detalle"`, "abrir=cat-", `hx-target="#vivo-analisis"`, "Sacar «Otros»"} {
+		if !strings.Contains(body, w) {
+			t.Errorf("En vivo: falta %q", w)
+		}
+	}
+	body = getBody(h, base+"&abrir=cat-otro,sinotros")
+	if !strings.Contains(body, "Sumar «Otros»") || !strings.Contains(body, `name="abrir" value="cat-otro,sinotros"`) {
+		t.Errorf("En vivo sin Otros: falta el botón para sumarlos o el estado")
+	}
+
+	_, srv, key := claudeProgramServer(t, noonToday())
+	body = getBody(srv.Routes(), "/parcial/programas/detalle?tramo="+url.QueryEscape(key))
+	for _, w := range []string{`class="cgauge`, `id="cat-detalle"`, "abrir=cat-", `hx-target="#programas"`} {
+		if !strings.Contains(body, w) {
+			t.Errorf("Programas: falta %q", w)
+		}
+	}
+
+	cst, err := OpenStore(t.TempDir() + "/datos.jsonl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmsgs, vids := commentsFixture(time.Now())
+	cst.Add(cmsgs)
+	for _, v := range vids {
+		cst.AddVideos(time.Now(), []Video{{ID: v.ID, Title: v.Title, ChannelID: v.ChannelID, Channel: v.Channel, PublishedAt: v.PublishedAt, Comments: v.Comments, LiveStatus: "none"}})
+	}
+	ch := (&Server{st: cst}).Routes()
+	for _, path := range []string{"/comentarios", "/comentarios?video=g1"} {
+		body := getBody(ch, path)
+		for _, w := range []string{`class="cgauge`, `id="cat-detalle"`, "sector=", `hx-target="#comentarios"`, "Por día"} {
+			if !strings.Contains(body, w) {
+				t.Errorf("%s: falta %q", path, w)
+			}
+		}
+	}
+	if got := commentsQuery(url.Values{"sector": {"queja"}, "otros": {"0"}, "catall": {"1"}}); got.Sector != CatQueja || !got.SinOtros || !got.CatAll {
+		t.Errorf("commentsQuery: %+v", got)
+	}
+	if got := commentsQuery(url.Values{"sector": {"<script>"}}); got.Sector != "" {
+		t.Errorf("sector fuera de la lista: %q", got.Sector)
 	}
 }

@@ -12,22 +12,28 @@
 {{end}}
 
 {{define "vivo-canal"}}
-<section class="card" aria-labelledby="canal-h">
-  <div class="chead">
-    <h2 id="canal-h">Canal</h2>
-    {{if .Buttons}}<div class="vbtns" role="group" aria-label="Elegí qué canal ver">
+<section class="card hero" aria-labelledby="canal-h">
+  {{/* Cabecera del vivo (diseño ejecutivo): estado y programa a la izquierda,
+       botones de canal a la derecha; en un celular se apilan. */}}
+  <div class="hrow">
+    <div class="htext">
+      <h2 id="canal-h" class="lbl">Canal</h2>
+      {{if and .Buttons .Live}}<div class="onair">
+        <span class="live">EN VIVO</span>
+        <span class="muted">{{if .Since}}{{.Since}} · {{end}}{{if .Nth}}{{.Nth}} · {{end}}{{if .Watching}}{{miles .Watching}} mirando{{else}}sin dato de espectadores{{end}}</span>
+      </div>
+      <strong class="prog">{{.Program}}</strong>{{end}}
+    </div>
+    {{if .Buttons}}<div class="hact">
+      <div class="vbtns" role="group" aria-label="Elegí qué canal ver">
       {{range .Buttons}}{{if .Canal}}<button type="button" class="vbtn" aria-pressed="{{.Active}}"
         hx-get="/parcial/vivo?canal={{.Canal}}" hx-target="#vivo" hx-swap="outerHTML" hx-push-url="/?canal={{.Canal}}">{{.Label}}</button>{{else}}<button type="button" class="vbtn" aria-pressed="{{.Active}}"
         hx-get="/parcial/vivo?video={{.Video}}" hx-target="#vivo" hx-swap="outerHTML" hx-push-url="/?vivo={{.Video}}">{{.Label}}</button>{{end}}{{end}}
+      </div>
+      {{if .Live}}<a href="{{.Href}}" target="_blank" rel="noopener">Abrir en YouTube</a>{{end}}
     </div>{{end}}
   </div>
   {{if .Buttons}}
-  {{if .Live}}<div class="onair">
-    <span class="live">EN VIVO</span>
-    <strong class="prog">{{.Program}}</strong>
-    <span class="muted">{{if .Since}}{{.Since}} · {{end}}{{if .Nth}}{{.Nth}} · {{end}}{{if .Watching}}{{miles .Watching}} mirando{{else}}sin dato de espectadores{{end}}</span>
-    <a href="{{.Href}}" target="_blank" rel="noopener">Abrir en YouTube</a>
-  </div>{{end}}
   {{if .Waiting}}<div class="cartel warn"><strong>{{.Waiting}}</strong></div>{{end}}
   {{if .Banner}}<div class="cartel ok"><strong>{{.Banner}}</strong></div>{{end}}
   {{if .Strip}}<div class="lbl">Hoy en el canal</div>
@@ -85,7 +91,8 @@
   <h2 class="atitle">Análisis de {{.Span}}</h2>
   <p class="muted">{{if .Canal}}{{.Label}} · {{end}}{{plural .A.Total "mensaje" "mensajes"}}</p>
 </div>
-<div class="tiles">{{range .Tiles}}<div class="card tile">
+{{with .Frase}}<p class="frase">{{.}}</p>{{end}}
+<div class="tiles">{{range .Tiles}}<div class="card tile{{with .Trend}} {{.}}{{end}}">
   <div class="l">{{.Label}}</div>
   <div class="v">{{.Value}}</div>
   {{if .Note}}<div class="muted">{{.Note}}</div>{{end}}
@@ -115,15 +122,19 @@
   {{else}}
   {{with .View}}
   {{if .Banner}}<div class="cartel warn"><strong>{{.Banner}}</strong></div>{{end}}
-  {{if .Cards}}<div class="tiles">{{range .Cards}}<div class="card tile">
-    <div class="l"><span class="sw {{.Class}}" aria-hidden="true"></span> {{.Label}}</div>
-    <div class="v">{{.Pct}}</div>
-    {{if .Diff}}<div class="muted">{{.Diff}}</div>{{end}}
-  </div>{{end}}</div>{{else}}<p class="muted">Sin mensajes analizados en los últimos 5 min.</p>{{end}}
+  {{/* Clima del chat: el tono que más pesa en grande y la barra apilada con los mismos %. */}}
+  {{if .Cards}}<div class="clima">
+    {{with .Lead}}<p class="ctop"><span class="cbig">{{.Pct}}</span> {{.Word}}</p>{{end}}
+    <div class="cbar" role="img" aria-label="{{.Aria}}">{{range .Cards}}<span class="{{.Class}}" style="flex-grow: {{printf "%.1f" .W}}"></span>{{end}}</div>
+    <ul class="cleg">{{range .Cards}}<li><span class="sw {{.Class}}" aria-hidden="true"></span> {{.Label}} <strong>{{.Pct}}</strong>{{if .Diff}} <span class="muted">· {{.Diff}}</span>{{end}}</li>{{end}}</ul>
+  </div>{{else}}<p class="muted">Sin mensajes analizados en los últimos 5 min.</p>{{end}}
   <p class="muted">{{.Typical}}</p>
   {{end}}
   {{with .Chart}}<h3>Cómo fue cambiando · cada 5 min</h3>
   {{/* Cada barra pide el análisis con su franja: abajo aparecen sus mensajes. */}}
+  {{/* Con todo el día cada franja mide lo mismo que con el programa en curso
+       (Px) y el gráfico se desplaza; direction: rtl hace que arranque en ahora. */}}
+  {{with .Px}}<div class="sscroll"><div class="sfijo" style="width: {{.}}px">{{end}}
   <div class="schart{{if .Sel}} has-sel{{end}}">
     <svg viewBox="0 0 {{.W}} 100" preserveAspectRatio="none" role="group" aria-label="{{.Aria}}">
       {{range .Bars}}<a class="sbar{{if .Sel}} sel{{end}}" href="#sent-detalle" hx-get="{{.Href}}" hx-sync="closest #vivo-analisis:replace" hx-target="#vivo-analisis" hx-swap="outerHTML" aria-label="{{.Label}}. Ver los mensajes"><title>{{.Label}}</title>{{if .Low}}<rect class="low" x="{{.X}}" y="0" width="{{.W}}" height="100"></rect>{{else}}<rect class="neg" x="{{.X}}" y="0" width="{{.W}}" height="{{.NegH}}"></rect><rect class="neu" x="{{.X}}" y="{{.NeuY}}" width="{{.W}}" height="{{.NeuH}}"></rect><rect class="pos" x="{{.X}}" y="{{.PosY}}" width="{{.W}}" height="{{.PosH}}"></rect>{{end}}</a>
@@ -132,6 +143,7 @@
   </div>
   {{if .Strip}}<div class="sprogs" aria-hidden="true">{{range .Strip}}<span class="sprog" style="left: {{printf "%.2f" .Left}}%; width: {{printf "%.2f" .Width}}%" title="{{.Range}} · {{.Name}}">{{.Name}}</span>{{end}}</div>{{end}}
   <div class="pticks" aria-hidden="true">{{range .Ticks}}<span{{if .End}} class="end"{{end}} style="left: {{printf "%.2f" .Left}}%">{{.Label}}</span>{{end}}</div>
+  {{if .Px}}</div></div>{{end}}
   {{if .Strip}}<ul class="sprogl" aria-label="Programas del gráfico">{{range .Strip}}<li title="{{.Range}} · {{.Name}}">{{.Hour}} · {{.Name}}</li>{{end}}</ul>{{end}}
   <p class="muted leyenda"><span class="sw pos" aria-hidden="true"></span> Positivo <span class="sw neu" aria-hidden="true"></span> Neutro <span class="sw neg" aria-hidden="true"></span> Negativo <span class="sw low" aria-hidden="true"></span> Menos de 5 mensajes: sin color</p>
   {{if not .Sel}}<p class="muted">Tocá una barra para ver sus mensajes.</p>{{end}}
@@ -170,18 +182,17 @@
   </div>
   {{with .Chart}}{{template "part-chart" .}}{{end}}
   {{if .Outside}}<p class="muted">{{.Outside}}</p>{{end}}
-  {{if .Moments}}<table class="tops">
-    <tr><th scope="col">Momento</th><th scope="col" class="n">Mirando</th><th scope="col" class="n" title="Personas distintas que escribieron en esos 5 minutos">Personas</th><th scope="col" class="n"><strong>%</strong></th></tr>
-    {{range .Moments}}<tr class="mom">
-      <td><details class="plegable mom"{{if .Fold.Open}} open{{end}}><summary id="plegar-{{.Key}}" hx-get="{{.Fold.Href}}" hx-sync="closest #vivo-analisis:replace" hx-target="#vivo-analisis" hx-swap="outerHTML"><strong>{{.Rank}}.</strong> {{fecha .Start}} a {{hora .End}}{{if .Program}}<span class="muted mprog">{{.Program}}</span>{{end}}</summary>
+  {{/* Una tarjeta por momento: los números a la vista y los mensajes plegados. */}}
+  {{if .Moments}}<ol class="moms">
+    {{range .Moments}}<li class="mom">
+      <p class="mpct">{{.PctText}}</p>
+      <details class="plegable mom"{{if .Fold.Open}} open{{end}}><summary id="plegar-{{.Key}}" hx-get="{{.Fold.Href}}" hx-sync="closest #vivo-analisis:replace" hx-target="#vivo-analisis" hx-swap="outerHTML"><strong>{{.Rank}}.</strong> {{fecha .Start}} a {{hora .End}}{{if .Program}}<span class="muted mprog">{{.Program}}</span>{{end}}</summary>
         <div class="mdet">Para el reel: {{if .Href}}<a href="{{.Href}}" target="_blank" rel="noopener">{{.Hint}}</a>{{else}}<span class="muted">{{.Hint}}</span>{{end}}
         {{if .TopicText}}<div>Temas: {{.TopicText}}</div>{{end}}{{range .Msgs}}<div class="muted"><strong>{{.Author}}</strong>: {{.Text}}</div>{{end}}{{if .More}}<div class="muted">y {{miles .More}} más</div>{{end}}</div>
-      </details></td>
-      <td class="n">{{.ViewersText}}</td>
-      <td class="n">{{miles .Authors}}</td>
-      <td class="n"><strong>{{.PctText}}</strong></td>
-    </tr>{{end}}
-  </table>{{end}}
+      </details>
+      <dl class="mnums"><div><dt>Mirando</dt><dd>{{.ViewersText}}</dd></div><div title="Personas distintas que escribieron en esos 5 minutos"><dt>Personas</dt><dd>{{miles .Authors}}</dd></div><div><dt>Participación</dt><dd>{{.PctText}}</dd></div></dl>
+    </li>{{end}}
+  </ol>{{end}}
   {{if .Why}}<p class="muted">{{.Why}}</p>{{end}}
   <p class="muted">Franjas de 5 minutos: el ranking y la participación típica usan {{.Window}}; el gráfico, las horas elegidas (sin el tramo del principio que no tiene datos). Personas = nombres distintos que escribieron; mirando = lo que informa YouTube en ese momento (promedio de las lecturas de la franja). Es una aproximación: sirve para elegir qué mirar, no como medición exacta.</p>
 </section>{{end}}
@@ -192,18 +203,34 @@
   {{template "categorias" .}}
 </div>
 
-{{with .Monitor}}<section id="monitor" class="card" aria-labelledby="monitor-h">
-  <div class="chead"><h2 id="monitor-h">Palabras y autores {{.Of}}</h2><span class="muted">{{plural .Total "mensaje" "mensajes"}}</span></div>
-  <div class="vgrid">
-    <div class="inner">
-      <h3>Palabras más repetidas</h3>
-      <div class="words">{{range .Words}}<span>{{.Key}} · {{.N}}</span>{{else}}<span class="muted">Sin datos todavía</span>{{end}}</div>
-    </div>
-    <div class="inner">
-      <h3>Quiénes más escriben</h3>
-      <table>{{range .Authors}}<tr><td>{{.Key}}</td><td class="n">{{.N}}</td></tr>{{else}}<tr><td class="muted">Sin datos todavía</td></tr>{{end}}</table>
-    </div>
+{{/* De qué se habla y Quiénes participan: el mismo alcance que el resto del análisis. */}}
+{{with .Monitor}}<div id="monitor" class="grid2">
+<section id="palabras" class="card" aria-labelledby="palabras-h">
+  <div class="chead"><h2 id="palabras-h">De qué se habla</h2><span class="muted">{{plural .Total "mensaje" "mensajes"}}</span></div>
+  <p class="muted sub">Palabras más repetidas {{.Of}}</p>
+  {{if .Words}}<ol class="wlist">{{range .Words}}<li class="wrow"><span class="wk">{{.Key}}{{if .Up}} <span class="wup" title="En alza en la última media hora">▲</span>{{end}}</span><span class="wtrack"><span class="wbar" style="width: {{printf "%.0f" .W}}%"></span></span><span class="num">{{miles .N}}</span></li>{{end}}</ol>
+  {{if .AnyUp}}<p class="muted">▲ En alza: en la última media hora aparece el doble que antes.</p>{{end}}
+  {{else}}<p class="muted">Sin datos todavía</p>{{end}}
+</section>
+<section id="participan" class="card" aria-labelledby="participan-h">
+  <div class="chead"><h2 id="participan-h">Quiénes participan</h2>{{with .Split}}<span class="muted">{{plural .People "persona" "personas"}} en el chat</span>{{end}}</div>
+  {{with .Split}}<div class="hstack" role="img" aria-label="{{.RegPct}} habituales y {{.NewPct}} nuevos"><span class="hab" style="flex-grow: {{printf "%.1f" .RegW}}"></span><span class="nue" style="flex-grow: {{printf "%.1f" .NewW}}"></span></div>
+  <p class="leyenda"><span class="leg"><span class="sw hab" aria-hidden="true"></span><strong>{{.RegPct}}</strong> habituales (escribieron otro día de la semana)</span><span class="leg"><span class="sw nue" aria-hidden="true"></span><strong>{{.NewPct}}</strong> nuevos</span></p>{{end}}
+  {{with .Share}}<p class="muted">Los 10 que más escriben suman el {{.}} de los mensajes.</p>{{end}}
+  <h3>Quiénes más escriben</h3>
+  <ol class="wlist">{{range .Authors}}<li class="wrow"><span class="wk">{{.Key}}{{with .Tag}} <span class="ktag">{{.}}</span>{{end}}</span><span class="wtrack"><span class="wbar alt" style="width: {{printf "%.0f" .W}}%"></span></span><span class="num">{{miles .N}}</span></li>{{else}}<li class="muted">Sin datos todavía</li>{{end}}</ol>
+</section>
+</div>{{end}}
+
+{{with .Likes}}<section id="likes" class="card" aria-labelledby="likes-h">
+  <div class="chead"><h2 id="likes-h">Likes</h2><span class="muted">De los vivos de hoy y de lo publicado en los últimos 7 días</span></div>
+  <div class="grid2">
+    <div class="cchart">{{with .Chart}}<h3>Likes nuevos de los vivos · cada 30 min</h3>{{template "cchart" .}}{{else}}<h3>Likes nuevos de los vivos</h3><p class="muted">Todavía no hay likes nuevos de hoy: se guardan en cada revisión de videos.</p>{{end}}</div>
+    <div><h3>Lo que más gustó · 7 días</h3>
+    {{if .Top}}<ol class="liked">{{range .Top}}<li><span class="kind {{.Class}}">{{.Kind}}</span><a href="{{.Href}}" target="_blank" rel="noopener">{{.Title}}</a><span class="num">{{.Likes}}</span></li>{{end}}</ol>
+    {{else}}<p class="muted">Sin videos, shorts ni vivos del canal con likes en los últimos 7 días.</p>{{end}}</div>
   </div>
+  <p class="muted">Likes según YouTube en la última revisión. Los de cada programa están en Programas; los de cada video, en Comentarios y likes.</p>
 </section>{{end}}
 {{else}}<p class="muted">Este vivo ya no está en la lista de videos.</p>{{end}}
 </div>
@@ -211,15 +238,18 @@
 {{with .Super}}<section id="supers" class="card supers" aria-label="Super Chats y Super Stickers {{.Of}}">
   <h2>Super Chats y Super Stickers</h2>
   {{if .ByCurrency}}
-  <table>
-    <tr><th>Moneda</th><th class="n">Cantidad</th><th class="n">Total</th></tr>
-    {{range .ByCurrency}}<tr><td>{{.Currency}}</td><td class="n">{{miles .N}}</td><td class="n">{{.Total}}</td></tr>{{end}}
-  </table>
-  <table>
+  {{/* Total por moneda en grande (nunca se mezclan monedas), después por programa y los últimos. */}}
+  <div class="tiles sbigs">{{range .ByCurrency}}<div class="card tile sbig">
+    <div class="l">{{.Currency}}</div>
+    <div class="v">{{.Total}}</div>
+    <div class="muted">{{plural .N "pago" "pagos"}}</div>
+  </div>{{end}}</div>
+  <h3>Por programa</h3>
+  <div class="tablewrap"><table>
     <tr><th>Programa</th><th>Moneda</th><th class="n">Cantidad</th><th class="n">Total</th></tr>
     {{range .ByProgram}}<tr><td>{{.Program}}</td><td>{{.Currency}}</td><td class="n">{{miles .N}}</td><td class="n">{{.Total}}</td></tr>{{end}}
-  </table>
-  <p class="muted sub">Últimos pagos:</p>
+  </table></div>
+  <h3>Últimos pagos</h3>
   <ul class="qlist">{{range .Last}}<li>
     <div class="meta">{{fecha .At}} · <strong>{{.Author}}</strong> · <span class="badge super">{{.Kind}} · {{.Amount}}</span></div>
     <div>{{if .Text}}{{.Text}}{{else}}<span class="muted">Sin comentario.</span>{{end}}</div>
@@ -299,16 +329,16 @@ Lo usan En vivo y el detalle de Programas. */}}
 {{define "part-chart"}}<div class="pmax" aria-hidden="true"><span>{{.Max}}</span>{{with .Viewers}}<span class="vmax">{{.Max}}</span>{{end}}</div>
   <div class="pmarks" aria-hidden="true">{{range .Marks}}<span style="left: {{printf "%.2f" .Left}}%">{{.Rank}}</span>{{end}}</div>
   <div class="pchart">
-    <svg viewBox="{{with .X0}}{{.}}{{else}}0{{end}} 0 {{with .VW}}{{.}}{{else}}{{.W}}{{end}} 100" preserveAspectRatio="none" role="{{if .Links}}group{{else}}img{{end}}" aria-label="{{.Aria}}{{with .Viewers}}. {{.Aria}}{{end}}">
+    <svg viewBox="0 0 {{with .VW}}{{.}}{{else}}{{.W}}{{end}} 100" preserveAspectRatio="none" role="{{if .Links}}group{{else}}img{{end}}" aria-label="{{.Aria}}{{with .Viewers}}. {{.Aria}}{{end}}">
       {{range .Bands}}<rect class="banda" x="{{.X}}" y="{{.Y}}" width="{{.W}}" height="{{.H}}"></rect>{{end}}
       {{/* En Programas cada barra pide los mensajes de su franja (Href). */}}
-      {{range .Bars}}{{if .Href}}<a id="{{.ID}}" class="pbar{{if .Sel}} sel{{end}}" href="#franja-det" hx-get="{{.Href}}" hx-sync="#programas:replace" hx-target="#programas" hx-swap="outerHTML" aria-label="{{.Label}}. Ver los mensajes">{{else}}<g>{{end}}<title>{{.Label}}</title><rect class="hit" x="{{.X}}" y="0" width="{{.W}}" height="100"></rect><rect class="bar{{if .Class}} {{.Class}}{{end}}" x="{{.X}}" y="{{.Y}}" width="{{.W}}" height="{{.H}}"></rect>{{if .Href}}</a>{{else}}</g>{{end}}
+      {{range .Bars}}{{if .Href}}<a id="{{.ID}}" class="pbar{{if .Sel}} sel{{end}}" href="#franja-det" hx-get="{{.Href}}" hx-sync="#programas:replace" hx-target="#programas" hx-swap="outerHTML" aria-label="{{.Label}}. Ver los mensajes">{{else}}<g>{{end}}<title>{{.Label}}</title><rect class="hit" x="{{.X}}" y="0" width="{{.W}}" height="100"></rect><rect class="bar{{if .Class}} {{.Class}}{{end}}" rx="0.2" ry="1.5" x="{{.X}}" y="{{.Y}}" width="{{.W}}" height="{{.H}}"></rect>{{if .Href}}</a>{{else}}</g>{{end}}
       {{end}}{{range .Lines}}<line class="corte" x1="{{.X}}" x2="{{.X}}" y1="0" y2="100" vector-effect="non-scaling-stroke"></line>{{end}}
       {{if and .ByPct (not .Bands)}}<line class="tipica" x1="0" x2="{{.W}}" y1="{{.TypicalY}}" y2="{{.TypicalY}}"></line>{{end}}
       {{with .Median}}<path class="mediana" d="{{.}}" vector-effect="non-scaling-stroke"></path>{{end}}
       {{with .CmpLine}}<path class="cmp" d="{{.}}" vector-effect="non-scaling-stroke"></path>{{end}}
       {{with .Viewers}}<path class="oyentes" d="{{.Path}}" vector-effect="non-scaling-stroke"></path>{{end}}
-      <line class="base" x1="{{with .X0}}{{.}}{{else}}0{{end}}" x2="{{.W}}" y1="100" y2="100"></line>
+      <line class="base" x1="0" x2="{{with .VW}}{{.}}{{else}}{{.W}}{{end}}" y1="100" y2="100"></line>
     </svg>
   </div>
   {{if .Strip}}<div class="sprogs" aria-hidden="true">{{range .Strip}}<span class="sprog" style="left: {{printf "%.2f" .Left}}%; width: {{printf "%.2f" .Width}}%" title="{{.Range}} · {{.Name}}">{{.Name}}</span>{{end}}</div>{{end}}
@@ -353,16 +383,39 @@ cada grupo se despliega con sus preguntas. */}}
 {{define "catrow"}}<span class="crow"><span><span class="sw {{.Key}}" aria-hidden="true"></span> <strong>{{.Label}}</strong></span>
   <span class="muted ex">{{.Example}}</span><span class="num">{{miles .N}}</span><span class="num">{{printf "%.0f" .Share}} %</span></span>{{end}}
 
-{{/* Tarjeta Categorías de En vivo: barra apilada con el % de cada categoría y una fila por categoría con un ejemplo. */}}
+{{/* Categorías en semicírculo (CA16 de diseno-ejecutivo): cada sector y cada
+     fila de la lista piden la pantalla con esa categoría elegida; abajo, su
+     detalle. Lo usan En vivo, Programas y Comentarios (Target y Sync). */}}
+{{define "cgauge"}}{{$g := .}}{{if .Sectors}}<div class="cgauge has-sel">
+  <div class="gwrap">
+    <div class="gchart">
+      <svg viewBox="0 0 480 248" role="group" aria-label="Categorías: {{.Aria}}">
+        {{range .Sectors}}<a class="gsec {{.Key}}{{if .On}} on{{end}}" href="#cat-detalle" hx-get="{{.Href}}" hx-target="{{$g.Target}}" hx-swap="outerHTML"{{with $g.Sync}} hx-sync="{{.}}"{{end}} aria-label="{{.Title}}"><title>{{.Title}}</title><path d="{{.D}}"></path></a>{{end}}
+      </svg>
+      <div class="gcenter" aria-hidden="true"><span class="gnum">{{miles .Total}}</span><span class="muted">{{if .NoOther}}sin «Otros»{{else}}en total{{end}}</span></div>
+    </div>
+    <div class="gside">
+      <ul class="glist">{{range .Sectors}}<li><a class="grow{{if .On}} on{{end}}" href="#cat-detalle" hx-get="{{.Href}}" hx-target="{{$g.Target}}" hx-swap="outerHTML"{{with $g.Sync}} hx-sync="{{.}}"{{end}}{{if .On}} aria-current="true"{{end}}><span class="sw {{.Key}}" aria-hidden="true"></span><span class="gl">{{.Label}}</span><span class="num">{{miles .N}}</span><span class="num gp">{{.Share}}</span></a></li>{{end}}</ul>
+      <button type="button" class="btn btn-s" hx-get="{{.OtherHref}}" hx-target="{{.Target}}" hx-swap="outerHTML"{{with .Sync}} hx-sync="{{.}}"{{end}}>{{if .NoOther}}Sumar «Otros»{{else}}Sacar «Otros»{{end}}</button>
+    </div>
+  </div>
+  {{with .Sel}}<section id="cat-detalle" class="inner gdet" aria-labelledby="cat-detalle-h">
+    <h3 id="cat-detalle-h"><span class="sw {{.Key}}" aria-hidden="true"></span> {{.Label}}</h3>
+    <div class="gtiles"><div><span class="lbl">Mensajes</span><strong>{{miles .N}}</strong></div><div><span class="lbl">Del total</span><strong>{{.Share}}</strong></div><div><span class="lbl">Personas</span><strong>{{miles .People}}</strong></div></div>
+    {{if .Trend}}<p class="gtrend {{.TrendClass}}">{{.Trend}}</p>{{end}}
+    {{if .Bars}}<p class="lbl">{{.Step}}</p>
+    {{$k := .Key}}<svg class="gbars" viewBox="0 0 {{len .Bars}} 100" preserveAspectRatio="none" role="img" aria-label="{{.Label}}: {{.Step}}, lo más nuevo a la derecha">{{range .Bars}}<rect class="{{if .Now}}now {{$k}}{{end}}" rx="0.08" ry="4" x="{{printf "%.2f" .X}}" y="{{printf "%.1f" .Y}}" width="0.76" height="{{printf "%.1f" .H}}"><title>{{.Title}}</title></rect>{{end}}</svg>{{end}}
+    {{if .Hidden}}<p class="muted">{{.Hidden}}</p>{{else}}
+    {{if .All}}{{template "fold-msgs" .List}}{{else}}<p class="lbl">Últimos mensajes</p>
+    <ul class="qlist">{{range .Last}}<li><div class="meta">{{.Hour}} · <strong>{{.Author}}</strong></div><div>{{.Text}}</div></li>{{end}}</ul>{{end}}
+    {{if gt .N 0}}<button type="button" class="btn btn-s" hx-get="{{.AllHref}}" hx-target="{{$g.Target}}" hx-swap="outerHTML"{{with $g.Sync}} hx-sync="{{.}}"{{end}}>{{if .All}}Ver menos{{else}}Ver los {{miles .N}} mensajes{{end}}</button>{{end}}{{end}}
+  </section>{{end}}
+</div>{{else}}<p class="muted">Sin mensajes todavía.</p>{{end}}{{end}}
+
+{{/* Tarjeta Categorías de En vivo: el semicírculo y de dónde salen. */}}
 {{define "categorias"}}<section id="categorias" class="card" aria-labelledby="categorias-h">
     <div class="chead"><h2 id="categorias-h">Categorías{{if .CatClaude}} <span class="ia">Claude</span>{{end}}</h2><span class="muted">{{plural .CatTotal "mensaje" "mensajes"}}</span></div>
-    <div class="cstack" role="img" aria-label="{{range $i, $c := .Cats}}{{if $i}}, {{end}}{{$c.Label}} {{printf "%.0f" $c.Share}} %{{end}}">{{range .Cats}}{{if .N}}<span class="seg {{.Key}}" style="width: {{printf "%.1f" .Share}}%"></span>{{end}}{{end}}</div>
-    {{/* Cada fila con mensajes (menos el spam) se despliega con ellos. */}}
-    <div class="cats">
-      {{range .Cats}}{{if .FoldKey}}<details class="plegable cat"{{if .Fold.Open}} open{{end}}><summary id="plegar-{{.FoldKey}}" title="{{.Label}}: {{.N}}" hx-get="{{.Fold.Href}}" hx-sync="closest #vivo-analisis:replace" hx-target="#vivo-analisis" hx-swap="outerHTML">{{template "catrow" .}}</summary>
-        {{template "fold-msgs" .List}}
-      </details>{{else}}<div class="catline" title="{{.Label}}: {{.N}}">{{template "catrow" .}}</div>{{end}}{{end}}
-    </div>
+    {{template "cgauge" .Gauge}}
     {{if .CatClaude}}<p class="muted">Por Claude{{with .CatOf}}, {{.}}{{end}}, con las tandas; el spam, por reglas{{if .CatPending}}. {{.CatPending}} todavía sin etiquetar (por reglas){{end}}. El CSV sigue por reglas.</p>
     {{else}}<p class="muted">Por reglas simples{{with .CatOf}}, {{.}}{{end}}; el detalle fino hacelo con Claude sobre el CSV.</p>{{end}}
   </section>{{end}}

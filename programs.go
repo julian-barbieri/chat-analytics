@@ -623,6 +623,7 @@ type ProgramDetail struct {
 	QRest               []QGRow // el resto, plegado en "Ver N más"
 	QMore               Fold    // el plegado del resto (maspreguntas)
 	Cats                []CatRow
+	Gauge               CatGauge
 	CatsPending         int
 	Supers              []SuperRow
 	SupersNote          string
@@ -765,6 +766,7 @@ func (s *Server) programDetail(ps ProgramSeg, msgs []Message, a *ClaudeAnalysis,
 		if s.claudeActive(snap) && len(all) > 0 {
 			labels = all
 			groups = s.programClaudeCards(&d, msgs, labels)
+			d.Gauge = programGauge(d.Cats, msgs, labels, sg, q, now)
 		}
 	}
 	programSlotLinks(&d, slots, msgs, sentLabels, q)
@@ -801,6 +803,23 @@ func (s *Server) programClaudeCards(d *ProgramDetail, msgs []Message, labels map
 	d.Cats, d.CatsPending = catRowsWith(msgs, labels)
 	d.CatsClaude = true
 	return groups
+}
+
+// programGauge es el semicírculo de Categorías del programa, con el estado en
+// "abrir" y las franjas de 15 min del tramo (16 como mucho, hasta el final).
+func programGauge(rows []CatRow, msgs []Message, labels map[string]MessageLabel, sg Segment, q programsQuery, now time.Time) CatGauge {
+	sel, noOther, all := catPick(q.openSet())
+	link := func(sel string, noOther, all bool) string {
+		q.Abrir = foldsValue(catOpen(q.openSet(), sel, noOther, all))
+		return q.Partial()
+	}
+	end := sg.End
+	if sg.State == SegLive || end.After(now) {
+		end = now
+	}
+	n := min(16, max(1, int((end.Sub(sg.Start)+15*time.Minute-1)/(15*time.Minute))))
+	return catGauge(catGaugeIn{rows: rows, msgs: msgs, labels: labels, sel: sel, noOther: noOther, all: all, link: link,
+		now: now, end: end, step: 15 * time.Minute, n: n, stepLabel: "Cada 15 min", target: "#programas", sync: "#programas:replace"})
 }
 
 // CompareOption es un botón de "Comparar con". Off: no hay con qué comparar.
@@ -1095,10 +1114,10 @@ const slotPx = 28
 const minProgramAxis = time.Hour
 
 // programParticipation arma el gráfico de participación con las franjas de
-// programSlots y, con pad, deja a la izquierda (lo más nuevo va a la
-// izquierda) el espacio hasta el fin esperado: corre el origen del viewBox
-// (X0, VW) en vez de sumar franjas falsas, así las barras, las líneas y el
-// aria quedan como están y solo se reubican los rótulos y las marcas.
+// programSlots y, con pad, deja a la derecha (después de ahora) el espacio
+// hasta el fin esperado: agranda el viewBox (VW) en vez de sumar franjas
+// falsas, así las barras, las líneas y el aria quedan como están y solo se
+// reubican los rótulos y las marcas.
 func programParticipation(slots []Slot, typical float64, ok bool, pad int, videos []Video, cmp *chartCompare) map[string]any {
 	titles := videoTitles(videos)
 	var c *ChartCompare
@@ -1114,22 +1133,23 @@ func programParticipation(slots []Slot, typical float64, ok bool, pad int, video
 	return map[string]any{"Chart": chart, "ByPct": ok, "Typical": pct(typical), "Px": (len(slots) + pad) * slotPx}
 }
 
-// padChart agrega pad posiciones vacías a la izquierda del gráfico, con el
+// padChart agrega pad posiciones vacías a la derecha del gráfico, con el
 // rótulo del fin esperado en el borde.
 func padChart(chart map[string]any, pad int, end time.Time) {
 	w := chart["W"].(int)
 	total := float64(w + pad)
-	move := func(left float64) float64 { return (left/100*float64(w) + float64(pad)) / total * 100 }
+	move := func(left float64) float64 { return left / 100 * float64(w) / total * 100 }
 	marks := chart["Marks"].([]Mark)
 	for i := range marks {
 		marks[i].Left = move(marks[i].Left)
 	}
-	ticks := []Tick{{Left: 0, Label: end.Local().Format("15:04"), End: true}}
+	var ticks []Tick
 	for _, t := range chart["Ticks"].([]Tick) {
 		t.Left, t.End = move(t.Left), false
 		ticks = append(ticks, t)
 	}
-	chart["Ticks"], chart["X0"], chart["VW"] = ticks, -pad, w+pad
+	ticks = append(ticks, Tick{Left: 100, Label: end.Local().Format("15:04"), End: true})
+	chart["Ticks"], chart["VW"] = ticks, w+pad
 	if aria, has := chart["Aria"].(string); has {
 		chart["Aria"] = aria + "; el eje llega hasta las " + end.Local().Format("15:04") + ", lo que suele durar el programa"
 	}
