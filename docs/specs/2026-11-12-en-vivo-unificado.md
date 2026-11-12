@@ -1,11 +1,11 @@
 # Spec: En vivo sin selector programa/día y resúmenes de ayer que faltan
 
-- **Estado:** borrador
+- **Estado:** aprobada
 - **Tipo:** mejora
 - **Rama:** `feat/en-vivo-unificado`
 - **Origen:** pedido del usuario (2026-11-12), puntos 6 y 4; maquetas en
   https://claude.ai/artifact/EgkYGxJybkC2KWBcTGv4Vd (opción A del punto 6). Tanda 3 de 3.
-- **Aprobada por / fecha:** —
+- **Aprobada por / fecha:** Julian Barbieri, 2026-11-12
 
 ## Contexto
 
