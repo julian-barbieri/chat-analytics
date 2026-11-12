@@ -1,10 +1,10 @@
 # Spec: Sin vivo distingue monitor apagado de corte
 
-- **Estado:** borrador
+- **Estado:** aprobada
 - **Tipo:** mejora
 - **Rama:** `feat/sin-vivo-monitor-apagado`
 - **Origen:** pedido del usuario con captura de Sin vivo (2026-11-12)
-- **Aprobada por / fecha:** —
+- **Aprobada por / fecha:** Julian Barbieri, 2026-11-12
 
 ## Contexto
 
