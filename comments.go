@@ -42,7 +42,7 @@ type option struct{ ID, Name string }
 
 // Listas cerradas de la pantalla; el primero de cada una es el valor por defecto.
 var (
-	commentPeriods = []option{{"30d", "Últimos 30 días"}, {"7d", "Últimos 7 días"}, {"pub", "Publicados en 30 días"}}
+	commentPeriods = []option{{"30d", "Últimos 30 días"}, {"7d", "Últimos 7 días"}}
 	// Los vivos no entran: sus likes van por programa en Programas.
 	commentTypes  = []option{{"todos", "Todos"}, {"videos", "Videos"}, {"shorts", "Shorts"}}
 	commentOrders = []option{{"periodo", "Comentarios en el período"}, {"likes", "Más likes"}, {"likesratio", "Likes c/1.000 vistas"},
@@ -207,7 +207,6 @@ func choices(opts []option, cur string, q CommentsQuery, set func(*CommentsQuery
 type CommentsView struct {
 	Q                                    CommentsQuery
 	Since                                time.Time // primer día de la ventana
-	PubSince                             time.Time // primer día de "publicados en 30 días", para la aclaración
 	Total, People, WithComments, InScope int
 	OpenQuestions                        int
 	ComplaintPct                         float64
@@ -332,16 +331,14 @@ func withDefaults(q CommentsQuery) CommentsQuery {
 	return q
 }
 
-// CommentsSummary arma la pantalla de resumen. Con "publicados en 30 días"
-// cuentan todos los comentarios guardados de los videos publicados en los
-// últimos 30 días; si no, los comentarios del período. likes son las
-// muestras de cada video (Store.LikesSince), en orden de hora.
+// CommentsSummary arma la pantalla de resumen con los comentarios del
+// período. likes son las muestras de cada video (Store.LikesSince), en orden
+// de hora.
 func CommentsSummary(msgs []Message, vids []VideoRecord, likes map[string][]LikeSample, q CommentsQuery, now time.Time) CommentsView {
 	q = withDefaults(q)
 	sc := newScope(vids, q)
 	since, n := commentWindow(q.Periodo, now)
 	v := CommentsView{Q: q, Since: since}
-	v.PubSince, _ = commentWindow("pub", now)
 
 	var period []Message
 	stored, storedAll := map[string]int{}, map[string]int{}
@@ -360,7 +357,7 @@ func CommentsSummary(msgs []Message, vids []VideoRecord, likes map[string][]Like
 			continue
 		}
 		stored[m.VideoID]++
-		if q.Periodo == "pub" && !r.PublishedAt.Before(since) || q.Periodo != "pub" && !m.At.Before(since) {
+		if !m.At.Before(since) {
 			period = append(period, m)
 		}
 	}
@@ -418,9 +415,6 @@ func CommentsSummary(msgs []Message, vids []VideoRecord, likes map[string][]Like
 		if row.Likes > 0 && row.Views > 0 {
 			likesSum, viewsSum = likesSum+row.Likes, viewsSum+row.Views
 		}
-		if q.Periodo == "pub" && row.Published.Before(since) {
-			continue
-		}
 		addDayLikes(dayLikes, likes[row.ID], row.Published, since)
 	}
 	v.LikesPer1000 = per1000(likesSum, viewsSum)
@@ -465,7 +459,7 @@ func commentRows(sc commentScope, vids []VideoRecord, stored map[string]int, byV
 		if n := len(likes[r.ID]); row.Likes == 0 && n > 0 {
 			row.Likes = likes[r.ID][n-1].Likes
 		}
-		if n, ok := periodLikes(r.PublishedAt, row.Likes, likes[r.ID], since); ok && (q.Periodo != "pub" || !r.PublishedAt.Before(since)) {
+		if n, ok := periodLikes(r.PublishedAt, row.Likes, likes[r.ID], since); ok {
 			row.LikesP, row.likesNew, row.likesKnown = miles(n), n, true
 		}
 		if row.Likes > 0 && r.Views > 0 {
@@ -686,6 +680,7 @@ type CommentsDetail struct {
 	LikesPer1000       string
 	LikeCurve          []CommentBucket
 	LikesFrom          time.Time
+	LikesNone          string // sin likes repartidos: por qué no hay gráfico
 }
 
 // CommentsVideo arma el detalle de un video; false si no tiene comentarios guardados.
@@ -737,6 +732,13 @@ func CommentsVideo(msgs []Message, vids []VideoRecord, likes []LikeSample, q Com
 			d.Curve[curveBucket(m.At.Sub(r.PublishedAt))].N++
 		}
 		d.LikeCurve, d.LikesFrom = likeCurve(likes, r.PublishedAt)
+		if d.LikeCurve != nil && bucketsTotal(d.LikeCurve) == 0 {
+			// Todas las barras en 0 serían un gráfico vacío: se dice por qué.
+			d.LikeCurve, d.LikesNone = nil, "Este video todavía no sumó likes desde que se publicó."
+			if !d.LikesFrom.IsZero() {
+				d.LikesNone = "Desde el " + d.LikesFrom.Local().Format("02/01 15:04") + ", cuando se empezaron a guardar los likes, este video no sumó likes nuevos."
+			}
+		}
 		if h, ok := halfTime(all, r.PublishedAt); ok {
 			d.HalfHours = humanHours(h)
 		}
@@ -809,6 +811,15 @@ func likeCurve(ls []LikeSample, pub time.Time) (curve []CommentBucket, from time
 		prev = l.Likes
 	}
 	return curve, from
+}
+
+// bucketsTotal suma los tramos de una curva.
+func bucketsTotal(b []CommentBucket) int {
+	n := 0
+	for _, x := range b {
+		n += x.N
+	}
+	return n
 }
 
 // foldText es el texto para buscar: minúsculas y sin tildes.

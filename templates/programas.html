@@ -97,15 +97,19 @@
       {{range .Claude.Topics}}{{if .Key}}<details class="plegable"{{if .Fold.Open}} open{{end}}>{{template "pf-summary" .}}{{.Text}} · {{.Count}}</summary>
         {{template "fold-msgs" .List}}
       </details>{{else}}<div class="plegable tsolo">{{.Text}} · {{.Count}}</div>{{end}}{{end}}
-      {{else if .CatsClaude}}<h3>Categorías <span class="ia">Claude</span></h3>
-      {{template "cgauge" .Gauge}}
-      <p class="muted">Por Claude, con las tandas; el spam, por reglas{{if .CatsPending}}. {{.CatsPending}} todavía sin etiquetar (por reglas){{end}}. Los temas salen del resumen cuando termina el programa.</p>
       {{else}}<h3>Temas de conversación <span class="chip">por reglas</span></h3>
       {{range .Topics}}<div class="catrow" title="{{.Label}}: {{.N}} mensajes">
         <span>{{.Label}}</span>
         <div class="track"><div class="fill" style="width: {{printf "%.1f" .Pct}}%"></div></div>
         <span class="num">{{miles .N}}</span>
-      </div>{{else}}<p class="muted">Sin datos.</p>{{end}}{{end}}
+      </div>{{else}}<p class="muted">Sin datos.</p>{{end}}
+      {{if .CatsClaude}}<p class="muted">Los temas de Claude salen del resumen cuando termina el programa.</p>{{end}}{{end}}
+    </div>
+    <div class="inner">
+      <h3>Categorías {{if .CatsClaude}}<span class="ia">Claude</span>{{else}}<span class="chip">por reglas</span>{{end}}</h3>
+      {{template "cgauge" .Gauge}}
+      {{if .CatsClaude}}<p class="muted">Por Claude, con las tandas; el spam, por reglas{{if .CatsPending}}. {{.CatsPending}} todavía sin etiquetar (por reglas){{end}}. El CSV sigue por reglas.</p>
+      {{else}}<p class="muted">Por reglas simples; el detalle fino hacelo con Claude sobre el CSV.</p>{{end}}
     </div>
     <div class="inner">
       <h3>Sentimiento del programa {{if .Claude}}<span class="ia">Claude</span>{{end}}</h3>
@@ -160,6 +164,13 @@ sección cambiada en "abrir", así sigue abierta después del refresco de 60 s.
 El id deja el foco en la flecha y hx-sync corta un refresco en vuelo. Se
 cierra con </summary> en quien la usa. */}}
 {{define "pf-summary"}}<summary id="pf-{{.Key}}" hx-get="{{.Fold.Href}}" hx-sync="#programas:replace" hx-target="#programas" hx-swap="outerHTML">{{end}}
+
+{{/* Segmentos por asistencia en dos barras al 100 %: cuánta gente es cada
+segmento y cuánto escribe. Los números exactos están en la tabla de abajo. */}}
+{{define "segbars"}}{{with .}}<div class="segbars">{{range .}}<div class="segrow">
+      <span class="lbl">{{.Label}}</span>
+      <div class="segbar" role="img" aria-label="{{.Label}}: {{range $i, $p := .Parts}}{{if $i}}, {{end}}{{$p.Label}} {{printf "%.0f" $p.Pct}} %{{end}}">{{range .Parts}}<span class="sg {{.Key}}" style="width: {{printf "%.1f" .Pct}}%" title="{{.Label}}: {{printf "%.0f" .Pct}} %"></span>{{end}}</div>
+    </div>{{end}}</div>{{end}}{{end}}
 
 {{/* Mensajes de la franja elegida en Participación o en Sentimiento. */}}
 {{define "prog-franja"}}{{with .}}<section id="franja-det" class="sdet" aria-labelledby="franja-det-h">
@@ -229,6 +240,7 @@ el tipo y el monto adelante. */}}
       <div>
         <h3>Segmentos por asistencia</h3>
         <p class="muted">Cada participante se ubica según en cuántos de {{plural .Emissions "vivo" "vivos"}} del programa escribió.</p>
+        {{template "segbars" .SegBars}}
         <div class="tablewrap"><table>
           <thead><tr><th scope="col">Segmento</th><th scope="col">Regla</th><th scope="col" class="n">Participantes</th><th scope="col" class="n">% personas</th><th scope="col" class="n">% mensajes</th></tr></thead>
           <tbody>{{range .Segments}}<tr><td><span class="sw {{.Key}}" aria-hidden="true"></span> {{.Label}}</td><td class="muted">{{.Rule}}</td><td class="n">{{miles .People}}</td><td class="n">{{printf "%.0f" .PeoplePct}} %</td><td class="n">{{printf "%.0f" .MsgsPct}} %</td></tr>{{end}}</tbody>

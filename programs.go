@@ -120,9 +120,13 @@ func dayRange(dia string, now time.Time) (string, []time.Time) {
 	switch dia {
 	case "ayer":
 		return dia, []time.Time{today.AddDate(0, 0, -1)}
-	case "7d":
+	case "7d", "30d":
+		n := 7
+		if dia == "30d" {
+			n = 30 // el último mes: lo que entra en la retención de 30 días
+		}
 		var days []time.Time
-		for i := range 7 {
+		for i := range n {
 			days = append(days, today.AddDate(0, 0, -i))
 		}
 		return dia, days
@@ -548,7 +552,7 @@ func (s *Server) programsData(v url.Values) map[string]any {
 	data := map[string]any{
 		"Q": q, "Channels": opts, "Rows": rows, "Multi": len(days) > 1, "Refresh": q.Dia == "hoy" && !q.isOpen("chat"),
 		"Title": programsTitle(q.Dia, days), "Updated": now, "Pick": "",
-		"Days": []ChannelOption{{"hoy", "Hoy", q.Dia == "hoy"}, {"ayer", "Ayer", q.Dia == "ayer"}, {"7d", "Últimos 7 días", q.Dia == "7d"}},
+		"Days": []ChannelOption{{"hoy", "Hoy", q.Dia == "hoy"}, {"ayer", "Ayer", q.Dia == "ayer"}, {"7d", "Últimos 7 días", q.Dia == "7d"}, {"30d", "Últimos 30 días", q.Dia == "30d"}},
 	}
 	// El gráfico de likes del día: con un solo canal y un solo día.
 	if len(chans) == 1 && len(days) == 1 && len(rows) > 0 {
@@ -599,8 +603,8 @@ func programsTitle(dia string, days []time.Time) string {
 	switch dia {
 	case "ayer":
 		return "Programas de ayer · " + day
-	case "7d":
-		return "Programas de los últimos 7 días · del " + days[len(days)-1].Format("02/01") + " al " + d.Format("02/01")
+	case "7d", "30d":
+		return fmt.Sprintf("Programas de los últimos %d días · del %s al %s", len(days), days[len(days)-1].Format("02/01"), d.Format("02/01"))
 	}
 	return "Programas de hoy · " + day
 }
@@ -766,9 +770,13 @@ func (s *Server) programDetail(ps ProgramSeg, msgs []Message, a *ClaudeAnalysis,
 		if s.claudeActive(snap) && len(all) > 0 {
 			labels = all
 			groups = s.programClaudeCards(&d, msgs, labels)
-			d.Gauge = programGauge(d.Cats, msgs, labels, sg, q, now)
 		}
 	}
+	// Categorías siempre: con las etiquetas de las tandas si hay, si no por reglas.
+	if !d.CatsClaude {
+		d.Cats = catRows(msgs)
+	}
+	d.Gauge = programGauge(d.Cats, msgs, labels, sg, q, now)
 	programSlotLinks(&d, slots, msgs, sentLabels, q)
 	programFoldLists(&d, a, msgs, labels, q)
 	var topics []ClaudeGroup
