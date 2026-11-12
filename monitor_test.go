@@ -3640,7 +3640,8 @@ func TestLiveChatByChannel(t *testing.T) {
 	// con b2, conservando lo elegido en el análisis (que el chat manda con hx-include).
 	check("B cambió de vivo", get("/parcial/vivo/chat?canal=UCB&video=b1&ver=dia&horas=24"), "#vivo",
 		[]string{`hx-get="/parcial/vivo/chat?canal=UCB&video=b2"`, `hx-include=".vq"`,
-			`hx-get="/parcial/vivo/analisis?canal=UCB&video=b2&ver=dia&horas=24"`}, []string{"canal=UCA", "video=a1"})
+			// El "ver" de antes ya no viaja (en-vivo-unificado): el alcance sale de si hay vivo.
+			`hx-get="/parcial/vivo/analisis?canal=UCB&video=b2&horas=24"`}, []string{"canal=UCA", "video=a1", "ver=dia"})
 	// Un pedido solo con video= de un vivo en curso del canal (un link de
 	// antes) muestra ese chat sin recargar la sección.
 	check("solo video= en curso", get("/parcial/vivo/chat?video=b2"), "", []string{"hola desde B2", "hola desde B1"},
@@ -4202,22 +4203,20 @@ func TestLiveAnalysisByChannel(t *testing.T) {
 		query     string
 		want, not []string
 	}{
+		// Desde en-vivo-unificado no hay selector: con vivo, siempre el programa
+		// en curso con el total del día; un "ver" de antes se ignora.
 		{"canal=UCB&video=b2&ver=programa", []string{
-			"Análisis de LA TARDE (programa en curso)", "Radio B · 3 mensajes", "¿Repiten la entrevista de la tarde?", "¿Qué pasó con la tarde tan temprano?",
-			"<td>ARS</td>", `hx-get="/parcial/vivo/analisis?canal=UCB&video=b2&ver=programa&horas=6" hx-trigger="every 30s"`,
-			`hx-get="/parcial/vivo/analisis?canal=UCB&video=b2&ver=programa&horas=24"`, `id="ver-programa" class="seg" aria-pressed="true"`,
-			`id="ver-dia" class="seg" aria-pressed="false"`, `hx-get="/parcial/vivo/analisis?canal=UCB&video=b2&ver=dia&horas=6"`,
-		}, []string{"programa de la mañana", "invitado del mediodía", "Radio A?", "de ayer", "EUR"}},
-		// Sin ver: con vivo, el programa en curso.
+			"Análisis de LA TARDE (programa en curso)", "Radio B · 3 mensajes · 6 en el día", "¿Repiten la entrevista de la tarde?", "¿Qué pasó con la tarde tan temprano?",
+			"<td>ARS</td>", `hx-get="/parcial/vivo/analisis?canal=UCB&video=b2&horas=6" hx-trigger="every 30s"`,
+			`hx-get="/parcial/vivo/analisis?canal=UCB&video=b2&horas=24"`,
+		}, []string{"programa de la mañana", "invitado del mediodía", "Radio A?", "de ayer", "EUR", `id="ver-programa"`, `id="ver-dia"`, "ver="}},
 		{"canal=UCB&video=b2", []string{"Análisis de LA TARDE (programa en curso)", "Radio B · 3 mensajes"}, []string{"invitado del mediodía"}},
 		{"canal=UCB&video=b2&ver=dia&horas=24", []string{
-			"Análisis de todo el día del canal", "Radio B · 6 mensajes", "¿Cuándo vuelve el programa de la mañana?", "¿Quién era el invitado del mediodía?",
-			"¿Repiten la entrevista de la tarde?", "<td>ARS</td>", "<td>EUR</td>",
-			`hx-get="/parcial/vivo/analisis?canal=UCB&video=b2&ver=dia&horas=24" hx-trigger="every 30s"`,
-			`id="ver-dia" class="seg" aria-pressed="true"`, `id="pwin-24" class="vbtn" aria-pressed="true"`,
+			"Análisis de LA TARDE (programa en curso)", "Radio B · 3 mensajes · 6 en el día",
+			`hx-get="/parcial/vivo/analisis?canal=UCB&video=b2&horas=24" hx-trigger="every 30s"`, `id="pwin-24" class="vbtn" aria-pressed="true"`,
 			// Lo que manda el chat al recargar la sección, para conservar la elección.
-			`<input type="hidden" class="vq" name="ver" value="dia">`, `<input type="hidden" class="vq" name="horas" value="24">`,
-		}, []string{"Radio A?", "de ayer"}},
+			`<input type="hidden" class="vq" name="horas" value="24">`,
+		}, []string{"Radio A?", "de ayer", "invitado del mediodía", `name="ver"`}},
 	}
 	for _, c := range cases {
 		body := getBody(h, "/parcial/vivo/analisis?"+c.query)
@@ -4236,6 +4235,19 @@ func TestLiveAnalysisByChannel(t *testing.T) {
 			break
 		}
 	}
+	// Sin vivo: lo de hoy del canal, con los dos vivos del día.
+	st.SetVideos("Radio A", []Video{a1})
+	day := getBody(h, "/parcial/vivo/analisis?canal=UCB&video=&horas=24")
+	for _, w := range []string{"Análisis de hoy", "Radio B · 6 mensajes", "¿Cuándo vuelve el programa de la mañana?", "¿Quién era el invitado del mediodía?",
+		"¿Repiten la entrevista de la tarde?", "<td>ARS</td>", "<td>EUR</td>"} {
+		if !strings.Contains(day, w) {
+			t.Errorf("sin vivo: falta %q", w)
+		}
+	}
+	if strings.Contains(day, "Radio A?") || strings.Contains(day, "de ayer") || strings.Contains(day, " en el día</p>") {
+		t.Errorf("sin vivo: sobra otro canal, lo de ayer o el total del día")
+	}
+	st.SetVideos("Radio A", []Video{a1, b2})
 	// La sección del canal pide el análisis por canal.
 	if body := getBody(h, "/parcial/vivo?canal=UCB"); !strings.Contains(body, `hx-get="/parcial/vivo/analisis?canal=UCB&video=b2"`) {
 		t.Errorf("/parcial/vivo?canal=UCB:\n%s", body)
@@ -4594,7 +4606,8 @@ func TestClaudeCardOff(t *testing.T) {
 	}{
 		{"vivo suelto", superStore(t, msgs...), "/parcial/vivo/analisis?video=v1"},
 		{"canal, programa en curso", byChannel, "/parcial/vivo/analisis?canal=UC1&video=v1&ver=programa"},
-		{"canal, todo el día", byChannel, "/parcial/vivo/analisis?canal=UC1&video=v1&ver=dia"},
+		// Un link de antes con ver=dia: se ignora (en-vivo-unificado).
+		{"canal, link viejo con ver=dia", byChannel, "/parcial/vivo/analisis?canal=UC1&video=v1&ver=dia"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -4891,7 +4904,7 @@ func TestClaudeErrorsHideKey(t *testing.T) {
 			if c.name == "refusal" && (len(as) == 0 || as[0].StopReason != "refusal" || as[0].RefusalCategory != "cyber" || as[0].CostMicros == 0) {
 				t.Errorf("refusal guardado = %+v", as)
 			}
-			card := getBody(h, "/parcial/vivo/analisis?canal=UC1&video=v1&ver=dia")
+			card := getBody(h, "/parcial/vivo/analisis?canal=UC1&video=v1")
 			for where, text := range map[string]string{"log": logs.String(), "estado": fmt.Sprintf("%+v", s), "análisis": fmt.Sprintf("%+v", as), "tarjeta": card} {
 				if strings.Contains(text, testClaudeKey) {
 					t.Errorf("la clave aparece en %s", where)
@@ -5518,6 +5531,7 @@ func TestSegmentMessages(t *testing.T) {
 
 // TestAnalystClosesProgram (CA8, CA9): RunAnalyst analiza una vez cada
 // programa de hoy que terminó, del más nuevo al más viejo, y no toca datos.jsonl.
+// Desde en-vivo-unificado (CA5), también los de ayer sin resumen, al final.
 func TestAnalystClosesProgram(t *testing.T) {
 	now := noonToday()
 	st, h := analystServer(t, now)
@@ -5527,7 +5541,7 @@ func TestAnalystClosesProgram(t *testing.T) {
 	}
 	f := newFakeClaude(t)
 	stop := startAnalyst(t, f.client(), st, NewAnalyst(), now, AnalystConfig{Budget: 2_000_000})
-	waitUntil(t, 5*time.Second, func() bool { return len(st.Analyses("UC1", time.Time{})) >= 3 })
+	waitUntil(t, 5*time.Second, func() bool { return len(st.Analyses("UC1", time.Time{})) >= 4 })
 	time.Sleep(100 * time.Millisecond)
 	stop()
 
@@ -5538,12 +5552,12 @@ func TestAnalystClosesProgram(t *testing.T) {
 		}
 		got[a.Program] = a
 	}
-	if len(got) != 3 || got["LA TARDE"].Key != "" || got["AYER"].Key != "" {
-		t.Errorf("analizados = %v, quiero LA MAÑANA, POCO y CRUCE", keysOf(got))
+	if len(got) != 4 || got["LA TARDE"].Key != "" || got["AYER"].Key == "" {
+		t.Errorf("analizados = %v, quiero LA MAÑANA, POCO, CRUCE y AYER", keysOf(got))
 	}
 	ps := f.prompts()
-	if len(ps) != 2 || !strings.Contains(ps[0], "LA MAÑANA") || !strings.Contains(ps[1], "CRUCE") {
-		t.Fatalf("pedidos = %d, quiero LA MAÑANA y después CRUCE", len(ps))
+	if len(ps) != 3 || !strings.Contains(ps[0], "LA MAÑANA") || !strings.Contains(ps[1], "CRUCE") || !strings.Contains(ps[2], "AYER") {
+		t.Fatalf("pedidos = %d, quiero LA MAÑANA, CRUCE y al final AYER", len(ps))
 	}
 	// El que cruza la medianoche va entero: mensajes de antes y de después de las 00:00.
 	if !strings.Contains(ps[1], "mensaje cruce 0") || !strings.Contains(ps[1], "mensaje cruce 24") {
@@ -5562,7 +5576,7 @@ func TestAnalystClosesProgram(t *testing.T) {
 	if p := got["POCO"]; p.Error != "Muy pocos mensajes para analizar" || p.CostMicros != 0 {
 		t.Errorf("POCO = %+v", p)
 	}
-	if st.ClaudeSpend() != 2*claudeCost(defaultClaudeModel, 20000, 1500) {
+	if st.ClaudeSpend() != 3*claudeCost(defaultClaudeModel, 20000, 1500) {
 		t.Errorf("gasto = %d", st.ClaudeSpend())
 	}
 	after, _ := os.ReadFile(st.path)
@@ -5585,7 +5599,7 @@ func TestAnalystClosesProgram(t *testing.T) {
 	stop = startAnalyst(t, f2.client(), st2, NewAnalyst(), now, AnalystConfig{Budget: 2_000_000})
 	time.Sleep(100 * time.Millisecond)
 	stop()
-	if n := f2.reqs.Load(); n != 0 || len(st2.Analyses("UC1", time.Time{})) != 3 {
+	if n := f2.reqs.Load(); n != 0 || len(st2.Analyses("UC1", time.Time{})) != 4 {
 		t.Errorf("después de reabrir: %d pedidos, %d análisis", n, len(st2.Analyses("UC1", time.Time{})))
 	}
 
@@ -5747,6 +5761,7 @@ func TestClaudeCard(t *testing.T) {
 		queue    bool
 		loopback bool
 		inject   bool // un mensaje con <script>
+		offAir   bool // el canal sin vivo: el análisis es de todo el día
 	}
 	on := ClaudeStatus{On: true, Model: defaultClaudeModel, Tope: 2_000_000}
 	cases := []struct {
@@ -5793,20 +5808,24 @@ func TestClaudeCard(t *testing.T) {
 			"ver=programa", []string{"Se llegó al tope de gasto de Claude de hoy (US$ 2,00): se retoma mañana"}, []string{"hx-post"}},
 		{"apagado por un error", setup{analyst: true, status: ClaudeStatus{Off: "Claude rechazó la clave (401): revisá CLAUDE_API_KEY y reiniciá el monitor"}, loopback: true},
 			"ver=programa", []string{"Claude rechazó la clave (401)"}, []string{"hx-post"}},
-		// Con "Todo el día" la tarjeta solo manda a Programas de hoy (CA1.8): los
-		// resúmenes de cada programa se ven ahí (TestProgramDetail).
-		{"todo el día", setup{analyst: true, status: on, add: []ClaudeAnalysis{
+		// Sin vivo, el análisis es de todo el día y la tarjeta solo manda a
+		// Programas de hoy (CA1.8): los resúmenes de cada programa se ven ahí
+		// (TestProgramDetail). Desde en-vivo-unificado no hay "ver=dia".
+		{"todo el día", setup{analyst: true, status: on, offAir: true, add: []ClaudeAnalysis{
 			analysis(segmentKey("UC1", manana), "LA MAÑANA", false, func(a *ClaudeAnalysis) { a.From, a.To = day.Add(8*time.Hour), day.Add(9*time.Hour+57*time.Minute) }),
 			analysis(keyTarde, "LA TARDE", true, nil),
-		}}, "ver=dia", []string{"Resúmenes de Claude", `<a href="/programas?canal=UC1">Los resúmenes de cada programa están en Programas de hoy</a>`},
+		}}, "", []string{"Resúmenes de Claude", `<a href="/programas?canal=UC1">Los resúmenes de cada programa están en Programas de hoy</a>`},
 			[]string{"Todavía no hay análisis de este programa", "Resumen &lt;script&gt;", "hx-post", "Gastado hoy"}},
-		{"todo el día sin análisis", setup{analyst: true, status: on}, "ver=dia", []string{"Los resúmenes de cada programa están en Programas de hoy"}, nil},
+		{"todo el día sin análisis", setup{analyst: true, status: on, offAir: true}, "", []string{"Los resúmenes de cada programa están en Programas de hoy"}, nil},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			st, _ := analystServer(t, now)
 			if c.s.inject {
 				st.Add([]Message{{ID: "inj", Source: "chat", VideoID: "v1", Program: "LA TARDE", Author: "Inyector", Text: "<script>hola", At: day.Add(10*time.Hour + time.Minute)}})
+			}
+			if c.s.offAir {
+				st.SetVideos("Radio Test", nil)
 			}
 			srv := &Server{st: st, budget: 9000, now: func() time.Time { return now }}
 			if c.s.analyst {
@@ -6280,9 +6299,14 @@ func TestLiveScreenOrder(t *testing.T) {
 	}
 	// La página tiene un lugar por parcial: el chat va entre el análisis de arriba y el de abajo.
 	inOrder("/", getBody(h, "/"), []string{`id="estado"`, `id="canal"`, `id="vivo-analisis"`, `id="chat"`, `id="vivo-abajo"`})
+	// Con vivo, el programa en curso; sin vivo, lo de hoy (en-vivo-unificado:
+	// sin selector, el mismo orden en los dos).
 	for _, ver := range []string{"programa", "dia"} {
-		body := getBody(h, "/parcial/vivo/analisis?canal=UCB&video=b2&ver="+ver)
-		inOrder(ver, body, []string{`id="ver-programa" class="seg"`, `class="atitle"`, `class="tiles"`, `id="claude-card"`, `id="alertas"`,
+		if ver == "dia" {
+			st.SetVideos("Radio B", nil)
+		}
+		body := getBody(h, "/parcial/vivo/analisis?canal=UCB&video=b2")
+		inOrder(ver, body, []string{`class="atitle"`, `class="tiles"`, `id="claude-card"`, `id="alertas"`,
 			`id="sentimiento"`, `id="momentos"`, `id="preguntas"`, `id="categorias"`, `id="monitor"`, `<div id="vivo-abajo" hx-swap-oob="true">`, `id="supers"`})
 		if regexp.MustCompile(`<h[23][^>]*>\s*[0-9]+\.\s`).MatchString(body) {
 			t.Errorf("%s: hay títulos numerados", ver)
@@ -6318,8 +6342,7 @@ func TestLiveRemovedSections(t *testing.T) {
 	h := (&Server{st: st, budget: 9000, now: func() time.Time { return now }}).Routes()
 	for _, path := range []string{
 		"/parcial/vivo/analisis?video=v1",
-		"/parcial/vivo/analisis?canal=UCB&video=b2&ver=programa",
-		"/parcial/vivo/analisis?canal=UCB&video=b2&ver=dia",
+		"/parcial/vivo/analisis?canal=UCB&video=b2",
 	} {
 		t.Run(path, func(t *testing.T) {
 			body := getBody(h, path)
@@ -6355,7 +6378,7 @@ func TestLiveRemovedSections(t *testing.T) {
 
 // TestLiveFoldState (CA1.3): lo plegado del resumen de Claude sigue abierto
 // después del refresco de 30 s porque viaja en "abrir" (lista cerrada), como
-// "ver" y "horas"; cada flecha pide el parcial con su sección cambiada.
+// "horas"; cada flecha pide el parcial con su sección cambiada.
 func TestLiveFoldState(t *testing.T) {
 	now := noonToday()
 	day := dayStart(now)
@@ -6405,8 +6428,9 @@ func TestLiveFoldState(t *testing.T) {
 			map[string]string{"Preguntas agrupadas": "quejas", "Quejas": "preguntas"}},
 		{"inválido", "programa", "<script>alert(1)</script>,quejas,nada", "quejas", map[string]bool{"Quejas": true},
 			map[string]string{"Preguntas agrupadas": "preguntas,quejas", "Quejas": ""}},
-		// Con "Todo el día" no hay resumen para plegar, pero el estado se conserva.
-		{"todo el día", "dia", "preguntas", "preguntas", nil, nil},
+		// Un "ver" de antes se ignora: con vivo, el programa en curso (en-vivo-unificado).
+		{"ver viejo", "dia", "preguntas", "preguntas", map[string]bool{"Preguntas agrupadas": true},
+			map[string]string{"Preguntas agrupadas": "", "Quejas": "preguntas,quejas"}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -6418,11 +6442,9 @@ func TestLiveFoldState(t *testing.T) {
 			if got := attr(t, body, `<input type="hidden" class="vq" name="abrir" value="([^"]*)">`); got != c.value {
 				t.Errorf("input oculto abrir = %q, quiero %q", got, c.value)
 			}
-			// El refresco de 30 s, los botones de ver y los de horas conservan abrir (y ver y horas).
+			// El refresco de 30 s y los botones de horas conservan abrir (y horas).
 			for _, re := range []string{
 				`<div id="vivo-analisis" hx-get="([^"]*)"`,
-				`id="ver-programa" class="seg" aria-pressed="[a-z]+"\s*hx-get="([^"]*)"`,
-				`id="ver-dia" class="seg" aria-pressed="[a-z]+"\s*hx-get="([^"]*)"`,
 				`id="pwin-6" class="vbtn" aria-pressed="[a-z]+"\s*hx-get="([^"]*)"`,
 			} {
 				if href := attr(t, body, re); href != "" {
@@ -6451,7 +6473,7 @@ func TestLiveFoldState(t *testing.T) {
 					t.Errorf("%s: (%s), quiero (%s) grupos", sec, m[4], counts[sec])
 				}
 				q := abrirOf(t, m[2])
-				if q.Get("abrir") != c.toggle[sec] || q.Get("canal") != "UC1" || q.Get("video") != "v1" || q.Get("ver") != "programa" || q.Get("horas") != "24" ||
+				if q.Get("abrir") != c.toggle[sec] || q.Get("canal") != "UC1" || q.Get("video") != "v1" || q.Has("ver") || q.Get("horas") != "24" ||
 					!strings.HasPrefix(m[2], "/parcial/vivo/analisis?") {
 					t.Errorf("%s: la flecha pide %q, quiero abrir=%q con el resto igual", sec, m[2], c.toggle[sec])
 				}
@@ -7431,7 +7453,7 @@ func TestFoldParam(t *testing.T) {
 			if got := foldValue(foldParam(c.q)); got != c.want {
 				t.Errorf("foldValue = %q, quiero %q", got, c.want)
 			}
-			if _, _, got, _ := keepView(c.q); got != c.want {
+			if _, got, _ := keepView(c.q); got != c.want {
 				t.Errorf("keepView abrir = %q, quiero %q", got, c.want)
 			}
 		})
@@ -9451,8 +9473,7 @@ func TestMotivesWindow(t *testing.T) {
 		{"30 min", "&motivos=30", []string{"12 negativos en los últimos 30 min", "Se corta el audio", "67 %", "No les gusta el invitado", "17 %",
 			`id="mot-30" class="vbtn" aria-pressed="true"`, `<input type="hidden" class="vq" name="motivos" value="30">`,
 			// El refresco, los otros botones y las flechas guardan la ventana.
-			"&motivos=30&horas=" + strconv.Itoa(chartHours), "ver=dia&horas=" + strconv.Itoa(chartHours) + "&motivos=30",
-			"horas=" + strconv.Itoa(chartHours) + "&amp;motivos=30&amp;ver=programa"}, nil},
+			"&motivos=30&horas=" + strconv.Itoa(chartHours), "horas=" + strconv.Itoa(chartHours) + "&amp;motivos=30"}, nil},
 		{"todo el programa", "&motivos=programa", []string{"12 negativos en todo el programa", `id="mot-programa" class="vbtn" aria-pressed="true"`}, nil},
 		{"valor raro: 5 min y no se refleja", "&motivos=%3Cscript%3E", []string{"2 negativos en los últimos 5 min", `id="mot-5" class="vbtn" aria-pressed="true"`},
 			[]string{"<script>", "&lt;script", "%3Cscript"}},
@@ -9472,7 +9493,9 @@ func TestMotivesWindow(t *testing.T) {
 			}
 		})
 	}
-	if body := getBody(srv.Routes(), "/parcial/vivo/analisis?canal=UCB&video=b2&ver=dia&motivos=programa"); !strings.Contains(body, ">Todo el día</button>") ||
+	// Sin vivo el análisis es de todo el día: el último botón y el texto son del día.
+	st.SetVideos("Radio B", nil)
+	if body := getBody(srv.Routes(), "/parcial/vivo/analisis?canal=UCB&video=b2&motivos=programa"); !strings.Contains(body, ">Todo el día</button>") ||
 		!strings.Contains(body, "12 negativos en todo el día") {
 		t.Errorf("con todo el día, el último botón y el texto son del día")
 	}
@@ -9863,7 +9886,7 @@ func TestDayStripNewestRight(t *testing.T) {
 		{Program: "", Start: from.Add(9 * time.Hour), End: from.Add(10 * time.Hour), State: SegNone},
 		{VideoID: "a", Program: "B", Start: from.Add(10 * time.Hour), End: now, State: SegLive},
 	}
-	blocks := dayStrip(segs, ChannelStatus{ID: "UC1"}, from, now, false)["Blocks"].([]StripBlock)
+	blocks := dayStrip(segs, segs, ChannelStatus{ID: "UC1"}, from, now, false)["Blocks"].([]StripBlock)
 	var got []string
 	for _, b := range blocks {
 		got = append(got, b.Program+"/"+b.State)
@@ -9997,8 +10020,13 @@ func TestMonitorProgramScope(t *testing.T) {
 		{ID: "oth", Source: "chat", VideoID: "zz", Author: "Ajeno", Text: "ajeno", At: now.Add(-time.Minute)},
 	})
 	h := (&Server{st: st, budget: 9000, now: func() time.Time { return now }}).Routes()
-	for ver, title := range map[string]string{"programa": "Palabras más repetidas del programa en curso", "dia": "Palabras más repetidas de hoy"} {
-		body := getBody(h, "/parcial/vivo/analisis?canal=UCB&video=b2&ver="+ver)
+	// Con vivo, el programa en curso; sin vivo, lo de hoy (en-vivo-unificado).
+	for _, c := range []struct{ ver, title string }{{"programa", "Palabras más repetidas del programa en curso"}, {"dia", "Palabras más repetidas de hoy"}} {
+		ver, title := c.ver, c.title
+		if ver == "dia" {
+			st.SetVideos("Radio B", nil)
+		}
+		body := getBody(h, "/parcial/vivo/analisis?canal=UCB&video=b2")
 		i := strings.Index(body, `id="monitor"`)
 		if i < 0 {
 			t.Fatalf("%s: falta el bloque", ver)
@@ -10048,7 +10076,7 @@ func TestParticipationProgramsStrip(t *testing.T) {
 		st.AddViewers(m, []Video{{ID: id, ChannelID: "UCB", Channel: "Radio B", LiveStatus: "live", Concurrent: 300}})
 	}
 	h := (&Server{st: st, budget: 9000, now: func() time.Time { return now }}).Routes()
-	body := section5(t, getBody(h, "/parcial/vivo/analisis?canal=UCB&video=b2&ver=dia"))
+	body := section5(t, getBody(h, "/parcial/vivo/analisis?canal=UCB&video=b2"))
 	for _, w := range []string{`class="sprogs"`, ">LA TARDE</span>", ">LA MAÑANA</span>", `class="sprogl"`} {
 		if !strings.Contains(body, w) {
 			t.Errorf("falta %q", w)
@@ -10730,7 +10758,6 @@ func TestMomentsWholeChannel(t *testing.T) {
 	}{
 		{"programa en curso, 6 h", "ver=programa", []string{hm(150 * time.Minute), "LA MAÑANA"}, []string{hm(210 * time.Minute)}},
 		{"programa en curso, 24 h", "ver=programa&horas=24", []string{hm(150 * time.Minute), hm(14*time.Hour - 20*time.Minute)}, []string{hm(210 * time.Minute)}},
-		{"todo el día, 24 h", "ver=dia&horas=24", []string{hm(150 * time.Minute), hm(14*time.Hour - 20*time.Minute)}, []string{hm(210 * time.Minute)}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -10873,7 +10900,7 @@ func TestMomentFold(t *testing.T) {
 	st.Add(chatRun("b1", "b1", "LA MAÑANA", at, 10*time.Second, 8))
 	st.AddViewers(at, []Video{{ID: "b1", LiveStatus: "live", Concurrent: 100}})
 	srv := &Server{st: st, budget: 9000, now: func() time.Time { return now }}
-	base := "/parcial/vivo/analisis?canal=UCB&video=b2&ver=dia"
+	base := "/parcial/vivo/analisis?canal=UCB&video=b2"
 	closed := getBody(srv.Routes(), base)
 	if !strings.Contains(closed, `<details class="plegable mom"><summary id="plegar-mom1"`) || !strings.Contains(closed, "abrir=mom1") {
 		t.Fatalf("el momento no arranca plegado con su flecha")

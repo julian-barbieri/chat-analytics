@@ -4,8 +4,8 @@
 {{define "vivo"}}
 <section id="vivo" class="vivo" aria-label="En vivo">
   <div id="canal" hx-get="/parcial/vivo/canal?{{if .Canal}}canal={{.Canal}}&{{end}}video={{.Video}}" hx-trigger="load, every 5s"><p class="muted">Cargando…</p></div>
-  {{if or .Canal .Video}}<div id="vivo-analisis" hx-get="/parcial/vivo/analisis?{{if .Canal}}canal={{.Canal}}&{{end}}video={{.Video}}{{if .Ver}}&ver={{.Ver}}{{end}}{{if .Horas}}&horas={{.Horas}}{{end}}{{if .Abrir}}&abrir={{.Abrir}}{{end}}{{if .Motivos}}&motivos={{.Motivos}}{{end}}" hx-trigger="load, every 30s" hx-swap="outerHTML"></div>{{end}}
-  {{/* El chat manda con hx-include el "ver", las "horas" y lo plegado abierto ("abrir") del análisis: si cambia el vivo y se recarga la sección, se conservan. */}}
+  {{if or .Canal .Video}}<div id="vivo-analisis" hx-get="/parcial/vivo/analisis?{{if .Canal}}canal={{.Canal}}&{{end}}video={{.Video}}{{if .Horas}}&horas={{.Horas}}{{end}}{{if .Abrir}}&abrir={{.Abrir}}{{end}}{{if .Motivos}}&motivos={{.Motivos}}{{end}}" hx-trigger="load, every 30s" hx-swap="outerHTML"></div>{{end}}
+  {{/* El chat manda con hx-include las "horas" y lo plegado abierto ("abrir") del análisis: si cambia el vivo y se recarga la sección, se conservan. */}}
   <div id="chat" hx-get="/parcial/vivo/chat?{{if .Canal}}canal={{.Canal}}&{{end}}video={{.Video}}" hx-include=".vq" hx-trigger="load, every 2s"><p class="muted">Cargando…</p></div>
   <div id="vivo-abajo"></div>
 </section>
@@ -37,11 +37,12 @@
   {{if .Waiting}}<div class="cartel warn"><strong>{{.Waiting}}</strong></div>{{end}}
   {{if .Banner}}<div class="cartel ok"><strong>{{.Banner}}</strong></div>{{end}}
   {{if .Strip}}<div class="lbl">Hoy en el canal</div>
-  <ol class="tira" aria-label="{{.StripAria}}">{{range .Strip}}<li class="tb {{.Class}}" style="flex-grow: {{printf "%.0f" .W}}" title="{{.Text}}" aria-label="{{.Text}}">
+  {{/* Un programa que terminó lleva a su detalle en Programas. */}}
+  <ol class="tira" aria-label="{{.StripAria}}">{{range .Strip}}<li class="tb {{.Class}}" style="flex-grow: {{printf "%.0f" .W}}" title="{{.Text}}" aria-label="{{.Text}}">{{if .Href}}<a class="tbl" href="{{.Href}}">{{end}}
     <strong>{{if .Program}}{{.Program}}{{else}}Sin vivo{{end}}</strong>
     <span>{{.Range}}</span>
     <span>{{.State}}{{if .Note}} · {{.Note}}{{end}}</span>
-  </li>{{end}}</ol>{{end}}
+  {{if .Href}}</a>{{end}}</li>{{end}}</ol>{{end}}
   {{if .How}}<p class="muted">Cómo sale: {{.How}}.</p>{{end}}
   <p class="muted">Los demás canales se siguen leyendo y guardando: elegí uno para verlo.</p>
   {{else}}<p class="muted">No hay vivos en este momento. Cuando empiece uno, aparece acá solo.</p>{{end}}
@@ -71,31 +72,23 @@
 </section>
 {{end}}
 
-{{define "vivo-q"}}{{if .Canal}}canal={{.Canal}}&video={{.Video}}&ver={{.Ver}}{{else}}video={{.Video}}{{end}}{{if .Abrir}}&abrir={{.Abrir}}{{end}}{{if .Motivos}}&motivos={{.Motivos}}{{end}}{{if .Franja}}&franja={{.Franja}}&sent={{.SentTab}}{{end}}{{if .PFranja}}&pfranja={{.PFranja}}{{end}}{{end}}
+{{define "vivo-q"}}{{if .Canal}}canal={{.Canal}}&video={{.Video}}{{else}}video={{.Video}}{{end}}{{if .Abrir}}&abrir={{.Abrir}}{{end}}{{if .Motivos}}&motivos={{.Motivos}}{{end}}{{if .Franja}}&franja={{.Franja}}&sent={{.SentTab}}{{end}}{{if .PFranja}}&pfranja={{.PFranja}}{{end}}{{end}}
 
 {{define "vivo-analisis"}}
 <div id="vivo-analisis" hx-get="/parcial/vivo/analisis?{{template "vivo-q" .}}&horas={{.Hours}}" hx-trigger="every 30s" hx-swap="outerHTML">
-{{if .Canal}}<input type="hidden" class="vq" name="ver" value="{{.Ver}}"><input type="hidden" class="vq" name="motivos" value="{{.Motivos}}">{{if .Franja}}<input type="hidden" class="vq" name="franja" value="{{.Franja}}"><input type="hidden" class="vq" name="sent" value="{{.SentTab}}">{{end}}{{end}}{{if .PFranja}}<input type="hidden" class="vq" name="pfranja" value="{{.PFranja}}">{{end}}<input type="hidden" class="vq" name="horas" value="{{.Hours}}"><input type="hidden" class="vq" name="abrir" value="{{.Abrir}}">
+{{if .Canal}}<input type="hidden" class="vq" name="motivos" value="{{.Motivos}}">{{if .Franja}}<input type="hidden" class="vq" name="franja" value="{{.Franja}}"><input type="hidden" class="vq" name="sent" value="{{.SentTab}}">{{end}}{{end}}{{if .PFranja}}<input type="hidden" class="vq" name="pfranja" value="{{.PFranja}}">{{end}}<input type="hidden" class="vq" name="horas" value="{{.Hours}}"><input type="hidden" class="vq" name="abrir" value="{{.Abrir}}">
 {{if .Label}}
-{{if .Canal}}<div class="selector">
-  <div class="vbtns" role="group" aria-label="Qué parte del canal analizar">
-    <button type="button" id="ver-programa" class="seg" aria-pressed="{{eq .Ver "programa"}}"
-      hx-get="/parcial/vivo/analisis?canal={{.Canal}}&video={{.Video}}&ver=programa&horas={{.Hours}}{{if .Abrir}}&abrir={{.Abrir}}{{end}}{{if .Motivos}}&motivos={{.Motivos}}{{end}}" hx-target="#vivo-analisis" hx-swap="outerHTML">Programa en curso</button>
-    <button type="button" id="ver-dia" class="seg" aria-pressed="{{eq .Ver "dia"}}"
-      hx-get="/parcial/vivo/analisis?canal={{.Canal}}&video={{.Video}}&ver=dia&horas={{.Hours}}{{if .Abrir}}&abrir={{.Abrir}}{{end}}{{if .Motivos}}&motivos={{.Motivos}}{{end}}" hx-target="#vivo-analisis" hx-swap="outerHTML">Todo el día del canal</button>
-  </div>
-  {{if .ClaudeLine}}<p class="muted"><span class="ia">Claude</span> {{.ClaudeLine}}</p>{{end}}
-</div>
-{{if .Note}}<p class="muted">{{.Note}}</p>{{end}}{{end}}
+{{if and .Canal .ClaudeLine}}<p class="muted"><span class="ia">Claude</span> {{.ClaudeLine}}</p>{{end}}
 <div>
   <h2 class="atitle">Análisis de {{.Span}}</h2>
-  <p class="muted">{{if .Canal}}{{.Label}} · {{end}}{{plural .A.Total "mensaje" "mensajes"}}</p>
+  <p class="muted">{{if .Canal}}{{.Label}} · {{end}}{{plural .A.Total "mensaje" "mensajes"}}{{with .DayMsgs}} · {{.}} en el día{{end}}</p>
 </div>
 {{with .Frase}}<p class="frase">{{.}}</p>{{end}}
 <div class="tiles">{{range .Tiles}}<div class="card tile{{with .Trend}} {{.}}{{end}}">
   <div class="l">{{.Label}}</div>
   <div class="v">{{.Value}}</div>
   {{if .Note}}<div class="muted">{{.Note}}</div>{{end}}
+  {{if $.DayOf}}{{with index $.DayOf .Label}}<div class="dayt">{{.}}</div>{{end}}{{end}}
 </div>{{end}}</div>
 
 {{template "claude-card" .Claude}}
