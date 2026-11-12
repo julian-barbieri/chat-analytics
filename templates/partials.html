@@ -417,7 +417,7 @@ cada grupo se despliega con sus preguntas. */}}
     {{if .Bars}}<p class="lbl">{{.Step}}</p>
     {{$k := .Key}}<svg class="gbars" viewBox="0 0 {{len .Bars}} 100" preserveAspectRatio="none" role="img" aria-label="{{.Label}}: {{.Step}}, lo más nuevo a la derecha">{{range .Bars}}<rect class="{{if .Now}}now {{$k}}{{end}}" rx="0.08" ry="4" x="{{printf "%.2f" .X}}" y="{{printf "%.1f" .Y}}" width="0.76" height="{{printf "%.1f" .H}}"><title>{{.Title}}</title></rect>{{end}}</svg>{{end}}
     {{if .Hidden}}<p class="muted">{{.Hidden}}</p>{{else}}
-    {{if .All}}{{template "fold-msgs" .List}}{{else}}<p class="lbl">Últimos mensajes</p>
+    {{if .All}}{{template "fold-msgs" .List}}{{else if .Questions}}{{template "cat-preguntas" .Questions}}{{else}}<p class="lbl">Últimos mensajes</p>
     <ul class="qlist">{{range .Last}}<li><div class="meta">{{.Hour}} · <strong>{{.Author}}</strong></div><div>{{.Text}}</div></li>{{end}}</ul>{{end}}
     {{if gt .N 0}}<button type="button" class="btn btn-s" hx-get="{{.AllHref}}" hx-target="{{$g.Target}}" hx-swap="outerHTML"{{with $g.Sync}} hx-sync="{{.}}"{{end}}>{{if .All}}Ver menos{{else}}Ver los {{miles .N}} mensajes{{end}}</button>{{end}}{{end}}
   </section>{{end}}

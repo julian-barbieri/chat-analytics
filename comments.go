@@ -220,6 +220,7 @@ type CommentsView struct {
 	Gauge                                CatGauge
 	CatTotal                             int
 	Words                                []Count
+	WordRows                             []WordRow
 	Authors                              []AuthorRow
 	Rows                                 []CommentVideoRow
 	Questions, Featured                  []CommentItem
@@ -245,10 +246,15 @@ type CommentDay struct {
 	Likes   int64
 }
 
-// AuthorRow es una persona de "Quiénes más comentan".
+// AuthorRow es una persona de "Quiénes más comentan". La barra mide N
+// contra el primero (W, en %) y su parte fuerte, los videos distintos
+// (WVideos, en % de la barra): se ve si alguien es fiel o discute en un hilo.
 type AuthorRow struct {
-	Name      string
-	N, Videos int
+	Name       string
+	N, Videos  int
+	W, WVideos float64
+	Initial    string // la inicial del círculo
+	Hue        int    // su color, de 1 a 5 (--series-N), estable por nombre
 }
 
 // CommentVideoRow es una fila de la tabla de videos.
@@ -433,7 +439,8 @@ func CommentsSummary(msgs []Message, vids []VideoRecord, likes map[string][]Like
 
 	v.Cats, v.CatTotal = catRows(period), len(period)
 	v.Gauge = commentsGauge(period, q, now)
-	v.Words = TopWords(period, 16)
+	v.Words = TopWords(period, 10)
+	v.WordRows = wordRows(v.Words)
 	for name, a := range authors {
 		a.Videos = len(authorVideos[name])
 		v.Authors = append(v.Authors, *a)
@@ -445,6 +452,12 @@ func CommentsSummary(msgs []Message, vids []VideoRecord, likes map[string][]Like
 		return v.Authors[i].Name < v.Authors[j].Name
 	})
 	v.Authors = v.Authors[:min(len(v.Authors), 8)]
+	for i := range v.Authors {
+		a := &v.Authors[i]
+		a.W = float64(a.N) * 100 / float64(v.Authors[0].N)
+		a.WVideos = float64(a.Videos) * 100 / float64(a.N)
+		a.Initial, a.Hue = authorInitial(a.Name), authorHue(a.Name)
+	}
 
 	sortItems(v.Questions, "likes")
 	v.Questions = v.Questions[:min(len(v.Questions), 10)]
@@ -856,3 +869,31 @@ func humanHours(h float64) string {
 
 // commentDayLabel es el rótulo corto de un día de las barras.
 func commentDayLabel(d time.Time) string { return fmt.Sprintf("%02d/%02d", d.Day(), int(d.Month())) }
+
+// wordRows son las palabras con su barra, relativa a la primera.
+func wordRows(words []Count) []WordRow {
+	var out []WordRow
+	for _, w := range words {
+		out = append(out, WordRow{Key: w.Key, N: w.N, W: float64(w.N) * 100 / float64(words[0].N)})
+	}
+	return out
+}
+
+// authorInitial es la primera letra del nombre visible, sin la @ del handle.
+func authorInitial(name string) string {
+	for _, r := range strings.TrimPrefix(name, "@") {
+		return strings.ToUpper(string(r))
+	}
+	return "?"
+}
+
+// authorHue elige uno de los 5 colores de serie según el nombre, así la misma
+// persona tiene el mismo color en cada refresco. No identifica a nadie: es
+// solo para distinguir las filas.
+func authorHue(name string) int {
+	h := 0
+	for _, r := range name {
+		h = (h*31 + int(r)) % 9973
+	}
+	return h%5 + 1
+}

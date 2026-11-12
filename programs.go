@@ -779,6 +779,7 @@ func (s *Server) programDetail(ps ProgramSeg, msgs []Message, a *ClaudeAnalysis,
 	d.Gauge = programGauge(d.Cats, msgs, labels, sg, q, now)
 	programSlotLinks(&d, slots, msgs, sentLabels, q)
 	programFoldLists(&d, a, msgs, labels, q)
+	programCatQuestions(&d)
 	programTalk(&d, msgs, an.Topics, sg.State == SegLive, now)
 	var topics []ClaudeGroup
 	if d.Claude != nil {
@@ -790,6 +791,27 @@ func (s *Server) programDetail(ps ProgramSeg, msgs []Message, a *ClaudeAnalysis,
 		d.History = s.programHistory(ps, ems, from, now)
 	}
 	return d
+}
+
+// programCatQuestions pone las preguntas en el detalle de Categorías cuando
+// la elegida es Pregunta (ya no hay una tarjeta aparte): los grupos de las
+// tandas con sus flechas (de programFoldLists), las del resumen de Claude o
+// las de reglas.
+func programCatQuestions(d *ProgramDetail) {
+	if d.Gauge.Sel == nil || d.Gauge.Sel.Key != CatPregunta {
+		return
+	}
+	q := &CatQuestions{Header: d.QHeader, Groups: d.QGroups, Rest: d.QRest, More: d.QMore}
+	switch {
+	case len(d.QGroups) > 0:
+	case d.Claude != nil && len(d.Claude.Questions) > 0:
+		q.Summary = d.Claude.Questions
+	case d.QClaude:
+		q.NotGrouped = true
+	default:
+		q.Rules = d.Questions
+	}
+	d.Gauge.Sel.Questions = q
 }
 
 // programTalk arma "De qué se habla" del detalle: los temas del resumen de
@@ -847,7 +869,7 @@ func programGauge(rows []CatRow, msgs []Message, labels map[string]MessageLabel,
 		end = now
 	}
 	n := min(16, max(1, int((end.Sub(sg.Start)+15*time.Minute-1)/(15*time.Minute))))
-	return catGauge(catGaugeIn{rows: rows, msgs: msgs, labels: labels, sel: sel, noOther: noOther, all: all, link: link,
+	return catGauge(catGaugeIn{rows: rows, msgs: msgs, labels: labels, sel: sel, prefer: CatPregunta, noOther: noOther, all: all, link: link,
 		now: now, end: end, step: 15 * time.Minute, n: n, stepLabel: "Cada 15 min", target: "#programas", sync: "#programas:replace"})
 }
 

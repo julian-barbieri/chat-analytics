@@ -19,7 +19,8 @@ type catGaugeIn struct {
 	rows      []CatRow
 	msgs      []Message
 	labels    map[string]MessageLabel
-	sel       string // la categoría pedida ("": la más grande sin contar Otros)
+	sel       string // la categoría pedida ("": prefer o la más grande sin contar Otros)
+	prefer    string // sin una pedida, la que va elegida si tiene mensajes (Programas: Pregunta)
 	noOther   bool
 	all       bool
 	link      func(sel string, noOther, all bool) string
@@ -55,6 +56,22 @@ type CatDetail struct {
 	Last                                                        []ClaudeExample
 	All                                                         bool
 	List                                                        *FoldMsgs
+	// Questions, solo en Programas con Pregunta elegida: las preguntas
+	// agrupadas en lugar de los últimos mensajes.
+	Questions *CatQuestions
+}
+
+// CatQuestions son las preguntas del detalle de Pregunta en Programas: los
+// grupos de las tandas (los primeros a la vista y el resto plegado), las del
+// resumen de Claude o, sin Claude, las de reglas.
+type CatQuestions struct {
+	Header     string
+	Groups     []QGRow
+	Rest       []QGRow
+	More       Fold
+	Summary    []ClaudeItem
+	NotGrouped bool // Claude etiquetó el programa y no agrupó preguntas
+	Rules      []Message
 }
 
 // CatGauge es la tarjeta Categorías en semicírculo.
@@ -97,8 +114,12 @@ func catGauge(in catGaugeIn) CatGauge {
 	if g.Total == 0 {
 		return g
 	}
+	has := func(k string) bool { return slices.ContainsFunc(shown, func(r CatRow) bool { return r.Key == k }) }
 	sel := in.sel
-	if !slices.ContainsFunc(shown, func(r CatRow) bool { return r.Key == sel }) {
+	if !has(sel) {
+		sel = in.prefer
+	}
+	if !has(sel) {
 		sel = shown[0].Key // la más grande: Otros va al final, salvo que sea la única
 	}
 	g.OtherHref = in.link(sel, !in.noOther, false)
