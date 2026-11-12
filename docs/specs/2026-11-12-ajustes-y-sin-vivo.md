@@ -1,10 +1,10 @@
 # Spec: ajustes de las pantallas y pantalla Sin vivo
 
-- **Estado:** borrador
+- **Estado:** aprobada
 - **Tipo:** mejora (con 4 bugs: 2, 6, 8, 10)
 - **Rama:** `feat/ajustes-y-sin-vivo`
 - **Origen:** pedido del usuario del 2026-11-12 (11 puntos, con capturas de «Cómo llegaron los likes» y de la tira «Hoy en el canal»)
-- **Aprobada por / fecha:** —
+- **Aprobada por / fecha:** Julian Barbieri, 2026-11-12
 
 ## Contexto y causas
 
