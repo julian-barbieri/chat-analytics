@@ -318,11 +318,10 @@ func (s *Server) regulars(chID string, now time.Time) map[string]bool {
 // WordRow y TalkerRow son las filas con barra de "De qué se habla" y
 // "Quiénes participan"; W es el ancho de la barra en %.
 type WordRow struct {
-	Key  string
-	N    int
-	W    float64
-	Up   bool
-	Tick string // "▲" si está en alza
+	Key string
+	N   int
+	W   float64
+	Up  bool // en alza en la última media hora
 }
 
 type TalkerRow struct {
@@ -332,19 +331,10 @@ type TalkerRow struct {
 	Tag string // "habitual", "nuevo" o "" sin historia
 }
 
-// monitorView arma "De qué se habla" y "Quiénes participan" con los mensajes
-// del mismo alcance que el resto del análisis. regulars en nil: sin historia
-// (vivo suelto), no se separan habituales y nuevos.
-func monitorView(msgs []Message, words []Count, sc scope, now time.Time, regulars map[string]bool) map[string]any {
-	up := risingWords(msgs, words, now)
-	var wrows []WordRow
-	for _, w := range words {
-		r := WordRow{Key: w.Key, N: w.N, W: float64(w.N) * 100 / float64(words[0].N), Up: up[w.Key]}
-		if r.Up {
-			r.Tick = "▲"
-		}
-		wrows = append(wrows, r)
-	}
+// monitorView arma "Quiénes participan" con los mensajes del mismo alcance
+// que el resto del análisis ("De qué se habla" es talkView). regulars en nil:
+// sin historia (vivo suelto), no se separan habituales y nuevos.
+func monitorView(msgs []Message, sc scope, regulars map[string]bool) map[string]any {
 	authors := TopAuthors(msgs, authorsShown)
 	var arows []TalkerRow
 	for _, a := range authors {
@@ -354,7 +344,7 @@ func monitorView(msgs []Message, words []Count, sc scope, now time.Time, regular
 		}
 		arows = append(arows, r)
 	}
-	out := map[string]any{"Total": len(msgs), "Of": sc.of, "Words": wrows, "Authors": arows, "AnyUp": len(up) > 0}
+	out := map[string]any{"Total": len(msgs), "Of": sc.of, "Authors": arows}
 	if len(msgs) > 0 {
 		out["Share"] = pct(topShare(msgs, shareTop))
 	}
@@ -435,4 +425,69 @@ func (s *Server) likesView(snap Snapshot, ch ChannelStatus, ls liveScope, now ti
 		}
 	}
 	return tile, view
+}
+
+// TalkView es "De qué se habla", la misma tarjeta en En vivo y en Programas:
+// los temas arriba (de Claude si hay un análisis del tramo, si no por reglas)
+// y las palabras más repetidas abajo.
+type TalkView struct {
+	Card       bool   // En vivo: tarjeta con <h2>; Programas: recuadro con <h3>
+	Total      int    // mensajes del alcance
+	Of         string // "del programa en curso", "de hoy"…
+	Claude     []ClaudeItem
+	ClaudeNote string // de qué análisis salen los temas de Claude
+	Rules      []CatRow
+	RulesNote  string // con Claude prendido, cuándo llegan sus temas
+	Words      []WordRow
+	AnyUp      bool
+}
+
+// talkView arma "De qué se habla". words viene ordenada (TopWords); se
+// muestran wordsShown. Por reglas, los temas son solo los pares de palabras
+// que van juntas de TopTopics ("dólar blue"): una palabra sola ya está en la
+// lista de abajo. rising marca las palabras en alza (solo tiene sentido con
+// el programa al aire).
+func talkView(msgs []Message, words, topics []Count, claude []ClaudeItem, rising bool, now time.Time) TalkView {
+	v := TalkView{Total: len(msgs), Claude: claude}
+	if len(claude) == 0 {
+		var pairs []Count
+		for _, t := range topics {
+			// "penal penal" es una palabra repetida, no un par.
+			if x, y, ok := strings.Cut(t.Key, " "); ok && x != y {
+				pairs = append(pairs, t)
+			}
+		}
+		v.Rules = bars(pairs)
+	}
+	words = words[:min(wordsShown, len(words))]
+	up := map[string]bool{}
+	if rising {
+		up = risingWords(msgs, words, now)
+	}
+	for _, w := range words {
+		v.Words = append(v.Words, WordRow{Key: w.Key, N: w.N, W: float64(w.N) * 100 / float64(words[0].N), Up: up[w.Key]})
+		v.AnyUp = v.AnyUp || up[w.Key]
+	}
+	return v
+}
+
+// talkClaude saca los temas del análisis del programa en curso de la tarjeta
+// de Claude de En vivo para "De qué se habla", así no se ven dos veces, con la
+// nota de qué análisis son. Sin análisis (con Claude activo), la nota de
+// cuándo llegan; con "Todo el día" la tarjeta no tiene bloques y todo sigue
+// por reglas.
+func talkClaude(c *ClaudeCard) (topics []ClaudeItem, note, rulesNote string) {
+	if !c.Active || c.DayLink != "" {
+		return nil, "", ""
+	}
+	if len(c.Blocks) == 0 || c.Blocks[0].Err != "" || len(c.Blocks[0].Topics) == 0 {
+		return nil, "", "Los temas de Claude salen de su resumen: cuando termina el programa o con «Analizar ahora»."
+	}
+	b := &c.Blocks[0]
+	topics, b.Topics = b.Topics, nil
+	note = "Del resumen de Claude de las " + b.At.Local().Format("15:04")
+	if b.Partial {
+		note = "Del análisis parcial de Claude de las " + b.At.Local().Format("15:04") + ": lo de después todavía no está"
+	}
+	return topics, note + ".", ""
 }

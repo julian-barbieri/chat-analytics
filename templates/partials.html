@@ -204,15 +204,9 @@
   {{template "categorias" .}}
 </div>
 
-{{/* De qué se habla y Quiénes participan: el mismo alcance que el resto del análisis. */}}
+{{/* De qué se habla (la misma tarjeta que Programas) y Quiénes participan: el mismo alcance que el resto del análisis. */}}
 {{with .Monitor}}<div id="monitor" class="grid2">
-<section id="palabras" class="card" aria-labelledby="palabras-h">
-  <div class="chead"><h2 id="palabras-h">De qué se habla</h2><span class="muted">{{plural .Total "mensaje" "mensajes"}}</span></div>
-  <p class="muted sub">Palabras más repetidas {{.Of}}</p>
-  {{if .Words}}<ol class="wlist">{{range .Words}}<li class="wrow"><span class="wk">{{.Key}}{{if .Up}} <span class="wup" title="En alza en la última media hora">▲</span>{{end}}</span><span class="wtrack"><span class="wbar" style="width: {{printf "%.0f" .W}}%"></span></span><span class="num">{{miles .N}}</span></li>{{end}}</ol>
-  {{if .AnyUp}}<p class="muted">▲ En alza: en la última media hora aparece el doble que antes.</p>{{end}}
-  {{else}}<p class="muted">Sin datos todavía</p>{{end}}
-</section>
+{{template "talk" $.Talk}}
 <section id="participan" class="card" aria-labelledby="participan-h">
   <div class="chead"><h2 id="participan-h">Quiénes participan</h2>{{with .Split}}<span class="muted">{{plural .People "persona" "personas"}} en el chat</span>{{end}}</div>
   {{with .Split}}<div class="hstack" role="img" aria-label="{{.RegPct}} habituales y {{.NewPct}} nuevos"><span class="hab" style="flex-grow: {{printf "%.1f" .RegW}}"></span><span class="nue" style="flex-grow: {{printf "%.1f" .NewW}}"></span></div>
@@ -256,6 +250,28 @@
 
 {{end}}</div>
 {{end}}
+
+{{/* "De qué se habla", la misma en En vivo (Card: tarjeta con <h2>, los temas
+     se despliegan en #vivo-analisis) y en Programas (recuadro con <h3>, en
+     #programas con pf-summary): temas arriba, de Claude si hay un análisis del
+     tramo y si no los pares de palabras por reglas, y las palabras más
+     repetidas abajo. */}}
+{{define "talk"}}<section id="palabras" class="{{if .Card}}card{{else}}inner{{end}} talk" aria-labelledby="palabras-h">
+  <div class="chead">{{if .Card}}<h2 id="palabras-h">De qué se habla</h2>{{else}}<h3 id="palabras-h">De qué se habla</h3>{{end}}<span class="muted">{{plural .Total "mensaje" "mensajes"}}</span></div>
+  {{if .Claude}}{{if .Card}}<h3 class="lbl">{{else}}<h4 class="lbl">{{end}}Temas de conversación <span class="ia">Claude</span>{{if .Card}}</h3>{{else}}</h4>{{end}}
+  {{range .Claude}}{{if .Key}}<details class="plegable"{{if .Fold.Open}} open{{end}}>{{if $.Card}}<summary id="plegar-{{.Key}}" hx-get="{{.Fold.Href}}" hx-sync="closest #vivo-analisis:replace" hx-target="#vivo-analisis" hx-swap="outerHTML">{{else}}{{template "pf-summary" .}}{{end}}{{.Text}} · {{.Count}}</summary>
+    {{template "fold-msgs" .List}}
+  </details>{{else}}<div class="plegable tsolo">{{.Text}} · {{.Count}}</div>{{end}}{{end}}
+  {{with .ClaudeNote}}<p class="muted">{{.}}</p>{{end}}
+  {{else}}{{if .Card}}<h3 class="lbl">{{else}}<h4 class="lbl">{{end}}Temas de conversación <span class="chip">por reglas</span>{{if .Card}}</h3>{{else}}</h4>{{end}}
+  {{if .Rules}}<ol class="wlist">{{range .Rules}}<li class="wrow" title="{{.Label}}: {{plural .N "mensaje" "mensajes"}}"><span class="wk">{{.Label}}</span><span class="wtrack"><span class="wbar" style="width: {{printf "%.0f" .Pct}}%"></span></span><span class="num">{{miles .N}}</span></li>{{end}}</ol>
+  {{else}}<p class="muted">Todavía no hay temas: por reglas solo se juntan las palabras que van casi siempre juntas (como «dólar blue»).</p>{{end}}
+  {{with .RulesNote}}<p class="muted">{{.}}</p>{{end}}{{end}}
+  {{if .Card}}<h3 class="lbl">{{else}}<h4 class="lbl">{{end}}Palabras más repetidas{{with .Of}} {{.}}{{end}}{{if .Card}}</h3>{{else}}</h4>{{end}}
+  {{if .Words}}<div class="words">{{range .Words}}<span>{{.Key}} <span class="muted">{{miles .N}}</span>{{if .Up}} <span class="wup" title="En alza en la última media hora">▲</span>{{end}}</span>{{end}}</div>
+  {{if .AnyUp}}<p class="muted">▲ En alza: en la última media hora aparece el doble que antes.</p>{{end}}
+  {{else}}<p class="muted">Sin datos todavía</p>{{end}}
+</section>{{end}}
 
 {{/* Resumen de Claude (009). El botón responde esta misma tarjeta (hx-target="#claude-card"); el resto se refresca con el análisis cada 30 s. */}}
 {{define "claude-card"}}<section id="claude-card" class="card claude" aria-labelledby="claude-h">

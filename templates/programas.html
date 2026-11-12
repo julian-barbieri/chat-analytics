@@ -92,19 +92,7 @@
     </div>
   </div>{{end}}
   <div class="detail-grid">
-    <div class="inner">
-      {{if and .Claude .Claude.Topics}}<h3>Temas de conversación <span class="ia">Claude</span></h3>
-      {{range .Claude.Topics}}{{if .Key}}<details class="plegable"{{if .Fold.Open}} open{{end}}>{{template "pf-summary" .}}{{.Text}} · {{.Count}}</summary>
-        {{template "fold-msgs" .List}}
-      </details>{{else}}<div class="plegable tsolo">{{.Text}} · {{.Count}}</div>{{end}}{{end}}
-      {{else}}<h3>Temas de conversación <span class="chip">por reglas</span></h3>
-      {{range .Topics}}<div class="catrow" title="{{.Label}}: {{.N}} mensajes">
-        <span>{{.Label}}</span>
-        <div class="track"><div class="fill" style="width: {{printf "%.1f" .Pct}}%"></div></div>
-        <span class="num">{{miles .N}}</span>
-      </div>{{else}}<p class="muted">Sin datos.</p>{{end}}
-      {{if .CatsClaude}}<p class="muted">Los temas de Claude salen del resumen cuando termina el programa.</p>{{end}}{{end}}
-    </div>
+    {{template "talk" .Talk}}
     <div class="inner">
       <h3>Categorías {{if .CatsClaude}}<span class="ia">Claude</span>{{else}}<span class="chip">por reglas</span>{{end}}</h3>
       {{template "cgauge" .Gauge}}

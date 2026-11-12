@@ -1,4 +1,4 @@
-{{/* Encabezado común de las cuatro pantallas: tokens de color (claro y oscuro), CSS, título con el CSV, pestañas y franja de estado. */}}
+{{/* Encabezado común de las cinco pantallas: tokens de color (claro y oscuro), CSS y la columna de la izquierda con la marca, la navegación, la franja de estado y el CSV. */}}
 {{define "head"}}<!doctype html>
 <html lang="es">
 <head>
@@ -107,27 +107,42 @@
 * { box-sizing: border-box; }
 body { margin: 0; background: var(--surface-0); color: var(--text-primary);
   font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; -webkit-font-smoothing: antialiased; }
-main { max-width: 1200px; margin: 0 auto; padding: 24px 16px 64px; display: flex; flex-direction: column; gap: 20px; }
+main { max-width: 1200px; width: 100%; margin: 0 auto; padding: 24px 24px 64px; display: flex; flex-direction: column; gap: 20px; }
 h1 { font-size: 17px; margin: 0; font-weight: 700; letter-spacing: -.01em; }
 h2 { font-size: 16px; margin: 0 0 10px; font-weight: 600; }
 h3 { font-size: 15px; margin: 0 0 6px; }
 a { color: var(--link); }
 a:hover { color: var(--link-hover); }
 :focus-visible { outline: 2px solid var(--series-1); outline-offset: 2px; }
-/* Encabezado y pestañas: links comunes entre pantallas, sin JS propio. */
-.top { display: flex; flex-wrap: wrap; gap: 12px 16px; align-items: center; justify-content: space-between; }
-.brand { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; }
+/* Columna de la izquierda con la navegación: links comunes entre pantallas, sin JS propio. */
+.app { display: grid; grid-template-columns: 236px minmax(0, 1fr); min-height: 100vh; }
+.side { position: sticky; top: 0; height: 100vh; overflow-y: auto; display: flex; flex-direction: column; gap: 20px;
+  padding: 20px 12px; background: var(--surface-1); border-right: 1px solid var(--border); }
+.brand { display: flex; gap: 10px; align-items: center; padding: 0 6px; }
 .brand .logo { width: 36px; height: 36px; flex: none; }
 .logo .lg-bg { fill: var(--series-1); }
 .logo .lg-fg { fill: none; stroke: var(--on-accent); stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; }
 .brand .bsub { display: block; font-size: 12.5px; color: var(--text-muted); }
-.brand .csv { font-size: 13px; }
-/* Pestañas como control segmentado. */
-.tabs { display: flex; flex-wrap: wrap; gap: 4px; padding: 4px; border-radius: 12px; background: var(--surface-2); }
-.tabs a { display: inline-flex; align-items: center; min-height: 44px; padding: 0 16px; border-radius: 9px; text-decoration: none;
+.nav { display: flex; flex-direction: column; gap: 2px; }
+.nav a { display: flex; align-items: center; gap: 12px; min-height: 44px; padding: 0 12px; border-radius: 9px; text-decoration: none;
   font-weight: 500; font-size: 14px; color: var(--text-secondary); }
-.tabs a:hover { color: var(--text-primary); }
-.tabs a[aria-current="page"] { background: var(--surface-1); color: var(--text-primary); font-weight: 600; box-shadow: 0 1px 2px var(--shadow); }
+.nav a:hover { background: var(--surface-0); color: var(--text-primary); }
+.nav a[aria-current="page"] { background: var(--ia-bg); color: var(--ia-text); font-weight: 600; }
+.ico { width: 20px; height: 20px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.sfoot { margin-top: auto; display: flex; flex-direction: column; gap: 10px; padding: 14px 6px 0; border-top: 1px solid var(--border); font-size: 13px; }
+.sfoot .estado { flex-direction: column; gap: 2px; }
+.sfoot .csv { margin: 0; }
+/* En un celular la columna queda arriba y la navegación pasa a una barra fija abajo. */
+@media (max-width: 720px) {
+  .app { display: block; }
+  .side { position: static; height: auto; overflow: visible; gap: 10px; padding: 12px 16px; border-right: 0; border-bottom: 1px solid var(--border); }
+  .sfoot { margin-top: 0; padding: 0; border-top: 0; }
+  .nav { position: fixed; z-index: 20; left: 0; right: 0; bottom: 0; flex-direction: row; gap: 0;
+    padding: 4px 4px calc(4px + env(safe-area-inset-bottom, 0px)); background: var(--surface-1); border-top: 1px solid var(--border); box-shadow: 0 -1px 3px var(--shadow); }
+  .nav a { flex: 1 1 0; min-width: 0; flex-direction: column; justify-content: center; gap: 2px; min-height: 56px; padding: 4px 2px;
+    font-size: 11px; line-height: 1.15; text-align: center; }
+  main { padding: 16px 16px calc(96px + env(safe-area-inset-bottom, 0px)); }
+}
 .estado { display: flex; flex-wrap: wrap; gap: 4px 14px; align-items: baseline; }
 .estado .note { flex-basis: 100%; margin: 0; }
 .card { background: var(--surface-1); border: 1px solid var(--border); border-radius: 14px; padding: 20px; box-shadow: 0 1px 2px var(--shadow); }
@@ -194,7 +209,7 @@ select.sel, .inp { min-height: 44px; background: var(--surface-1); color: var(--
 .supers td { overflow-wrap: anywhere; }
 .supers td.n, .supers th.n { white-space: nowrap; }
 .words { display: flex; flex-wrap: wrap; gap: 6px; }
-.words span { font-size: 13px; padding: 2px 8px; border-radius: 6px; background: var(--grid); }
+.words > span { font-size: 13px; padding: 2px 8px; border-radius: 6px; background: var(--grid); }
 table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
 td, th { text-align: left; padding: 8px 6px; border-bottom: 1px solid var(--border); vertical-align: top; }
 th { font-weight: 600; color: var(--text-secondary); font-size: 12.5px; }
@@ -476,6 +491,8 @@ a.seg[aria-current="true"] { background: var(--text-primary); color: var(--surfa
 .bar.finde { fill: var(--sent-neu); }
 .likesl { fill: none; stroke: var(--series-2); stroke-width: 2; stroke-linejoin: round; vector-effect: non-scaling-stroke; pointer-events: none; }
 .sw.lk { background: var(--series-2); height: 3px; }
+.bar.lk { fill: var(--series-2); }
+.sw.lkb { background: var(--series-2); }
 .sw.s1 { background: var(--series-1); } .sw.s2 { background: var(--series-2); } .sw.s3 { background: var(--series-3); } .sw.s4 { background: var(--series-4); } .sw.s5 { background: var(--series-5); }
 .bar.s1 { fill: var(--series-1); } .bar.s2 { fill: var(--series-2); } .bar.s3 { fill: var(--series-3); } .bar.s4 { fill: var(--series-4); } .bar.s5 { fill: var(--series-5); }
 .kind { display: inline-block; font-size: 12px; font-weight: 600; border-radius: 4px; padding: 1px 6px; background: var(--ia-bg); color: var(--ia-text); }
@@ -515,6 +532,10 @@ a.seg[aria-current="true"] { background: var(--text-primary); color: var(--surfa
 .wbar { display: block; height: 100%; border-radius: 99px; background: var(--series-1); }
 .wbar.alt { background: var(--text-secondary); }
 .wup { color: var(--ok-text); font-size: 12px; }
+/* "De qué se habla": los subtítulos de la tarjeta, sin mayúsculas (llevan chips). */
+.talk .lbl { margin: 12px 0 6px; font-size: 13px; font-weight: 600; letter-spacing: 0; text-transform: none; color: var(--text-secondary); }
+.talk .chead + .lbl { margin-top: 0; }
+.talk .words { margin-bottom: 4px; }
 .ktag { font-size: 12px; font-weight: 400; color: var(--text-muted); }
 .hstack .hab, .sw.hab { background: var(--text-primary); }
 .hstack .nue, .sw.nue { background: var(--sent-neu); }
@@ -572,26 +593,32 @@ a.seg[aria-current="true"] { background: var(--text-primary); color: var(--surfa
 </style>
 </head>
 <body>
-<main>
-<header class="top">
+<div class="app">
+{{/* Columna de la izquierda (en un celular, la navegación pasa a una barra abajo):
+     marca, las cinco pantallas y, al pie, la franja de estado y el CSV. */}}
+<header class="side">
   <div class="brand">
     <svg class="logo" viewBox="0 0 36 36" aria-hidden="true"><rect class="lg-bg" width="36" height="36" rx="9"></rect><path class="lg-fg" d="M10 22l5-6 4 4 7-8"></path></svg>
     <div><h1>Monitor de audiencia</h1><span class="bsub">Alphamedia · YouTube</span></div>
-    <span class="csv"><a href="/export.csv">Descargar CSV para Claude</a></span>
   </div>
-  <nav class="tabs" aria-label="Secciones">
-    <a href="/"{{if eq .Tab "vivo"}} aria-current="page"{{end}}>En vivo</a>
-    <a href="/programas"{{if eq .Tab "programas"}} aria-current="page"{{end}}>Programas</a>
-    <a href="/comentarios"{{if eq .Tab "comentarios"}} aria-current="page"{{end}}>Comentarios y likes</a>
-    <a href="/sin-vivo"{{if eq .Tab "sinvivo"}} aria-current="page"{{end}}>Sin vivo</a>
-    <a href="/canales"{{if eq .Tab "canales"}} aria-current="page"{{end}}>Canales</a>
+  <nav class="nav" aria-label="Secciones">
+    <a href="/"{{if eq .Tab "vivo"}} aria-current="page"{{end}}><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="2.5"></circle><path d="M7.8 7.8a6 6 0 0 0 0 8.4M16.2 7.8a6 6 0 0 1 0 8.4M4.9 4.9a10 10 0 0 0 0 14.2M19.1 4.9a10 10 0 0 1 0 14.2"></path></svg><span>En vivo</span></a>
+    <a href="/programas"{{if eq .Tab "programas"}} aria-current="page"{{end}}><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="5" width="17" height="15" rx="2"></rect><path d="M3.5 10h17M8 3v4M16 3v4"></path></svg><span>Programas</span></a>
+    <a href="/comentarios"{{if eq .Tab "comentarios"}} aria-current="page"{{end}}><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v11H9l-5 4z"></path></svg><span>Comentarios y likes</span></a>
+    <a href="/sin-vivo"{{if eq .Tab "sinvivo"}} aria-current="page"{{end}}><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="2.5"></circle><path d="M7.8 7.8a6 6 0 0 0 0 8.4M16.2 7.8a6 6 0 0 1 0 8.4M4 4l16 16"></path></svg><span>Sin vivo</span></a>
+    <a href="/canales"{{if eq .Tab "canales"}} aria-current="page"{{end}}><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"></path><circle cx="16" cy="7" r="2"></circle><circle cx="10" cy="17" r="2"></circle></svg><span>Canales</span></a>
   </nav>
+  <div class="sfoot">
+    <div id="estado" hx-get="/parcial/resumen" hx-trigger="load, every 5s"><p class="muted">Cargando…</p></div>
+    <p class="csv"><a href="/export.csv">Descargar CSV para Claude</a></p>
+  </div>
 </header>
-<div id="estado" hx-get="/parcial/resumen" hx-trigger="load, every 5s"><p class="muted">Cargando…</p></div>
+<main>
 {{end}}
 
 {{define "foot"}}
 </main>
+</div>
 </body>
 </html>
 {{end}}

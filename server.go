@@ -1043,10 +1043,13 @@ func analysisData(msgs []Message, viewers []ViewerSample, ids []string, part0 pa
 			words = append(words, w)
 		}
 	}
+	talk := talkView(msgs, top, a.Topics, x.topics, true, now)
+	talk.Card, talk.Of, talk.ClaudeNote, talk.RulesNote = true, sc.of, x.topicsNote, x.rulesNote
 	return map[string]any{
 		"Hours": hours, "A": a, "Tech": bars(a.Tech), "Part": part, "Super": sup,
 		"Tiles": tiles, "Gauge": liveGauge(catRows(msgs), msgs, nil, fold, now), "CatTotal": a.Total, "CatOf": sc.of,
-		"Frase": liveSummary(diff, paceOK, sc.typical, words, best), "Monitor": monitorView(msgs, top, sc, now, x.regulars),
+		"Frase": liveSummary(diff, paceOK, sc.typical, words, best), "Monitor": monitorView(msgs, sc, x.regulars),
+		"Talk": talk,
 	}
 }
 
@@ -1059,6 +1062,10 @@ type liveExtra struct {
 	since    time.Time
 	regulars map[string]bool
 	pfranja  string // la franja de Momentos pedida, tal como llega
+	// Los temas de Claude del programa en curso, sacados de su tarjeta para
+	// "De qué se habla" (talkClaude); sin análisis, la nota de cuándo llegan.
+	topics                []ClaudeItem
+	topicsNote, rulesNote string
 }
 
 // channelAnalysis es el análisis de un canal: "Programa en curso" (el vivo
@@ -1088,6 +1095,12 @@ func (s *Server) channelAnalysis(w http.ResponseWriter, snap Snapshot, ch Channe
 		}
 	}
 	x.hourAgo = hourAgoSum(ago, now)
+	cardVer := "dia"
+	if ls.prog != "" {
+		cardVer = "programa"
+	}
+	card := s.claudeCard(snap, ch, ls.video, cardVer, local, "", fold)
+	x.topics, x.topicsNote, x.rulesNote = talkClaude(&card)
 	data := analysisData(ls.msgs, ls.viewers, ls.pids, ls.part, snap.Videos, ls.concurrent, ls.segs, now, hours, ls.sc, fold, x)
 	data["Likes"] = likes
 	data["Canal"], data["Video"], data["Ver"], data["Label"], data["Span"], data["Note"] = ch.ID, ls.video, ls.ver, channelName(ch), ls.span, ls.note
@@ -1096,11 +1109,7 @@ func (s *Server) channelAnalysis(w http.ResponseWriter, snap Snapshot, ch Channe
 	if sel.ok {
 		data["Franja"], data["SentTab"] = fold.Query.Get("franja"), sel.tab
 	}
-	cardVer := "dia"
-	if ls.prog != "" {
-		cardVer = "programa"
-	}
-	data["Claude"] = s.claudeCard(snap, ch, ls.video, cardVer, local, "", fold)
+	data["Claude"] = card
 	data["ClaudeLine"] = s.claudeLine(snap, ch, now)
 	labels := s.st.Labels(messageIDs(ls.msgs))
 	if s.claudeActive(snap) && len(labels) > 0 {
@@ -1714,7 +1723,10 @@ func (s *Server) claudeAnalyze(w http.ResponseWriter, r *http.Request) {
 			hours = 24
 		}
 		in.Fold = foldState{Open: foldParam(r.PostForm), Query: analysisQuery(ch.ID, video, "programa", hours, motiveParam(r.PostForm))}
-		s.render(w, "claude-card", claudeView(in))
+		// Los temas van en "De qué se habla", como en el refresco del análisis.
+		c := claudeView(in)
+		talkClaude(&c)
+		s.render(w, "claude-card", c)
 		return
 	}
 	http.Error(w, "Ese canal no está en -canal.", http.StatusBadRequest)
@@ -2457,7 +2469,8 @@ type ClaudeCard struct {
 // ClaudeBlock es un análisis guardado, listo para mostrar.
 type ClaudeBlock struct {
 	Title, Err, Summary, Tone, Footer string
-	Partial, Compact                  bool // Compact: en "Todo el día", solo resumen y sentimiento
+	At                                time.Time // cuándo se analizó
+	Partial, Compact                  bool      // Compact: en "Todo el día", solo resumen y sentimiento
 	Sent                              *SentimentBar
 	Topics, Questions, Complaints     []ClaudeItem
 	QFold, CFold                      Fold // preguntas y quejas, plegadas en En vivo
@@ -2573,7 +2586,7 @@ func claudeView(in claudeInput) ClaudeCard {
 // claudeBlock arma un análisis guardado. Los ejemplos que ya vencieron (o
 // que no están) no se muestran.
 func claudeBlock(a ClaudeAnalysis, msgs map[string]Message, compact bool) ClaudeBlock {
-	b := ClaudeBlock{Title: a.Program, Partial: a.Partial, Compact: compact, Err: a.Error}
+	b := ClaudeBlock{Title: a.Program, At: a.At, Partial: a.Partial, Compact: compact, Err: a.Error}
 	if compact {
 		end := a.To.Local().Format("15:04")
 		if a.Partial {

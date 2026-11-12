@@ -127,7 +127,7 @@ func TestProgramDetailGauge(t *testing.T) {
 		Model: defaultClaudeModel, From: day.Add(8 * time.Hour), To: day.Add(10 * time.Hour), Sent: 25, Total: 25,
 		Result: ClaudeResult{Summary: "Resumen", Topics: []ClaudeGroup{{Text: "El clima", Msgs: 3, People: 2}}}})
 	body = getBody(srv.Routes(), "/parcial/programas/detalle?tramo="+url.QueryEscape(key))
-	for _, w := range []string{`<h3>Categorías <span class="ia">Claude</span></h3>`, `class="cgauge`, `<h3>Temas de conversación <span class="ia">Claude</span>`, "El clima"} {
+	for _, w := range []string{`<h3>Categorías <span class="ia">Claude</span></h3>`, `class="cgauge`, `Temas de conversación <span class="ia">Claude</span>`, "El clima"} {
 		if !strings.Contains(body, w) {
 			t.Errorf("con resumen: falta %q", w)
 		}
@@ -419,7 +419,7 @@ func TestNoLivePage(t *testing.T) {
 	_, srv := programServer(t, now, false)
 	h := srv.Routes()
 	body := getBody(h, "/sin-vivo")
-	for _, w := range []string{`<a href="/sin-vivo" aria-current="page">Sin vivo</a>`, "<title>Sin vivo", `id="sinvivo"`, `hx-get="/parcial/sin-vivo?`,
+	for _, w := range []string{`<a href="/sin-vivo" aria-current="page">`, `<span>Sin vivo</span></a>`, "<title>Sin vivo", `id="sinvivo"`, `hx-get="/parcial/sin-vivo?`,
 		`hx-trigger="every 60s"`, "Cortes hoy", "Sin vivo hoy", "Al aire", "Corte más largo", "Últimos 7 días", "Últimos 30 días",
 		"pueden correrse de 1 a 3 minutos", `class="ntira"`,
 		// sin-vivo-monitor-apagado (CA5): gris es monitor apagado, sin el tope de 2 h.
@@ -434,7 +434,7 @@ func TestNoLivePage(t *testing.T) {
 		}
 	}
 	for _, path := range []string{"/", "/programas", "/comentarios", "/canales"} {
-		if b := getBody(h, path); !strings.Contains(b, `<a href="/sin-vivo">Sin vivo</a>`) {
+		if b := getBody(h, path); !strings.Contains(b, `<a href="/sin-vivo"><svg`) || !strings.Contains(b, `<span>Sin vivo</span></a>`) {
 			t.Errorf("%s: falta la pestaña Sin vivo", path)
 		}
 	}

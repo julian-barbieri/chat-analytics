@@ -6014,7 +6014,8 @@ func TestDashboardTabs(t *testing.T) {
 	st.SetVideos("Radio Test", []Video{{ID: "v1", Title: "🔴RADIO TEST en VIVO | LA MAÑANA", ChannelID: "UC1", Channel: "Radio Test", LiveStatus: "live"}})
 	h := (&Server{st: st, budget: 9000}).Routes()
 	tabs := []struct{ href, label string }{{"/", "En vivo"}, {"/programas", "Programas"}, {"/comentarios", "Comentarios y likes"}, {"/sin-vivo", "Sin vivo"}, {"/canales", "Canales"}}
-	link := regexp.MustCompile(`<a href="([^"]*)"( aria-current="page")?>([^<]*)</a>`)
+	// Cada link lleva su ícono (decorativo) y el texto (menu-likes-temas, CA1).
+	link := regexp.MustCompile(`<a href="([^"]*)"( aria-current="page")?><svg class="ico" viewBox="0 0 24 24" aria-hidden="true">.*?</svg><span>([^<]*)</span></a>`)
 	for _, cur := range tabs {
 		t.Run(cur.label, func(t *testing.T) {
 			w := httptest.NewRecorder()
@@ -6028,7 +6029,19 @@ func TestDashboardTabs(t *testing.T) {
 					t.Errorf("falta %q", want)
 				}
 			}
-			i := strings.Index(body, `<nav class="tabs" aria-label="Secciones">`)
+			// La columna de la izquierda: marca, navegación y, al pie, la franja
+			// de estado y el CSV (menu-likes-temas, CA1 y CA2).
+			a, b := strings.Index(body, `<header class="side"`), strings.Index(body, "</header>")
+			if a < 0 || b < a {
+				t.Fatalf("falta la columna de la izquierda")
+			}
+			side := body[a:b]
+			for _, want := range []string{"<h1>Monitor de audiencia</h1>", `<div id="estado" hx-get="/parcial/resumen" hx-trigger="load, every 5s">`, `href="/export.csv"`} {
+				if !strings.Contains(side, want) {
+					t.Errorf("columna: falta %q", want)
+				}
+			}
+			i := strings.Index(body, `<nav class="nav" aria-label="Secciones">`)
 			if i < 0 {
 				t.Fatalf("falta la navegación entre pantallas")
 			}
@@ -9943,10 +9956,10 @@ func TestQuestionsTop5(t *testing.T) {
 func TestProgramsTabName(t *testing.T) {
 	_, srv := programServer(t, noonToday(), false)
 	body := getBody(srv.Routes(), "/programas")
-	if !strings.Contains(body, `aria-current="page">Programas</a>`) || !strings.Contains(body, "<title>Programas · Monitor de audiencia") {
+	if !strings.Contains(body, `<a href="/programas" aria-current="page">`) || !strings.Contains(body, `<span>Programas</span></a>`) || !strings.Contains(body, "<title>Programas · Monitor de audiencia") {
 		t.Errorf("falta la pestaña Programas")
 	}
-	if strings.Contains(body, "Programas de hoy</a>") || strings.Contains(body, "<title>Programas de hoy") {
+	if strings.Contains(body, "Programas de hoy</span></a>") || strings.Contains(body, "<title>Programas de hoy") {
 		t.Errorf("sigue «Programas de hoy» en la pestaña")
 	}
 }
@@ -10953,18 +10966,16 @@ func TestClaudeTopicsFold(t *testing.T) {
 	if !strings.Contains(open, `<details class="plegable" open><summary id="plegar-tema1"`) || !strings.Contains(open, `name="abrir" value="tema1"`) {
 		t.Fatalf("abierto: no sigue abierto tras el refresco")
 	}
-	// Solo en la tarjeta de Claude: Categorías también muestra sus últimos mensajes.
-	open = open[strings.Index(open, `id="claude-card"`):]
-	open = open[:strings.Index(open, "</section>")]
+	// Solo en "De qué se habla", donde van los temas desde menu-likes-temas:
+	// Categorías también muestra sus últimos mensajes.
+	open = card(open, `id="palabras"`)
 	if n := strings.Count(open, "tema msg "); n != maxFoldMsgs || !strings.Contains(open, "y 5 más") {
 		t.Errorf("abierto: %d mensajes, quiero %d y «y 5 más»", n, maxFoldMsgs)
 	}
 	if i, j := strings.Index(open, "tema msg 24."), strings.Index(open, "tema msg 5."); i < 0 || j < 0 || i > j {
 		t.Errorf("los más nuevos primero")
 	}
-	old := getBody(h, base+"&abrir=tema2")
-	old = old[strings.Index(old, `id="claude-card"`):]
-	old = old[:strings.Index(old, "</section>")]
+	old := card(getBody(h, base+"&abrir=tema2"), `id="palabras"`)
 	if n := strings.Count(old, "tema msg "); n != 3 || !strings.Contains(old, "tema msg 1.") || !strings.Contains(old, "y 6 más") {
 		t.Errorf("tema viejo: %d mensajes, quiero sus 3 ejemplos y «y 6 más»", n)
 	}
@@ -11868,7 +11879,7 @@ func TestProgramDetailClaudeCats(t *testing.T) {
 	}
 	_, off := programServer(t, now, false)
 	body = getBody(off.Routes(), "/parcial/programas/detalle?tramo="+url.QueryEscape(key))
-	if !strings.Contains(body, `<h3>Temas de conversación <span class="chip">por reglas</span>`) {
+	if !strings.Contains(body, `Temas de conversación <span class="chip">por reglas</span>`) {
 		t.Error("sin Claude: faltan los temas por reglas")
 	}
 }
@@ -12799,7 +12810,7 @@ func TestExecutiveLive(t *testing.T) {
 	}
 	inOrder("frase y números", []string{`<p class="frase">`, "Lo que más se repite: «dolar».", `class="tiles"`,
 		">Mirando ahora<", ">Participación<", ">Likes del vivo<", ">Mensajes por minuto<", ">Personas que escribieron<", ">Preguntas<", ">Super Chats<"})
-	inOrder("tarjetas", []string{`id="monitor"`, `id="palabras"`, "De qué se habla", `class="wbar"`, `id="participan"`, "Quiénes participan",
+	inOrder("tarjetas", []string{`id="monitor"`, `id="palabras"`, "De qué se habla", `class="words"`, `id="participan"`, "Quiénes participan",
 		"habituales", "Quiénes más escriben", `id="likes"`, `id="supers"`, `tile sbig"`, "Por programa"})
 	for _, w := range []string{`<div class="v">140</div>`, "&#43;40 en la última media hora", `tile up"`, `<span class="ktag">habitual</span>`} {
 		if !strings.Contains(body, w) {
@@ -12851,7 +12862,7 @@ func TestMonitorTags(t *testing.T) {
 	add("Ana", "", "hola radio", 4)
 	add("Beto", "", "buenas tardes", 3)
 	add("Spam", "", "entrá a http://x.com", 2)
-	v := monitorView(msgs, TopWords(msgs, 8), scopeProgram, now, map[string]bool{"Ana": true, "Mod": true})
+	v := monitorView(msgs, scopeProgram, map[string]bool{"Ana": true, "Mod": true})
 	got := map[string]string{}
 	for _, a := range v["Authors"].([]TalkerRow) {
 		got[a.Key] = a.Tag
