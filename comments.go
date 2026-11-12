@@ -49,6 +49,8 @@ var (
 		{"ratio", "Comentarios c/1.000 vistas"}, {"quejas", "% de quejas"}, {"fecha", "Publicación"}}
 	commentDests = []option{{"likes", "Más likes"}, {"respuestas", "Más respuestas"}, {"quejas", "Quejas"}}
 	videoOrders  = []option{{"likes", "Más likes"}, {"respuestas", "Más respuestas"}, {"recientes", "Más recientes"}, {"viejos", "Más viejos"}}
+	// Qué muestra "Comentarios y likes por día": una serie con su eje, o las dos.
+	commentViews = []option{{"comentarios", "Comentarios"}, {"likes", "Likes"}, {"dos", "Los dos"}}
 )
 
 // Los IDs de video de YouTube son de 11 caracteres de este alfabeto; se
@@ -70,6 +72,7 @@ func pickOption(v string, opts []option) string {
 type CommentsQuery struct {
 	Canal, Periodo, Tipo, Orden, Dest string
 	Video, Buscar, Cat, VOrden        string
+	Ver                               string // qué muestra el gráfico por día
 	SinResp                           bool
 	Pag                               int
 	// Categorías en semicírculo (CA16 de diseno-ejecutivo): la elegida, sin
@@ -87,6 +90,7 @@ func commentsQuery(v url.Values) CommentsQuery {
 		Orden:   pickOption(v.Get("orden"), commentOrders),
 		Dest:    pickOption(v.Get("dest"), commentDests),
 		VOrden:  pickOption(v.Get("vorden"), videoOrders),
+		Ver:     pickOption(v.Get("ver"), commentViews),
 		SinResp: v.Get("sinresp") == "1",
 		Pag:     1,
 	}
@@ -137,6 +141,7 @@ func (q CommentsQuery) values() url.Values {
 	set("tipo", q.Tipo, commentTypes[0].ID)
 	set("orden", q.Orden, commentOrders[0].ID)
 	set("dest", q.Dest, commentDests[0].ID)
+	set("ver", q.Ver, commentViews[0].ID)
 	set("video", q.Video, "")
 	set("sector", q.Sector, "")
 	if q.SinOtros {
@@ -327,6 +332,7 @@ func withDefaults(q CommentsQuery) CommentsQuery {
 	q.Orden = pickOption(q.Orden, commentOrders)
 	q.Dest = pickOption(q.Dest, commentDests)
 	q.VOrden = pickOption(q.VOrden, videoOrders)
+	q.Ver = pickOption(q.Ver, commentViews)
 	q.Pag = max(q.Pag, 1)
 	return q
 }

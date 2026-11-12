@@ -145,7 +145,17 @@ func (s *Server) commentsData(v url.Values) map[string]any {
 		{"Preguntas sin respuesta", miles(view.OpenQuestions), "al momento de guardarlas", ""},
 		{"Quejas", pct(view.ComplaintPct), "de los comentarios", ""},
 	}
-	data["Chart"] = dayChart(view.Days)
+	data["Chart"] = dayChart(view.Days, q.Ver)
+	// El selector del gráfico, solo si hay likes para mostrar; el título y la
+	// leyenda siguen a lo que se ve (sin likes, comentarios).
+	ver := q.Ver
+	if anyLikes(view.Days) {
+		data["Views"] = choices(commentViews, q.Ver, q, func(n *CommentsQuery, v string) { n.Ver = v })
+	} else {
+		ver = "comentarios"
+	}
+	data["Ver"] = ver
+	data["ChartTitle"] = map[string]string{"comentarios": "Comentarios por día", "likes": "Likes nuevos por día", "dos": "Comentarios y likes por día"}[ver]
 	return data
 }
 
@@ -190,21 +200,39 @@ func barChart(ns []int, labels []string, classes []string, one, many string) Com
 	return c
 }
 
-// dayChart es "Comentarios por día", con los fines de semana en gris y una
-// marca en los días con videos publicados.
-func dayChart(days []CommentDay) CommentChart {
+// dayChart es "Comentarios y likes por día", con una marca en los días con
+// videos publicados. ver elige qué se dibuja: los comentarios (los fines de
+// semana en gris), los likes nuevos con su propia escala o los dos, con la
+// línea de likes sobre las barras. Sin likes guardados, siempre comentarios.
+func dayChart(days []CommentDay, ver string) CommentChart {
+	if !anyLikes(days) {
+		ver = "comentarios"
+	}
 	ns, labels, classes := make([]int, len(days)), make([]string, len(days)), make([]string, len(days))
 	for i, d := range days {
-		ns[i], labels[i] = d.N, commentDayLabel(d.Day)
-		if d.Weekend {
-			classes[i] = "finde"
+		labels[i] = commentDayLabel(d.Day)
+		switch {
+		case ver == "likes":
+			ns[i], classes[i] = int(d.Likes), "lk"
+		case d.Weekend:
+			ns[i], classes[i] = d.N, "finde"
+		default:
+			ns[i] = d.N
 		}
 	}
-	c := barChart(ns, labels, classes, "comentario", "comentarios")
+	var c CommentChart
+	if ver == "likes" {
+		c = barChart(ns, labels, classes, "like nuevo", "likes nuevos")
+	} else {
+		c = barChart(ns, labels, classes, "comentario", "comentarios")
+	}
 	// Lo que se publicó cada día va también en el <title> de su barra: el ▲ de
 	// arriba es aria-hidden y su title solo se ve con el mouse.
 	for i, d := range days {
-		if d.Likes > 0 {
+		switch {
+		case ver == "likes" && d.N > 0:
+			c.Bars[i].Label += ", " + plural(d.N, "comentario", "comentarios")
+		case ver != "likes" && d.Likes > 0:
 			c.Bars[i].Label += ", " + plural(int(d.Likes), "like nuevo", "likes nuevos")
 		}
 		if len(d.Pub) > 0 {
@@ -233,12 +261,26 @@ func dayChart(days []CommentDay) CommentChart {
 	for _, n := range ns {
 		total += n
 	}
+	if ver == "likes" {
+		c.Aria = fmt.Sprintf("Likes nuevos por día en %d días: %s en total, el día con más %s", len(days), miles(total), miles(c.Max))
+		return c
+	}
 	c.Aria = fmt.Sprintf("Comentarios por día en %d días: %s en total, el día con más %s", len(days), miles(total), miles(c.Max))
-	c.Likes, c.LMax = likesSteps(days)
-	if c.Likes != "" {
+	if ver == "dos" {
+		c.Likes, c.LMax = likesSteps(days)
 		c.Aria += "; likes nuevos por día en línea, el día con más " + c.LMax
 	}
 	return c
+}
+
+// anyLikes dice si algún día tiene likes nuevos: sin eso no hay selector.
+func anyLikes(days []CommentDay) bool {
+	for _, d := range days {
+		if d.Likes > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // likesSteps es la línea de likes nuevos por día, en escalones (cada valor es

@@ -478,14 +478,14 @@ func TestCommentsPage(t *testing.T) {
 	}
 	for _, path := range []string{"/", "/programas", "/canales", "/comentarios"} {
 		body := get(path).Body.String()
-		i, j, k := strings.Index(body, ">Programas</a>"), strings.Index(body, ">Comentarios y likes</a>"), strings.Index(body, ">Canales</a>")
+		i, j, k := strings.Index(body, "<span>Programas</span></a>"), strings.Index(body, "<span>Comentarios y likes</span></a>"), strings.Index(body, "<span>Canales</span></a>")
 		if i < 0 || j < i || k < j {
 			t.Errorf("%s: las pestañas no están en orden (%d, %d, %d)", path, i, j, k)
 		}
 	}
 	w := get("/comentarios?periodo=<script>&canal=%3Cb%3E")
 	body := w.Body.String()
-	for _, want := range []string{`aria-current="page">Comentarios y likes`, "Entrevista al ministro", "Preguntas sin respuesta", "¿Dónde está la entrevista completa?", "Ana",
+	for _, want := range []string{`<span>Comentarios y likes</span>`, `href="/comentarios" aria-current="page"`, "Entrevista al ministro", "Preguntas sin respuesta", "¿Dónde está la entrevista completa?", "Ana",
 		"Comunidad", ">Shorts<", "Likes nuevos", "Videos y shorts"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("falta %q", want)

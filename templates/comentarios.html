@@ -47,9 +47,10 @@
 <div class="tiles">{{range .Tiles}}<div class="inner tile"><div class="l">{{.Label}}</div><div class="v">{{.Value}}</div><div class="muted">{{.Note}}</div></div>{{end}}</div>
 
 <section class="card cchart" aria-labelledby="cdias-h">
-  <div class="chead"><h2 id="cdias-h">Comentarios y likes por día</h2><span class="muted">▲ días con videos publicados (pasá el mouse para ver cuáles) · cada serie con su escala</span></div>
+  <div class="chead"><h2 id="cdias-h">{{.ChartTitle}}</h2>{{with .Views}}<div class="chips" role="group" aria-label="Qué ver en el gráfico">{{range .}}{{template "cfiltro" .}}{{end}}</div>{{end}}</div>
+  <p class="muted">▲ días con videos publicados (pasá el mouse para ver cuáles){{if eq .Ver "dos"}} · cada serie con su escala{{end}}</p>
   {{template "cchart" .Chart}}
-  <div class="leyenda"><span class="leg"><span class="sw pos" aria-hidden="true"></span>Comentarios</span><span class="leg"><span class="sw neu" aria-hidden="true"></span>Fin de semana</span>{{if .Chart.Likes}}<span class="leg"><span class="sw lk" aria-hidden="true"></span>Likes nuevos (el día con más: {{.Chart.LMax}})</span>{{end}}</div>
+  <div class="leyenda">{{if eq .Ver "likes"}}<span class="leg"><span class="sw lkb" aria-hidden="true"></span>Likes nuevos (el día con más: {{miles .Chart.Max}})</span>{{else}}<span class="leg"><span class="sw pos" aria-hidden="true"></span>Comentarios</span><span class="leg"><span class="sw neu" aria-hidden="true"></span>Fin de semana</span>{{end}}{{if .Chart.Likes}}<span class="leg"><span class="sw lk" aria-hidden="true"></span>Likes nuevos (el día con más: {{.Chart.LMax}})</span>{{end}}</div>
 </section>
 
 <div class="grid2">

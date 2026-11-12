@@ -617,8 +617,8 @@ type ProgramDetail struct {
 	Claude               *ClaudeBlock // el análisis final, si hay y no tuvo error
 	ClaudeErr, NoSummary string
 	ClaudeFor            string // con cortes: qué parte resume Claude
-	Topics               []CatRow
 	Questions            []Message
+	Talk                 TalkView // "De qué se habla", la misma tarjeta que En vivo
 	// Con Claude y etiquetas en el tramo: los grupos de preguntas de las
 	// tandas y las categorías de Claude (programClaudeCards).
 	QClaude, CatsClaude bool
@@ -739,7 +739,7 @@ func (s *Server) programDetail(ps ProgramSeg, msgs []Message, a *ClaudeAnalysis,
 		d.NoSummary = "Todavía no hay resumen: se hace solo cuando termina el programa."
 	}
 	an := Analyze(msgs)
-	d.Topics, d.Questions = bars(an.Topics), an.Questions
+	d.Questions = an.Questions
 	for _, c := range Supers(msgs, videoTitles(snap.Videos)).ByCurrency {
 		d.Supers = append(d.Supers, SuperRow{Currency: currencyLabel(c.Currency), Total: money(c.Micros), N: c.N})
 	}
@@ -779,6 +779,7 @@ func (s *Server) programDetail(ps ProgramSeg, msgs []Message, a *ClaudeAnalysis,
 	d.Gauge = programGauge(d.Cats, msgs, labels, sg, q, now)
 	programSlotLinks(&d, slots, msgs, sentLabels, q)
 	programFoldLists(&d, a, msgs, labels, q)
+	programTalk(&d, msgs, an.Topics, sg.State == SegLive, now)
 	var topics []ClaudeGroup
 	if d.Claude != nil {
 		topics = a.Result.Topics
@@ -789,6 +790,26 @@ func (s *Server) programDetail(ps ProgramSeg, msgs []Message, a *ClaudeAnalysis,
 		d.History = s.programHistory(ps, ems, from, now)
 	}
 	return d
+}
+
+// programTalk arma "De qué se habla" del detalle: los temas del resumen de
+// Claude (ya con su flecha, de programFoldLists) o por reglas, y las palabras
+// del programa; "en alza" solo con el programa al aire.
+func programTalk(d *ProgramDetail, msgs []Message, topics []Count, live bool, now time.Time) {
+	var claude []ClaudeItem
+	if d.Claude != nil {
+		claude = d.Claude.Topics
+	}
+	d.Talk = talkView(msgs, TopWords(msgs, wordsShown), topics, claude, live, now)
+	d.Talk.Of = "del programa"
+	switch {
+	case len(claude) > 0 && d.ClaudeFor != "":
+		d.Talk.ClaudeNote = d.ClaudeFor
+	case len(claude) > 0:
+		d.Talk.ClaudeNote = "Del resumen de Claude cuando terminó el programa."
+	case d.CatsClaude:
+		d.Talk.RulesNote = "Los temas de Claude salen del resumen cuando termina el programa."
+	}
 }
 
 // programClaudeCards arma Preguntas y Categorías del detalle con las
