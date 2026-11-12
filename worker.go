@@ -647,12 +647,19 @@ func RunWorker(ctx context.Context, yt *YouTube, st *Store, cfg WorkerConfig) {
 					}
 				}
 				trackChannels(channels, vids, now)
+				var noLive []string
 				for _, c := range channels {
+					if c.resolved && !c.live {
+						noLive = append(noLive, c.info.ID)
+					}
 					// Esta revisión ya miró sus vivos: la rápida espera fastEvery desde acá.
 					if !c.live && now.Before(c.fastUntil) {
 						c.nextFast = now.Add(fastEvery)
 					}
 				}
+				// Para Sin vivo: el monitor miró estos canales y no tenían vivo
+				// (sin cuota extra; si la revisión falló, no se guarda nada).
+				st.AddNoLive(time.Now(), noLive)
 				publish()
 				return lookupErr
 			})
@@ -716,6 +723,7 @@ func RunWorker(ctx context.Context, yt *YouTube, st *Store, cfg WorkerConfig) {
 				}
 			}
 			if !live {
+				st.AddNoLive(time.Now(), []string{c.info.ID})
 				continue
 			}
 			log.Printf("vivo nuevo de %s encontrado a los %s", c.info.Title, humanDur(now.Sub(c.waitSince)))

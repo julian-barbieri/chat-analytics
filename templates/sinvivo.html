@@ -2,7 +2,7 @@
 {{template "sinvivo-cuerpo" .}}
 {{template "foot" .}}
 
-{{/* Pantalla Sin vivo: los cortes de un canal, de datos.vivos.jsonl. Se refresca cada 60 s; los filtros son links que reemplazan #sinvivo. */}}
+{{/* Pantalla Sin vivo: los cortes de un canal, de datos.vivos.jsonl y datos.sinvivo.jsonl. Se refresca cada 60 s; los filtros son links que reemplazan #sinvivo. */}}
 {{define "nfiltro"}}<a class="seg" href="{{.Page}}" hx-get="{{.Partial}}" hx-target="#sinvivo" hx-swap="outerHTML" hx-push-url="{{.Page}}"{{if .On}} aria-current="true"{{end}}>{{.Name}}</a>{{end}}
 
 {{define "sinvivo-cuerpo"}}
@@ -12,7 +12,7 @@
     <div class="field"><span class="lbl">Canal</span><div class="chips">{{range .Channels}}{{template "nfiltro" .}}{{end}}</div></div>
     <div class="field"><span class="lbl">Período</span><div class="chips">{{range .Periods}}{{template "nfiltro" .}}{{end}}</div></div>
   </div>
-  <p class="muted">Los cortes se miden con las revisiones de videos: pueden correrse de 1 a 3 minutos. Un rato de más de 2 h sin vivo no cuenta como corte: puede ser que el canal no transmita a esa hora o que el monitor estuviera apagado.</p>
+  <p class="muted">Los cortes se miden con las revisiones de videos: pueden correrse de 1 a 3 minutos. Un corte es un rato en que el monitor revisó el canal y no encontró el vivo, dure lo que dure. Si el monitor estaba apagado no se sabe qué pasó: se pinta gris y no cuenta.</p>
 </section>
 {{if .NoChannels}}<section class="card"><p class="muted">Todavía no hay canales configurados. Agregalos en Canales.</p></section>
 {{else}}
@@ -26,8 +26,8 @@
     <span class="num">{{if .CutMin}}{{.CutMin}} min{{else}}—{{end}}</span>
   </li>{{end}}</ul>
   <div class="nhoras" aria-hidden="true"><span style="left: 0%">00</span><span style="left: 25%">06</span><span style="left: 50%">12</span><span style="left: 75%">18</span><span style="left: 100%">24</span></div>
-  <p class="muted leyenda"><span class="sw naire" aria-hidden="true"></span> Al aire <span class="sw ncorte" aria-hidden="true"></span> Corte (hasta 2 h) <span class="sw nlargo" aria-hidden="true"></span> Sin vivo más de 2 h · en blanco, sin datos</p>
-  {{else}}<p class="muted">Todavía no hay muestras de vivos de este canal en el período. Se guardan en cada revisión de videos.</p>{{end}}
+  <p class="muted leyenda"><span class="sw naire" aria-hidden="true"></span> Al aire <span class="sw ncorte" aria-hidden="true"></span> Corte <span class="sw napagado" aria-hidden="true"></span> Monitor apagado</p>
+  {{else}}<p class="muted">Todavía no hay revisiones de este canal en el período. Se guardan en cada revisión de videos.</p>{{end}}
 </section>
 <section class="card" aria-labelledby="ncortes-h">
   <div class="chead"><h2 id="ncortes-h">Cortes</h2><span class="muted">{{.In}}, lo más nuevo arriba</span></div>

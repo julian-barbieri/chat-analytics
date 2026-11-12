@@ -278,7 +278,10 @@ func TestProgramSegmentsNewLive(t *testing.T) {
 	}
 }
 
-// TestNoLiveCuts (CA11): los cortes, las tiras y los números de un canal.
+// TestNoLiveCuts (CA11 de ajustes-y-sin-vivo; CA3 a CA5 de
+// sin-vivo-monitor-apagado): con las revisiones sin vivo, un rato en que el
+// monitor revisó el canal y no encontró vivo es corte (sin mínimo ni tope) y
+// uno sin ninguna revisión es monitor apagado.
 func TestNoLiveCuts(t *testing.T) {
 	orig := time.Local
 	t.Cleanup(func() { time.Local = orig })
@@ -293,36 +296,65 @@ func TestNoLiveCuts(t *testing.T) {
 	run := func(video, title string, from, to time.Time) []LiveSample {
 		return livesEvery(video, "UCA", "Rock & Pop", "🔴 [EN VIVO] "+title+" | ROCK & POP", from, to)
 	}
+	checks := func(from, to time.Time) []NoLiveCheck {
+		var out []NoLiveCheck
+		for t := from; !t.After(to); t = t.Add(3 * time.Minute) {
+			out = append(out, NoLiveCheck{At: t, ChannelID: "UCA"})
+		}
+		return out
+	}
 	var samples []LiveSample
-	// Ayer: 06:00 a 10:00 y 10:09 a 22:00 (corte de 9 min), y nada a la noche (sin vivo largo).
+	var noLive []NoLiveCheck
+	// Ayer: nada hasta las 06:00 (apagado), 06:00 a 10:00 al aire, corte de
+	// 9 min, al aire hasta las 22:00 con un hueco sin muestras de 14:57 a 16:00
+	// (apagado) y de noche el monitor andando sin vivo hasta hoy 02:57 (corte de
+	// casi 5 h). Después, apagado hasta las 06:02.
 	samples = append(samples, run("y1", "MAÑANA", at(yday, "06:00"), at(yday, "10:00"))...)
-	samples = append(samples, run("y2", "MEDIODÍA", at(yday, "10:09"), at(yday, "22:00"))...)
-	// Hoy: 06:02 a 09:17, 09:23 a 10:59 y desde 11:05 al aire (muestras cada 3 min).
+	noLive = append(noLive, checks(at(yday, "10:03"), at(yday, "10:06"))...)
+	for _, s := range run("y2", "MEDIODÍA", at(yday, "10:09"), at(yday, "22:00")) {
+		if s.At.Before(at(yday, "15:00")) || !s.At.Before(at(yday, "16:00")) {
+			samples = append(samples, s)
+		}
+	}
+	noLive = append(noLive, checks(at(yday, "22:03"), at(today, "02:57"))...)
+	// Hoy: un corte de 2 min entre vivos (una búsqueda rápida a las 09:18), uno
+	// de 3 min dentro del mismo vivo (10:02) y uno de 7 min antes de LA TARDE.
 	samples = append(samples, run("t1", "ESTA MAÑANA", at(today, "06:02"), at(today, "09:17"))...)
-	samples = append(samples, run("t2", "VAMOS", at(today, "09:23"), at(today, "11:00"))...)
+	noLive = append(noLive, NoLiveCheck{At: at(today, "09:18"), ChannelID: "UCA"})
+	samples = append(samples, run("t2", "VAMOS", at(today, "09:19"), at(today, "10:58"))...)
+	noLive = append(noLive, NoLiveCheck{At: at(today, "10:02"), ChannelID: "UCA"})
+	noLive = append(noLive, checks(at(today, "11:01"), at(today, "11:04"))...)
 	samples = append(samples, run("t3", "LA TARDE", at(today, "11:05"), at(today, "11:56"))...)
-	// Otro canal no cuenta.
+	// Otro canal no cuenta: ni su vivo ni su revisión sin vivo.
 	samples = append(samples, LiveSample{At: at(today, "08:00"), VideoID: "z", ChannelID: "UCZ", Channel: "Otro", Title: "X"})
+	noLive = append(noLive, NoLiveCheck{At: at(today, "07:00"), ChannelID: "UCZ"})
 	now := at(today, "12:00")
 	days := []time.Time{today, yday}
-	v := NoLiveCuts(samples, "UCA", map[string]bool{"t3": true}, days, now)
+	v := NoLiveCuts(samples, noLive, "UCA", days, now)
 	if !v.HasData || len(v.Days) != 2 || v.Days[0].Label != "Hoy" || v.Days[1].Label != "Ayer" {
 		t.Fatalf("vista = %+v", v)
 	}
-	var cuts []string
-	for _, c := range v.Cuts {
-		cuts = append(cuts, fmt.Sprintf("%s %s-%s %s→%s", c.Start.Format("02"), c.Start.Format("15:04"), c.End.Format("15:04"), c.Before, c.After))
+	str := func(v NoLiveView) string {
+		var cuts []string
+		for _, c := range v.Cuts {
+			cuts = append(cuts, fmt.Sprintf("%s %s-%s %s→%s", c.Start.Format("02"), c.Start.Format("15:04"), c.End.Format("15:04"), c.Before, c.After))
+		}
+		return strings.Join(cuts, "|")
 	}
-	want := "12 10:59-11:05 VAMOS→LA TARDE|12 09:17-09:23 ESTA MAÑANA→VAMOS|11 10:00-10:09 MAÑANA→MEDIODÍA"
-	if got := strings.Join(cuts, "|"); got != want {
+	want := "12 10:58-11:05 VAMOS→LA TARDE|12 10:01-10:04 VAMOS→VAMOS|12 09:17-09:19 ESTA MAÑANA→VAMOS|11 22:00-02:57 MEDIODÍA→|11 10:00-10:09 MAÑANA→MEDIODÍA"
+	if got := str(v); got != want {
 		t.Errorf("cortes:\n got %s\nwant %s", got, want)
 	}
-	if v.CutsToday != 2 || v.MinToday != 12 || v.Longest != 9*time.Minute {
+	if v.Cuts[3].Ongoing {
+		t.Errorf("el corte que terminó con el monitor apagado no sigue: %+v", v.Cuts[3])
+	}
+	if v.CutsToday != 4 || v.MinToday != 7+3+2+177 || v.Longest != 4*time.Hour+57*time.Minute {
 		t.Errorf("números: hoy %d cortes, %d min, el más largo %v", v.CutsToday, v.MinToday, v.Longest)
 	}
-	// Al aire: ayer 06:00-22:00 menos 9 min, hoy 06:02-12:00 menos 12 min; la noche no cuenta.
-	onAir := (16*60 - 9 + 358 - 12)
-	if want := float64(onAir) * 100 / float64(16*60+358); fmt.Sprintf("%.1f", v.OnAirPct) != fmt.Sprintf("%.1f", want) {
+	// Al aire ÷ (al aire + cortes), sin lo apagado.
+	onAir := 240 + 288 + 360 + 195 + 42 + 54 + 55
+	cuts := 9 + 297 + 2 + 3 + 7
+	if want := float64(onAir) * 100 / float64(onAir+cuts); fmt.Sprintf("%.2f", v.OnAirPct) != fmt.Sprintf("%.2f", want) {
 		t.Errorf("%% al aire = %.2f, quería %.2f", v.OnAirPct, want)
 	}
 	classes := func(d NoLiveDay) string {
@@ -332,26 +364,51 @@ func TestNoLiveCuts(t *testing.T) {
 		}
 		return strings.Join(out, ",")
 	}
-	if got := classes(v.Days[0]); got != "largo,aire,corte,aire,corte,aire" {
+	if got := classes(v.Days[0]); got != "corte,apagado,aire,corte,aire,corte,aire,corte,aire" {
 		t.Errorf("tira de hoy: %s", got)
 	}
-	if got := classes(v.Days[1]); got != "aire,corte,aire,largo" {
+	if got := classes(v.Days[1]); got != "apagado,aire,corte,aire,apagado,aire,corte" {
 		t.Errorf("tira de ayer: %s", got)
 	}
-	if v.Days[0].CutMin != 12 || v.Days[1].CutMin != 9 {
+	if v.Days[0].CutMin != 189 || v.Days[1].CutMin != 129 {
 		t.Errorf("minutos por día: %d y %d", v.Days[0].CutMin, v.Days[1].CutMin)
 	}
-	p := v.Days[0].Parts[2]
-	if fmt.Sprintf("%.2f %.2f", p.Left, p.Width) != fmt.Sprintf("%.2f %.2f", (9*60+17)*100/1440.0, 6*100/1440.0) || !strings.Contains(p.Title, "09:17 a 09:23") {
-		t.Errorf("corte de hoy en la tira: %+v", p)
+	p := v.Days[0].Parts[3]
+	if fmt.Sprintf("%.3f %.3f", p.Left, p.Width) != fmt.Sprintf("%.3f %.3f", (9*60+17)*100/1440.0, 2*100/1440.0) || !strings.Contains(p.Title, "09:17 a 09:19") {
+		t.Errorf("corte de 2 min en la tira: %+v", p)
 	}
-	// Un corte en curso (hace 5 min que no hay vivo).
-	v = NoLiveCuts(samples, "UCA", nil, days, at(today, "12:01"))
-	if len(v.Cuts) == 0 || !v.Cuts[0].Ongoing || v.Cuts[0].After != "" || v.CutsToday != 3 {
+	if p := v.Days[1].Parts[4]; !strings.Contains(p.Title, "Monitor apagado") || !strings.Contains(p.Title, "14:57 a 16:00") {
+		t.Errorf("rato apagado de ayer: %+v", p)
+	}
+	// La tira de hoy llega hasta ahora: lo que falta del día queda en blanco.
+	last := v.Days[0].Parts[len(v.Days[0].Parts)-1]
+	if fmt.Sprintf("%.3f", last.Left+last.Width) != fmt.Sprintf("%.3f", 12*100/24.0) {
+		t.Errorf("la tira de hoy termina en %.3f %%", last.Left+last.Width)
+	}
+
+	// Un corte en curso: la última revisión no encontró vivo.
+	v = NoLiveCuts(samples, append(noLive, NoLiveCheck{At: at(today, "11:59"), ChannelID: "UCA"}), "UCA", days, at(today, "12:01"))
+	if len(v.Cuts) == 0 || !v.Cuts[0].Ongoing || v.Cuts[0].After != "" || v.Cuts[0].Before != "LA TARDE" || v.CutsToday != 5 {
 		t.Errorf("corte en curso: %+v", v.Cuts)
 	}
-	// Sin muestras del canal.
-	if v := NoLiveCuts(nil, "UCA", nil, days, now); v.HasData || len(v.Cuts) != 0 {
+	// El monitor se apagó después del último vivo: gris, no corte.
+	v = NoLiveCuts(samples, noLive, "UCA", days, at(today, "13:00"))
+	if got := classes(v.Days[0]); !strings.HasSuffix(got, ",aire,apagado") || len(v.Cuts) != 5 || v.Cuts[0].Ongoing {
+		t.Errorf("monitor apagado al final: %s, %+v", got, v.Cuts)
+	}
+	// Datos de antes de las revisiones sin vivo: entre vivos sin ninguna
+	// revisión es apagado, no corte.
+	v = NoLiveCuts(samples, nil, "UCA", days, now)
+	if len(v.Cuts) != 0 || v.OnAirPct != 100 {
+		t.Errorf("sin revisiones sin vivo: %s, %.1f %%", str(v), v.OnAirPct)
+	}
+	// Un canal que nunca tuvo vivo con el monitor andando: todo corte.
+	v = NoLiveCuts(nil, checks(at(today, "08:00"), at(today, "11:57")), "UCA", days, now)
+	if !v.HasData || len(v.Cuts) != 1 || v.Cuts[0].Dur() != 4*time.Hour || !v.Cuts[0].Ongoing || v.OnAirPct != 0 {
+		t.Errorf("solo revisiones sin vivo: %+v %.1f", v.Cuts, v.OnAirPct)
+	}
+	// Sin nada del canal.
+	if v := NoLiveCuts(nil, nil, "UCA", days, now); v.HasData || len(v.Cuts) != 0 {
 		t.Errorf("sin datos: %+v", v)
 	}
 }
@@ -364,9 +421,16 @@ func TestNoLivePage(t *testing.T) {
 	body := getBody(h, "/sin-vivo")
 	for _, w := range []string{`<a href="/sin-vivo" aria-current="page">Sin vivo</a>`, "<title>Sin vivo", `id="sinvivo"`, `hx-get="/parcial/sin-vivo?`,
 		`hx-trigger="every 60s"`, "Cortes hoy", "Sin vivo hoy", "Al aire", "Corte más largo", "Últimos 7 días", "Últimos 30 días",
-		"pueden correrse de 1 a 3 minutos", `class="ntira"`} {
+		"pueden correrse de 1 a 3 minutos", `class="ntira"`,
+		// sin-vivo-monitor-apagado (CA5): gris es monitor apagado, sin el tope de 2 h.
+		`<span class="sw napagado" aria-hidden="true"></span> Monitor apagado`} {
 		if !strings.Contains(body, w) {
 			t.Errorf("falta %q", w)
+		}
+	}
+	for _, w := range []string{"2 h", "np largo", "nlargo"} {
+		if strings.Contains(body, w) {
+			t.Errorf("sobra %q", w)
 		}
 	}
 	for _, path := range []string{"/", "/programas", "/comentarios", "/canales"} {

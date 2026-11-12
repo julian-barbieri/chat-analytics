@@ -3749,6 +3749,13 @@ func TestWorkerRecordsLives(t *testing.T) {
 	if ch := st.Status().Channels; len(ch) != 1 || ch[0].ID != "UC1" || ch[0].Name != "Radio Test" || !ch[0].Live {
 		t.Errorf("canales = %+v", ch)
 	}
+	// Con vivo no se guarda ninguna revisión sin vivo (sin-vivo-monitor-apagado, CA1).
+	if got := st.NoLiveChecks(time.Time{}); len(got) != 0 {
+		t.Errorf("revisiones sin vivo con el canal al aire: %+v", got)
+	}
+	if _, err := os.Stat(dir + "/datos.sinvivo.jsonl"); !os.IsNotExist(err) {
+		t.Errorf("se creó datos.sinvivo.jsonl con el canal al aire: %v", err)
+	}
 }
 
 // TestStoreLivesOpen (CA1.4): al abrir, datos.vivos.jsonl descarta lo vencido,
@@ -3827,6 +3834,53 @@ func TestStoreLivesOpen(t *testing.T) {
 				t.Errorf("Lives no devuelve una copia")
 			}
 		})
+	}
+}
+
+// TestStoreNoLiveChecks (sin-vivo-monitor-apagado, CA1 y CA2): las revisiones
+// sin vivo van a datos.sinvivo.jsonl (nunca a datos.jsonl), se agregan al
+// final, vencen a los 30 días al abrir (temporal + os.Rename) y se leen copiadas.
+func TestStoreNoLiveChecks(t *testing.T) {
+	now := time.Now().Truncate(time.Second)
+	dir := t.TempDir()
+	path, npath := dir+"/datos.jsonl", dir+"/datos.sinvivo.jsonl"
+	line := func(id string, at time.Time) string {
+		b, _ := json.Marshal(NoLiveCheck{At: at, ChannelID: id})
+		return string(b)
+	}
+	content := strings.Join([]string{line("UCviejo", now.Add(-31*24*time.Hour)), "basura {", line("UC1", now.Add(-time.Hour)), ""}, "\n")
+	if err := os.WriteFile(npath, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	st, err := OpenStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := st.NoLiveChecks(time.Time{}); len(got) != 1 || got[0].ChannelID != "UC1" {
+		t.Fatalf("cargadas = %+v", got)
+	}
+	if b, _ := os.ReadFile(npath); strings.Count(string(b), "\n") != 1 {
+		t.Errorf("no se reescribió sin lo vencido:\n%s", b)
+	}
+	if _, err := os.Stat(npath + ".tmp"); !os.IsNotExist(err) {
+		t.Errorf("quedó el archivo temporal: %v", err)
+	}
+	st.AddNoLive(now, []string{"UC1", "UC2"})
+	st.AddNoLive(now, nil)
+	st2, err := OpenStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := st2.NoLiveChecks(now)
+	if len(got) != 2 || got[0].ChannelID != "UC1" || got[1].ChannelID != "UC2" || !got[0].At.Equal(now) {
+		t.Fatalf("después de AddNoLive y reabrir = %+v", got)
+	}
+	got[0].ChannelID = "cambiado"
+	if again := st2.NoLiveChecks(now); again[0].ChannelID == "cambiado" {
+		t.Error("NoLiveChecks no devuelve una copia")
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Errorf("las revisiones sin vivo no van en datos.jsonl: %v", err)
 	}
 }
 
@@ -4384,7 +4438,7 @@ func TestWorkerFindsNextLive(t *testing.T) {
 
 	t.Run("se termina la ventana", func(t *testing.T) {
 		fastFor = 60 * time.Millisecond
-		f, _, stop := start(t, 9000, 0, 2*time.Second)
+		f, st, stop := start(t, 9000, 0, 2*time.Second)
 		defer stop()
 		waitReviews(t, f, 2)
 		time.Sleep(250 * time.Millisecond)
@@ -4396,6 +4450,22 @@ func TestWorkerFindsNextLive(t *testing.T) {
 		}
 		if f1 == 0 || f1 != f2 || f1 > int(fastFor/fastEvery)+1 {
 			t.Errorf("rápidas = %d y después %d: quería alguna y ninguna más pasada la ventana", f1, f2)
+		}
+		// sin-vivo-monitor-apagado (CA1): la segunda revisión completa y cada
+		// búsqueda rápida encontraron el canal sin vivo y lo guardan; la primera
+		// (con c1 al aire), no.
+		stop()
+		got := st.NoLiveChecks(time.Time{})
+		for _, c := range got {
+			if c.ChannelID != "UC1" || c.At.IsZero() {
+				t.Errorf("revisión sin vivo = %+v", c)
+			}
+		}
+		if len(got) != (r2-1)+f2 {
+			t.Errorf("%d revisiones sin vivo, quería %d (%d completas sin vivo y %d rápidas)", len(got), (r2-1)+f2, r2-1, f2)
+		}
+		if _, _, u := get(f); st.Units() != u {
+			t.Errorf("unidades = %d, el falso respondió %d: guardar las revisiones no gasta cuota", st.Units(), u)
 		}
 	})
 

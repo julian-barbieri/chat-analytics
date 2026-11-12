@@ -6,14 +6,11 @@ import (
 	"time"
 )
 
-// Pantalla Sin vivo: los ratos en que un canal no tuvo ningún vivo, armados
-// con las muestras de datos.vivos.jsonl (ProgramSegments), sin cuota extra.
-// Funciones puras; los handlers están en nolivepage.go.
-
-// maxCut: un rato sin vivo de más de 2 h no es un corte. Puede ser que el
-// canal no transmita a esa hora o que el monitor estuviera apagado (sin
-// muestras no se distingue), así que no cuenta en los números.
-const maxCut = 2 * time.Hour
+// Pantalla Sin vivo: cada rato de un canal según lo que vio el monitor, con
+// las muestras de datos.vivos.jsonl (al aire) y las revisiones sin vivo de
+// datos.sinvivo.jsonl, sin cuota extra. Sin ninguna de las dos, el monitor
+// estaba apagado: no es un corte. Funciones puras; los handlers están en
+// nolivepage.go.
 
 // NoLiveView es la pantalla Sin vivo de un canal en un período.
 type NoLiveView struct {
@@ -22,7 +19,7 @@ type NoLiveView struct {
 	Cuts      []NoLiveCut // del más nuevo al más viejo
 	CutsToday int
 	MinToday  int
-	OnAirPct  float64       // al aire ÷ (al aire + cortes), sin los ratos de más de maxCut
+	OnAirPct  float64       // al aire ÷ (al aire + cortes), sin lo apagado
 	Longest   time.Duration // el corte más largo del período
 }
 
@@ -34,16 +31,18 @@ type NoLiveDay struct {
 	CutMin int // minutos en cortes ese día
 }
 
-// NoLivePart es un pedazo de la tira: "aire", "corte" o "largo" (sin vivo
-// de más de maxCut). Left y Width van en % de las 24 h.
+// NoLivePart es un pedazo de la tira: "aire", "corte" o "apagado" (el
+// monitor no revisó el canal). Left y Width van en % de las 24 h.
 type NoLivePart struct {
 	Left, Width float64
 	Class       string
 	Title       string
 }
 
-// NoLiveCut es un corte: un rato sin vivo de hasta maxCut entre dos
-// programas o, si sigue (Ongoing), desde el último hasta ahora.
+// NoLiveCut es un corte: un rato en que el monitor revisó el canal y no
+// encontró vivo, sin mínimo ni tope de duración. Before y After son los
+// programas de antes y de después ("" si el corte empieza o termina con el
+// monitor apagado); Ongoing, que sigue ahora.
 type NoLiveCut struct {
 	Start, End    time.Time
 	Before, After string
@@ -59,95 +58,122 @@ type span struct {
 	class      string
 }
 
+// seen es una revisión del canal: al aire (con su programa) o sin vivo.
+type seen struct {
+	at   time.Time
+	air  bool
+	prog string
+}
+
 // NoLiveCuts arma la pantalla Sin vivo de un canal: days son los días del
-// período (00:00 locales, del más nuevo al más viejo) y live los vivos del
-// canal en curso ahora.
-func NoLiveCuts(samples []LiveSample, channelID string, live map[string]bool, days []time.Time, now time.Time) NoLiveView {
+// período (00:00 locales, del más nuevo al más viejo). Entre dos revisiones
+// seguidas (a lo sumo segmentGap, dos revisiones completas perdidas) el rato
+// es al aire si las dos vieron un vivo y corte si alguna no; más separadas, el
+// monitor estaba apagado. Lo que viene después de la última revisión cuenta
+// igual hasta ahora.
+func NoLiveCuts(samples []LiveSample, checks []NoLiveCheck, channelID string, days []time.Time, now time.Time) NoLiveView {
 	var v NoLiveView
 	if len(days) == 0 {
 		return v
 	}
-	segs := ProgramSegments(samples, channelID, live, days[len(days)-1], now)
+	from := days[len(days)-1]
+	pts := channelSeen(samples, checks, channelID, from, now)
+	v.HasData = len(pts) > 0
+	type run struct {
+		span
+		first, last int // revisiones en las puntas (-1: inicio del período o ahora)
+	}
+	var runs []run
+	add := func(s, e time.Time, class string, first, last int) {
+		if n := len(runs); n > 0 && runs[n-1].class == class {
+			runs[n-1].end, runs[n-1].last = e, last
+			return
+		}
+		runs = append(runs, run{span{s, e, class}, first, last})
+	}
+	for i, p := range pts {
+		if i == 0 && p.at.After(from) {
+			add(from, p.at, "apagado", -1, i)
+		}
+		next, end, last := p, now, -1
+		if i+1 < len(pts) {
+			next, end, last = pts[i+1], pts[i+1].at, i+1
+		}
+		switch {
+		case end.Sub(p.at) > segmentGap:
+			add(p.at, end, "apagado", i, last)
+		case p.air && next.air:
+			add(p.at, end, "aire", i, last)
+		default:
+			add(p.at, end, "corte", i, last)
+		}
+	}
 	var spans []span
-	var first time.Time
-	var long time.Duration
-	for i, sg := range segs {
-		if sg.State != SegNone {
-			if first.IsZero() || sg.Start.Before(first) {
-				first = sg.Start
-			}
-			spans = append(spans, span{sg.Start, sg.End, "aire"})
-			continue
-		}
-		if i == 0 && len(segs) == 1 {
-			continue // sin ninguna muestra del canal: no hay datos
-		}
-		if sg.End.Sub(sg.Start) > maxCut {
-			long += sg.End.Sub(sg.Start)
-			spans = append(spans, span{sg.Start, sg.End, "largo"})
-			continue
-		}
-		c := NoLiveCut{Start: sg.Start, End: sg.End}
-		c.Before, c.After = neighbors(segs, i)
-		c.Ongoing = c.After == ""
-		v.Cuts = append(v.Cuts, c)
-		spans = append(spans, span{sg.Start, sg.End, "corte"})
-	}
-	v.HasData = !first.IsZero()
+	var air, cuts time.Duration
 	today := dayStart(now)
-	var cuts time.Duration
-	for _, c := range v.Cuts {
-		cuts += c.Dur()
-		v.Longest = max(v.Longest, c.Dur())
-		if overlap(c.Start, c.End, today, now) > 0 {
-			v.CutsToday++
-			v.MinToday += minutes(overlap(c.Start, c.End, today, now))
+	for _, r := range runs {
+		if r.end.After(r.start) {
+			spans = append(spans, r.span)
+		}
+		switch r.class {
+		case "aire":
+			air += r.end.Sub(r.start)
+		case "corte":
+			c := NoLiveCut{Start: r.start, End: r.end, Ongoing: r.last < 0}
+			if r.first >= 0 && pts[r.first].air {
+				c.Before = pts[r.first].prog
+			}
+			if r.last >= 0 && pts[r.last].air {
+				c.After = pts[r.last].prog
+			}
+			v.Cuts = append(v.Cuts, c)
+			cuts += c.Dur()
+			v.Longest = max(v.Longest, c.Dur())
+			if in := overlap(c.Start, c.End, today, now); in > 0 {
+				v.CutsToday++
+				v.MinToday += minutes(in)
+			}
 		}
 	}
-	if total := now.Sub(first) - long; v.HasData && total > 0 {
-		v.OnAirPct = float64(total-cuts) * 100 / float64(total)
+	if air+cuts > 0 {
+		v.OnAirPct = float64(air) * 100 / float64(air+cuts)
 	}
 	sort.SliceStable(v.Cuts, func(i, j int) bool { return v.Cuts[i].Start.After(v.Cuts[j].Start) })
-	sort.SliceStable(spans, func(i, j int) bool { return spans[i].start.Before(spans[j].start) })
 	for _, d := range days {
 		v.Days = append(v.Days, noLiveDay(spans, v.Cuts, d, now))
 	}
 	return v
 }
 
-// neighbors son los programas de antes y de después del rato sin vivo i: el
-// que terminó último antes y el primero que empezó después ("" si sigue).
-func neighbors(segs []Segment, i int) (before, after string) {
-	var end time.Time
-	for _, sg := range segs[:i] {
-		if sg.State != SegNone && !sg.End.Before(end) {
-			before, end = sg.Program, sg.End
+// channelSeen son las revisiones del canal entre from y now, en orden: las
+// muestras de sus vivos y las revisiones que lo encontraron sin vivo.
+func channelSeen(samples []LiveSample, checks []NoLiveCheck, channelID string, from, now time.Time) []seen {
+	in := func(t time.Time) bool { return !t.Before(from) && !t.After(now) }
+	var pts []seen
+	for _, s := range samples {
+		if s.ChannelID == channelID && in(s.At) {
+			pts = append(pts, seen{at: s.At, air: true, prog: ProgramName(s.Title, s.Channel)})
 		}
 	}
-	for _, sg := range segs[i+1:] {
-		if sg.State != SegNone {
-			return before, sg.Program
+	for _, c := range checks {
+		if c.ChannelID == channelID && in(c.At) {
+			pts = append(pts, seen{at: c.At})
 		}
 	}
-	return before, ""
+	sort.SliceStable(pts, func(i, j int) bool { return pts[i].at.Before(pts[j].at) })
+	return pts
 }
 
-// noLiveDay recorta los ratos al día d. Los ratos al aire seguidos (otro
-// programa o un hueco de menos de newLiveGap entre muestras) van juntos.
+// noLiveDay recorta los ratos al día d (y a ahora, en el de hoy).
 func noLiveDay(spans []span, cuts []NoLiveCut, d, now time.Time) NoLiveDay {
 	end := d.AddDate(0, 0, 1)
 	day := NoLiveDay{Day: d, Label: noLiveLabel(d, now)}
 	var merged []span
 	for _, sp := range spans {
 		s, e := maxTime(sp.start, d), minTime(sp.end, minTime(end, now))
-		if !e.After(s) {
-			continue
+		if e.After(s) {
+			merged = append(merged, span{s, e, sp.class})
 		}
-		if n := len(merged); n > 0 && merged[n-1].class == sp.class && s.Sub(merged[n-1].end) <= newLiveGap {
-			merged[n-1].end = maxTime(merged[n-1].end, e)
-			continue
-		}
-		merged = append(merged, span{s, e, sp.class})
 	}
 	full := float64(end.Sub(d))
 	for _, sp := range merged {
@@ -177,8 +203,8 @@ func partTitle(sp span, d time.Time) string {
 	switch sp.class {
 	case "corte":
 		return "Sin vivo de " + when + " (" + durText(sp.end.Sub(sp.start)) + ")"
-	case "largo":
-		return "Sin vivo más de 2 h, de " + when
+	case "apagado":
+		return "Monitor apagado de " + when
 	}
 	return "Al aire de " + when
 }
