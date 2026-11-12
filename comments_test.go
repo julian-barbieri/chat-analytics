@@ -327,8 +327,6 @@ func TestCommentsSummary(t *testing.T) {
 		{"shorts", CommentsQuery{Periodo: "30d", Tipo: "shorts"}, 1, 1, 1, 0, 30, 1, "s1"},
 		// Todos: videos y shorts, nunca los vivos (c9 queda afuera).
 		{"todos los tipos", CommentsQuery{Periodo: "30d", Tipo: "todos"}, 9, 7, 4, 2, 30, 4, "g1"},
-		// Publicados en 30 días: todos los comentarios guardados de los videos publicados en 30 días.
-		{"publicados en 30 días", CommentsQuery{Periodo: "pub", Tipo: "videos"}, 8, 6, 3, 2, 30, 3, "g1"},
 	}
 	for _, c := range cases {
 		v := CommentsSummary(msgs, vids, nil, c.q, now)
@@ -488,17 +486,13 @@ func TestCommentsPage(t *testing.T) {
 	w := get("/comentarios?periodo=<script>&canal=%3Cb%3E")
 	body := w.Body.String()
 	for _, want := range []string{`aria-current="page">Comentarios y likes`, "Entrevista al ministro", "Preguntas sin respuesta", "¿Dónde está la entrevista completa?", "Ana",
-		"Publicados en 30 días", "publicados desde el " + dayStart(now).AddDate(0, 0, -29).Format("02/01"), "Comunidad", ">Shorts<", "Likes nuevos", "Videos y shorts"} {
+		"Comunidad", ">Shorts<", "Likes nuevos", "Videos y shorts"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("falta %q", want)
 		}
 	}
 	if strings.Contains(body, "<script>") || strings.Contains(body, "&lt;script&gt;") || strings.Contains(body, "&lt;b&gt;") {
 		t.Error("se reflejó un parámetro fuera de la lista")
-	}
-	// La aclaración de "Publicados en 30 días" tiene su fecha con cualquier período.
-	if body := get("/comentarios?periodo=7d").Body.String(); !strings.Contains(body, "publicados desde el "+dayStart(now).AddDate(0, 0, -29).Format("02/01")) {
-		t.Error("con 7 días, la aclaración no tiene la fecha de los 30 días")
 	}
 	if w := get("/parcial/comentarios?periodo=7d"); w.Code != 200 || !strings.Contains(w.Body.String(), `id="comentarios"`) {
 		t.Errorf("parcial: %d", w.Code)

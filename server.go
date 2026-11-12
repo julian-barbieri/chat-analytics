@@ -32,6 +32,7 @@ var tmpl = template.Must(template.New("").Funcs(template.FuncMap{
 	"miles":    miles,
 	"decimal":  decimal,
 	"plural":   plural,
+	"durText":  durText,
 }).ParseFS(templatesFS, "templates/*.html"))
 
 var categories = []string{CatPregunta, CatQueja, CatElogio, CatInsulto, CatSpam, CatOtro}
@@ -84,6 +85,8 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /programas", s.programsPage)
 	mux.HandleFunc("GET /comentarios", s.commentsPage)
 	mux.HandleFunc("GET /canales", s.channelsPage)
+	mux.HandleFunc("GET /sin-vivo", s.noLivePage)
+	mux.HandleFunc("GET /parcial/sin-vivo", s.noLivePartial)
 	mux.HandleFunc("GET /parcial/resumen", s.summary)
 	mux.HandleFunc("GET /parcial/vivo", s.liveSection)
 	mux.HandleFunc("GET /parcial/vivo/canal", s.liveChannel)
@@ -882,7 +885,7 @@ func (s *Server) liveAnalysis(w http.ResponseWriter, r *http.Request) {
 	open := foldParam(q)
 	for _, c := range snap.Channels {
 		if c.ID == q.Get("canal") && c.ID != "" {
-			s.channelAnalysis(w, snap, c, q.Get("video"), q.Get("ver"), hours, open, motiveParam(q), localRequest(r), slotPick{q.Get("franja"), q.Get("sent")})
+			s.channelAnalysis(w, snap, c, q.Get("video"), q.Get("ver"), hours, open, motiveParam(q), localRequest(r), slotPick{q.Get("franja"), q.Get("sent"), q.Get("pfranja")})
 			return
 		}
 	}
@@ -904,10 +907,11 @@ func (s *Server) liveAnalysis(w http.ResponseWriter, r *http.Request) {
 	msgs := sinceFor(snap.Msgs, id, now.Add(-24*time.Hour))
 	viewers := s.st.Viewers(id, now.Add(-24*time.Hour))
 	fold := foldState{Open: open, Query: url.Values{"video": {id}, "horas": {strconv.Itoa(hours)}}}
-	x := liveExtra{hourAgo: viewersAgo(viewers, now), since: now.Add(-24 * time.Hour)}
+	x := liveExtra{hourAgo: viewersAgo(viewers, now), since: now.Add(-24 * time.Hour), pfranja: q.Get("pfranja")}
 	x.likes = liveLikes(map[string][]LikeSample{id: s.st.Likes(id, now.AddDate(0, 0, -regularDays))}, &video, nil, dayStart(now), now)
 	data := analysisData(msgs, viewers, []string{id}, partInput{msgs, viewers, []string{id}}, snap.Videos, video.Concurrent, nil, now, hours, scopeLast24, fold, x)
 	data["Video"], data["Label"], data["Span"], data["Abrir"] = id, label, label+" · últimas 24 h", foldValue(open)
+	data["PFranja"] = data["Part"].(map[string]any)["PFranja"]
 	// El análisis con Claude es por canal: un vivo suelto no lo tiene.
 	data["Claude"] = claudeView(claudeInput{Configured: s.analyst != nil, Status: snap.Claude, Now: now})
 	// Sin canal no hay tandas: alertas y preguntas por reglas.
@@ -1016,7 +1020,7 @@ type partInput struct {
 func analysisData(msgs []Message, viewers []ViewerSample, ids []string, part0 partInput, videos []Video, concurrent int64, segs []Segment, now time.Time, hours int, sc scope, fold foldState, x liveExtra) map[string]any {
 	a := Analyze(msgs)
 	titles := videoTitles(videos)
-	part, moments, typical := participationView(part0.msgs, part0.viewers, part0.ids, videos, concurrent, titles, segs, now, hours, fold)
+	part, moments, typical := participationView(part0.msgs, part0.viewers, part0.ids, videos, concurrent, titles, segs, now, hours, fold, x.pfranja)
 	part["Window"] = sc.window
 	sup := superView(Supers(msgs, titles))
 	sup["Of"], sup["In"] = sc.of, sc.in
@@ -1054,6 +1058,7 @@ type liveExtra struct {
 	hourAgo  int64
 	since    time.Time
 	regulars map[string]bool
+	pfranja  string // la franja de Momentos pedida, tal como llega
 }
 
 // channelAnalysis es el análisis de un canal: "Programa en curso" (el vivo
@@ -1071,7 +1076,7 @@ func (s *Server) channelAnalysis(w http.ResponseWriter, snap Snapshot, ch Channe
 		fold.Query.Set("franja", strconv.FormatInt(sel.at.Unix(), 10))
 		fold.Query.Set("sent", sel.tab)
 	}
-	x := liveExtra{since: ls.start, regulars: s.regulars(ch.ID, now)}
+	x := liveExtra{since: ls.start, regulars: s.regulars(ch.ID, now), pfranja: pick.part}
 	var likes map[string]any
 	x.likes, likes = s.likesView(snap, ch, ls, now)
 	// "Hace 1 h" de los mismos vivos que suma "Mirando ahora": el del programa
@@ -1087,6 +1092,7 @@ func (s *Server) channelAnalysis(w http.ResponseWriter, snap Snapshot, ch Channe
 	data["Likes"] = likes
 	data["Canal"], data["Video"], data["Ver"], data["Label"], data["Span"], data["Note"] = ch.ID, ls.video, ls.ver, channelName(ch), ls.span, ls.note
 	data["Abrir"], data["Motivos"] = foldValue(open), motives
+	data["PFranja"] = data["Part"].(map[string]any)["PFranja"]
 	if sel.ok {
 		data["Franja"], data["SentTab"] = fold.Query.Get("franja"), sel.tab
 	}
@@ -1370,7 +1376,7 @@ func sentChartFrom(ls liveScope, now time.Time) time.Time {
 }
 
 // slotPick es la franja y la pestaña pedidas, tal como llegan.
-type slotPick struct{ franja, sent string }
+type slotPick struct{ franja, sent, part string } // part: la franja de Momentos
 
 // slotSel es la franja elegida, ya validada, y su pestaña.
 type slotSel struct {
@@ -1935,10 +1941,16 @@ func chartWindow(slots []Slot, hours int) []Slot {
 
 // participationView arma la sección de momentos con más participación de uno
 // o varios vivos (los de un canal). concurrent es cuántos miran ahora.
-func participationView(msgs []Message, viewers []ViewerSample, ids []string, videos []Video, concurrent int64, titles map[string]string, segs []Segment, now time.Time, hours int, fold foldState) (map[string]any, []Moment, float64) {
+func participationView(msgs []Message, viewers []ViewerSample, ids []string, videos []Video, concurrent int64, titles map[string]string, segs []Segment, now time.Time, hours int, fold foldState, pick string) (map[string]any, []Moment, float64) {
 	slots, typical, ok := Participation(msgs, viewers, ids, now)
 	moments := TopMoments(slots, titles)
 	shown := chartWindow(slots, hours)
+	sel := pickSlot(shown, pick)
+	if sel >= 0 && fold.Query != nil {
+		// Los demás links de la sección (plegados, Categorías) conservan la
+		// franja: fold.Query es el mismo mapa que usan después.
+		fold.Query.Set("pfranja", strconv.FormatInt(shown[sel].Start.Unix(), 10))
+	}
 	// Momentos del top que quedan antes de la ventana: se avisa para que no
 	// parezca que faltan marcas.
 	var outside []string
@@ -1991,6 +2003,7 @@ func participationView(msgs []Message, viewers []ViewerSample, ids []string, vid
 	if len(shown) > 0 {
 		chart["Strip"], chart["Lines"] = programStrip(segs, shown[0].Start, len(shown), now)
 	}
+	slot, pfranja := momentSlotLinks(chart, shown, sel, segs, fold)
 	// La última franja es la de ahora: el borde derecho dice "Ahora".
 	if ticks, _ := chart["Ticks"].([]Tick); len(ticks) > 0 && ticks[len(ticks)-1].End {
 		ticks[len(ticks)-1].Label = "Ahora"
@@ -2003,7 +2016,65 @@ func participationView(msgs []Message, viewers []ViewerSample, ids []string, vid
 		"Chart": chart, "Moments": rows, "Why": why,
 		"Windows": []int{chartHours, 24}, "Outside": outsideNote,
 		"ByPct": ok, "Typical": pct(typical), "Concurrent": concurrent, "Missing": concurrent > 0 && missing,
+		"Slot": slot, "PFranja": pfranja,
 	}, moments, typ
+}
+
+// pickSlot es la franja de Momentos pedida si es el inicio de una barra del
+// gráfico, o -1. Nada de lo que llega se refleja tal cual.
+func pickSlot(shown []Slot, pick string) int {
+	n, err := strconv.ParseInt(pick, 10, 64)
+	if err != nil {
+		return -1
+	}
+	for i, s := range shown {
+		if s.Start.Unix() == n {
+			return i
+		}
+	}
+	return -1
+}
+
+// momentSlotLinks le pone a cada barra de Momentos el pedido de su franja,
+// como las barras de Participación de Programas, y con una elegida arma su
+// detalle con los mensajes de chat de esos 5 min (los de la franja, sin el
+// spam ni los vacíos, como los momentos). Devuelve el detalle y la franja.
+func momentSlotLinks(chart map[string]any, shown []Slot, sel int, segs []Segment, fold foldState) (*SlotDetail, string) {
+	base := maps.Clone(fold.Query)
+	if base == nil {
+		base = url.Values{}
+	}
+	base.Del("pfranja")
+	if v := foldValue(fold.Open); v != "" {
+		base.Set("abrir", v)
+	}
+	href := func(q url.Values) string { return "/parcial/vivo/analisis?" + q.Encode() }
+	bars, _ := chart["Bars"].([]Bar)
+	for i := range bars {
+		if i < len(shown) {
+			q := maps.Clone(base)
+			unix := strconv.FormatInt(shown[i].Start.Unix(), 10)
+			q.Set("pfranja", unix)
+			bars[i].Href, bars[i].ID, bars[i].Sel = href(q), "mb-"+unix, i == sel
+		}
+	}
+	chart["Links"], chart["Target"], chart["Sync"], chart["Anchor"] = true, "#vivo-analisis", "closest #vivo-analisis:replace", "#pfranja-det"
+	if sel < 0 {
+		return nil, ""
+	}
+	sl := shown[sel]
+	end := sl.Start.Add(slotStep)
+	det := &SlotDetail{Title: "Mensajes de las " + sl.Start.Local().Format("15:04") + " a " + end.Local().Format("15:04"), Close: href(base)}
+	if p := slotProgram(segs, sl.Start, end); p != "" {
+		det.Title += " · " + p
+	}
+	msgs, more := momentMsgs(sl.Msgs)
+	if len(msgs) == 0 {
+		det.Empty = "Ningún mensaje de chat en esta franja."
+	} else {
+		det.List = foldMsgs(msgs, len(msgs)+more)
+	}
+	return det, strconv.FormatInt(sl.Start.Unix(), 10)
 }
 
 // Mark es el número de un momento del top arriba del gráfico; Tick, una hora

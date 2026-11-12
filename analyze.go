@@ -479,6 +479,13 @@ const (
 // cada una) y 1 min de margen, el vivo se cortó o terminó.
 const segmentGap = 2*3*time.Minute + time.Minute
 
+// newLiveGap: entre el fin de un vivo y el inicio de otro, más de una revisión
+// (3 min) y 1 min de margen sin ningún vivo es un rato "sin vivo". Cuando el
+// canal se queda sin vivo la búsqueda rápida mira cada minuto, así que un
+// hueco así es real; dentro del mismo vivo sigue segmentGap, para que una
+// revisión perdida no lo corte.
+const newLiveGap = 3*time.Minute + time.Minute
+
 // Segment es un tramo del día de un canal: un programa de un vivo o un rato
 // sin vivo. Start y End son la primera y la última muestra (hasta 3 min
 // después del cambio real); en "sin vivo", del fin de lo anterior al inicio
@@ -498,8 +505,8 @@ func dayStart(t time.Time) time.Time {
 // ProgramSegments arma los programas de un canal entre from y now con las
 // muestras de vivos: un tramo nuevo por cada vivo y cada vez que cambia el
 // programa del título; las muestras repetidas (por ejemplo, tras reiniciar)
-// se juntan, y un hueco de más de segmentGap corta el tramo y deja uno "sin
-// vivo". live son los vivos del canal en curso ahora (de la lista de videos):
+// se juntan, y un hueco de más de segmentGap (newLiveGap si lo que sigue es
+// otro vivo) corta el tramo y deja uno "sin vivo". live son los vivos del canal en curso ahora (de la lista de videos):
 // solo el último tramo de cada uno está al aire, así el programa anterior
 // termina apenas cambia el título y no recién cuando pasa segmentGap. Si
 // nada está al aire, termina con un "sin vivo" hasta now.
@@ -524,9 +531,14 @@ func ProgramSegments(samples []LiveSample, channelID string, live map[string]boo
 	}
 	var out []Segment
 	var covered time.Time // hasta dónde hubo algún vivo
+	var coveredBy string  // y de qué vivo
 	onAir := false
 	for i, sg := range segs {
-		if !covered.IsZero() && sg.Start.Sub(covered) > segmentGap {
+		gap := segmentGap
+		if sg.VideoID != coveredBy {
+			gap = newLiveGap
+		}
+		if !covered.IsZero() && sg.Start.Sub(covered) > gap {
 			out = append(out, Segment{Start: covered, End: sg.Start, State: SegNone})
 		}
 		sg.State = SegEnded
@@ -535,7 +547,7 @@ func ProgramSegments(samples []LiveSample, channelID string, live map[string]boo
 		}
 		out = append(out, sg)
 		if sg.End.After(covered) {
-			covered = sg.End
+			covered, coveredBy = sg.End, sg.VideoID
 		}
 	}
 	switch {

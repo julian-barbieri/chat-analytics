@@ -98,6 +98,7 @@ type LoyaltyData struct {
 	CorePeople, CoreMsgs    float64
 	AtRisk                  int
 	Segments                []LoyaltySegment
+	SegBars                 []SegBar // Segments en barras al 100 %
 	Cohorts                 []Cohort // de la semana más vieja a la más nueva
 }
 
@@ -206,6 +207,7 @@ func Loyalty(ems []Emission, now time.Time) LoyaltyData {
 		segs[k].MsgsPct = share(segMsgs[k], total)
 	}
 	l.Segments = segs
+	l.SegBars = segmentBars(segs)
 	l.CorePeople, l.CoreMsgs = segs[3].PeoplePct, segs[3].MsgsPct
 	if len(people) > 0 {
 		l.Attendance = float64(attended) / float64(len(people))
@@ -716,4 +718,40 @@ func EmissionSummary(ems []Emission, ref time.Time) string {
 		parts = append(parts, peak, "récord "+miles(rows[rec].peak)+", el "+dayLabel(rows[rec].day))
 	}
 	return strings.Join(parts, " · ")
+}
+
+// SegBar es una barra apilada al 100 % de "Segmentos por asistencia".
+type SegBar struct {
+	Label string
+	Parts []SegPart
+}
+
+// SegPart es el tramo de un segmento en una barra.
+type SegPart struct {
+	Key, Label string
+	Pct        float64
+}
+
+// segmentBars arma las barras de Personas y Mensajes de los segmentos, para
+// ver de un vistazo cuánto pesa cada uno (por ejemplo, el núcleo es poca gente
+// y escribe mucho). Los segmentos vacíos no tienen tramo; sin participantes no
+// hay barras.
+func segmentBars(segs []LoyaltySegment) []SegBar {
+	people := 0
+	for _, g := range segs {
+		people += g.People
+	}
+	if people == 0 {
+		return nil
+	}
+	bars := []SegBar{{Label: "Personas"}, {Label: "Mensajes"}}
+	for _, g := range segs {
+		if g.PeoplePct > 0 {
+			bars[0].Parts = append(bars[0].Parts, SegPart{g.Key, g.Label, g.PeoplePct})
+		}
+		if g.MsgsPct > 0 {
+			bars[1].Parts = append(bars[1].Parts, SegPart{g.Key, g.Label, g.MsgsPct})
+		}
+	}
+	return bars
 }

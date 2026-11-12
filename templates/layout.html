@@ -4,7 +4,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{{if eq .Tab "programas"}}Programas{{else if eq .Tab "comentarios"}}Comentarios y likes{{else if eq .Tab "canales"}}Canales{{else}}En vivo{{end}} · Monitor de audiencia{{if .Channel}} · {{.Channel}}{{end}}</title>
+<title>{{if eq .Tab "programas"}}Programas{{else if eq .Tab "comentarios"}}Comentarios y likes{{else if eq .Tab "canales"}}Canales{{else if eq .Tab "sinvivo"}}Sin vivo{{else}}En vivo{{end}} · Monitor de audiencia{{if .Channel}} · {{.Channel}}{{end}}</title>
 <script src="/static/htmx.min.js"></script>
 <style>
 :root {
@@ -431,6 +431,27 @@ details summary { cursor: pointer; min-height: 32px; font-weight: 600; }
 .sw.ocasionales { background: var(--series-1); }
 .sw.habituales { background: var(--series-4); }
 .sw.nucleo { background: var(--series-2); }
+/* Sin vivo: una tira de 24 h por día. */
+.ntiras { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.nrow { display: grid; grid-template-columns: 6.5em minmax(0, 1fr) 4.5em; gap: 10px; align-items: center; font-size: 13px; }
+.nrow .num { text-align: right; color: var(--text-secondary); }
+.ntira { position: relative; height: 18px; border-radius: 3px; background: var(--surface-0); border: 1px solid var(--border); overflow: hidden; }
+.np { position: absolute; top: 0; bottom: 0; }
+.np.aire, .sw.naire { background: var(--sent-pos); }
+.np.corte, .sw.ncorte { background: var(--live); }
+.np.corte { min-width: 3px; }
+.np.largo, .sw.nlargo { background: var(--sent-neu); }
+.nhoras { position: relative; height: 16px; margin: 4px calc(4.5em + 10px) 0 calc(6.5em + 10px); font-size: 12px; color: var(--text-muted); }
+.nhoras span { position: absolute; transform: translateX(-50%); }
+.nhoras span:first-child { transform: none; }
+.nhoras span:last-child { transform: translateX(-100%); }
+.segbars { display: flex; flex-direction: column; gap: 8px; margin: 8px 0 12px; }
+.segrow { display: grid; grid-template-columns: 6.5em minmax(0, 1fr); gap: 10px; align-items: center; }
+.segbar { display: flex; height: 22px; border-radius: 4px; overflow: hidden; background: var(--surface-0); }
+.sg.nuevos { background: var(--sent-neu); }
+.sg.ocasionales { background: var(--series-1); }
+.sg.habituales { background: var(--series-4); }
+.sg.nucleo { background: var(--series-2); }
 .tile small { font-size: 13px; font-weight: 600; color: var(--text-secondary); }
 .tile .v.warnv { color: var(--series-2); }
 table.heat td.m0 { background: var(--heat-0); }
@@ -460,8 +481,9 @@ a.seg[aria-current="true"] { background: var(--text-primary); color: var(--surfa
 .kind { display: inline-block; font-size: 12px; font-weight: 600; border-radius: 4px; padding: 1px 6px; background: var(--ia-bg); color: var(--ia-text); }
 .cchart .pticks span:last-child { transform: translateX(-100%); }
 .ccurve .pticks { height: 32px; }
-.ccurve .pticks span { white-space: normal; width: 8%; text-align: center; line-height: 1.2; }
-.ccurve .pticks span:last-child { transform: translateX(-50%); }
+.ccurve .pticks span { white-space: normal; width: 8%; text-align: center; line-height: 1.2; font-size: 11px; }
+/* Cada rótulo va centrado en su barra (también el primero y el último), así no se pisan. */
+.ccurve .pticks span:first-child, .ccurve .pticks span:last-child { transform: translateX(-50%); color: var(--text-muted); font-weight: 400; }
 .cnum { font-weight: 600; }
 .cvideos td.t { white-space: normal; min-width: 240px; }
 @media (max-width: 600px) { .cchart svg { height: 160px; } .ccurve .pticks span:nth-child(even) { visibility: hidden; } }
@@ -499,12 +521,6 @@ a.seg[aria-current="true"] { background: var(--text-primary); color: var(--surfa
 #participan .leyenda { margin: 8px 0; gap: 4px 18px; }
 /* Likes: el gráfico de hoy y lo que más gustó en 7 días. */
 .bar.now { fill: var(--series-1); }
-.liked { list-style: none; margin: 4px 0 8px; padding: 0; }
-.liked li { display: grid; grid-template-columns: 56px minmax(0, 1fr) auto; gap: 12px; align-items: center; min-height: 44px; border-bottom: 1px solid var(--border); font-size: 14px; }
-.liked li a { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-primary); text-decoration: none; }
-.liked li a:hover { color: var(--link); text-decoration: underline; }
-.liked .kind { text-align: center; }
-.liked .num { font-weight: 600; text-align: right; }
 .kind.vivo { background: var(--crit-bg); color: var(--crit-text); }
 .kind.short { background: var(--paid-bg); color: var(--paid-text); }
 /* Categorías en semicírculo: el anillo con el total al centro, la lista al
@@ -517,7 +533,8 @@ a.seg[aria-current="true"] { background: var(--text-primary); color: var(--surfa
 .gside { flex: 1 1 240px; display: flex; flex-direction: column; gap: 10px; min-width: 0; }
 .glist { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
 .grow { display: grid; grid-template-columns: 12px minmax(0, 1fr) auto 52px; gap: 10px; align-items: center; min-height: 44px; padding: 0 10px;
-  border-radius: 10px; border: 1px solid transparent; color: var(--text-primary); text-decoration: none; font-size: 14px; }
+  border-radius: 10px; border: 1px solid transparent; color: var(--text-primary); text-decoration: none; font-size: 14px;
+  width: 100%; background: none; font-family: inherit; text-align: left; cursor: pointer; }
 .grow:hover { background: var(--surface-0); }
 .grow.on { background: var(--surface-0); border-color: var(--border); }
 .grow .gl { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -566,6 +583,7 @@ a.seg[aria-current="true"] { background: var(--text-primary); color: var(--surfa
     <a href="/"{{if eq .Tab "vivo"}} aria-current="page"{{end}}>En vivo</a>
     <a href="/programas"{{if eq .Tab "programas"}} aria-current="page"{{end}}>Programas</a>
     <a href="/comentarios"{{if eq .Tab "comentarios"}} aria-current="page"{{end}}>Comentarios y likes</a>
+    <a href="/sin-vivo"{{if eq .Tab "sinvivo"}} aria-current="page"{{end}}>Sin vivo</a>
     <a href="/canales"{{if eq .Tab "canales"}} aria-current="page"{{end}}>Canales</a>
   </nav>
 </header>

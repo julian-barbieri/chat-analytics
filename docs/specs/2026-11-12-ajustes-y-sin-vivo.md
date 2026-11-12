@@ -1,6 +1,6 @@
 # Spec: ajustes de las pantallas y pantalla Sin vivo
 
-- **Estado:** aprobada
+- **Estado:** implementada
 - **Tipo:** mejora (con 4 bugs: 2, 6, 8, 10)
 - **Rama:** `feat/ajustes-y-sin-vivo`
 - **Origen:** pedido del usuario del 2026-11-12 (11 puntos, con capturas de «Cómo llegaron los likes» y de la tira «Hoy en el canal»)
@@ -26,31 +26,31 @@ Las 10 correcciones y ajustes de arriba en las pantallas actuales, y una quinta 
 
 ## Criterios de aceptación
 
-- [ ] CA1: Programas tiene «Últimos 30 días» (`?dia=30d`): lista los tramos de los 30 días locales hasta hoy y el título dice «Programas de los últimos 30 días · del DD/MM al DD/MM». Un `dia` desconocido sigue cayendo en Hoy. — `TestDayRange`, `TestProgramsPage30d`
-- [ ] CA2: ningún link ni sector del semicírculo (`cgauge`) tiene `href` que empiece con `#`. Los sectores del SVG siguen siendo alcanzables con el teclado (`tabindex="0"`, `role="link"`, `hx-trigger` con clic y Enter) y las filas de la lista llevan `href` a la página con el estado. — `TestCatGaugeNoAnchor` + navegador (tocar no mueve la pantalla)
-- [ ] CA3: en En vivo cada barra del gráfico de Momentos es un link a `/parcial/vivo/analisis?…&franja=<unix>`. Con una `franja` que coincide con una barra del gráfico, debajo aparece el detalle de esa franja (hora, mirando, personas, % y sus mensajes plegados) y la barra queda marcada; una `franja` que no coincide se ignora y no se refleja en el HTML. El refresco de 30 s conserva la franja elegida. — `TestLiveSlotDetail`
-- [ ] CA4: el detalle de un programa siempre tiene la tarjeta «Categorías» con el semicírculo: por reglas (`Classify`) sin Claude, con las etiquetas de las tandas cuando hay (como En vivo, ADR 0010). Los temas del resumen de Claude se siguen viendo aparte. — `TestProgramDetailGauge` (con y sin Claude, con y sin resumen)
-- [ ] CA5: «Segmentos por asistencia» muestra dos barras apiladas al 100 %, «Personas» y «Mensajes», un tramo por segmento con su color (`.sw` de cada segmento) y `<title>` con nombre y %; con 0 participantes no se dibujan. — `TestSegmentBars`
-- [ ] CA6: en Comentarios, «Todos» (resumen, tabla, gráfico y números) suma solo comentarios de videos de canales que hoy están en la configuración; un video de un canal quitado, o de canal desconocido, no aparece. — `TestCommentsAllOnlyConfigured`
-- [ ] CA7: el período «Publicados en 30 días» ya no se ofrece; `?periodo=pub` cae en «Últimos 30 días». Se borra la lógica de `pub` (`PubSince` y las ramas de `CommentsSummary` / `commentRows`). — `TestCommentsQuery`, `TestCommentsSummary`
-- [ ] CA8: si la curva de likes de un video no tiene ningún like repartido, no se dibuja el gráfico: se muestra «Desde el DD/MM HH:MM, cuando se empezaron a guardar los likes, este video no sumó likes nuevos.» Los rótulos del eje de la curva no se pisan en ancho de escritorio ni de celular. — `TestLikeCurveEmpty` + navegador
-- [ ] CA9: En vivo ya no tiene «Lo que más gustó · 7 días»; se borran `topLiked`, `topLikedN`, `LikedRow` si quedan sin uso. — `TestLivePageNoTopLiked`
-- [ ] CA10: `ProgramSegments` marca «sin vivo» un hueco de más de 4 min (`newLiveGap`: una revisión de 3 min + 1 de margen) cuando el tramo que sigue es de **otro** vivo; entre tramos del mismo vivo sigue `segmentGap` (7 min). El caso 09:14–09:17 (vivo A) y 09:23 (vivo B) da un tramo «sin vivo» de 09:17 a 09:23; un hueco de 3 min entre vivos distintos no. — `TestProgramSegments` (casos nuevos)
-- [ ] CA11: `GET /sin-vivo` (pestaña «Sin vivo», `?canal=UC…` de los configurados, `?periodo=7d|30d`, por defecto 7d) y `GET /parcial/sin-vivo` (refresco 60 s) muestran, por canal:
+- [x] CA1: Programas tiene «Últimos 30 días» (`?dia=30d`): lista los tramos de los 30 días locales hasta hoy y el título dice «Programas de los últimos 30 días · del DD/MM al DD/MM». Un `dia` desconocido sigue cayendo en Hoy. — `TestDayRange`, `TestProgramsPage30d`
+- [x] CA2: ningún link ni sector del semicírculo (`cgauge`) tiene `href` que empiece con `#`. Los sectores del SVG siguen siendo alcanzables con el teclado (`tabindex="0"`, `role="button"`, `hx-trigger` con clic y Enter) y las filas de la lista son `<button>` (sin `href`). — `TestCatGaugeNoAnchor` + navegador (tocar no mueve la pantalla)
+- [x] CA3: en En vivo cada barra del gráfico de Momentos es un link a `/parcial/vivo/analisis?…&pfranja=<unix>` (`franja` ya es la del gráfico de Sentimiento). Con una `pfranja` que coincide con una barra del gráfico, debajo aparece el detalle de esa franja (hora, programa y sus mensajes de chat, sin spam ni vacíos) y la barra queda marcada; una `pfranja` que no coincide se ignora y no se refleja en el HTML. El refresco de 30 s conserva la franja elegida. — `TestLiveSlotDetail`
+- [x] CA4: el detalle de un programa siempre tiene la tarjeta «Categorías» con el semicírculo: por reglas (`Classify`) sin Claude, con las etiquetas de las tandas cuando hay (como En vivo, ADR 0010). Los temas del resumen de Claude se siguen viendo aparte. — `TestProgramDetailGauge` (con y sin Claude, con y sin resumen)
+- [x] CA5: «Segmentos por asistencia» muestra dos barras apiladas al 100 %, «Personas» y «Mensajes», un tramo por segmento con su color (`.sg` con los mismos colores que `.sw`) y `title` con nombre y %; con 0 participantes no se dibujan. — `TestSegmentBars`
+- [x] CA6: en Comentarios, «Todos» (resumen, tabla, gráfico y números) suma solo comentarios de videos de canales que hoy están en la configuración; un video de un canal quitado, o de canal desconocido, no aparece. — `TestCommentsAllOnlyConfigured`
+- [x] CA7: el período «Publicados en 30 días» ya no se ofrece; `?periodo=pub` cae en «Últimos 30 días». Se borra la lógica de `pub` (`PubSince` y las ramas de `CommentsSummary` / `commentRows`). — `TestCommentsQuery`, `TestCommentsSummary`
+- [x] CA8: si la curva de likes de un video no tiene ningún like repartido, no se dibuja el gráfico: se muestra «Desde el DD/MM HH:MM, cuando se empezaron a guardar los likes, este video no sumó likes nuevos.» Los rótulos del eje de la curva no se pisan en ancho de escritorio ni de celular. — `TestLikeCurveEmpty` + navegador
+- [x] CA9: En vivo ya no tiene «Lo que más gustó · 7 días»; se borran `topLiked`, `topLikedN`, `LikedRow` si quedan sin uso. — `TestLivePageNoTopLiked`
+- [x] CA10: `ProgramSegments` marca «sin vivo» un hueco de más de 4 min (`newLiveGap`: una revisión de 3 min + 1 de margen) cuando el tramo que sigue es de **otro** vivo; entre tramos del mismo vivo sigue `segmentGap` (7 min). El caso 09:14–09:17 (vivo A) y 09:23 (vivo B) da un tramo «sin vivo» de 09:17 a 09:23; un hueco de 3 min entre vivos distintos no. — `TestProgramSegments` (casos nuevos)
+- [x] CA11: `GET /sin-vivo` (pestaña «Sin vivo», `?canal=UC…` de los configurados, `?periodo=7d|30d`, por defecto 7d) y `GET /parcial/sin-vivo` (refresco 60 s) muestran, por canal:
   - números: cortes hoy, minutos sin vivo hoy, % al aire del período y corte más largo del período;
   - una tira de 24 h por día del período (hoy hasta ahora), con los tramos al aire y sin vivo en su posición y `<title>` con horario;
   - la lista de cortes, del más nuevo al más viejo (como mucho 50, con «y N más»): día, de HH:MM a HH:MM, duración, programa de antes → programa de después;
   - un hueco de más de 2 h (`maxCut`) no cuenta como corte: se pinta «sin datos» (puede ser el monitor apagado) y queda fuera de los números;
   - nota de precisión: «Los cortes se miden con las revisiones de videos: pueden correrse de 1 a 3 minutos».
   Sin llamadas a YouTube ni escrituras: solo `Store.Lives` y `Store.Status`. — `TestNoLiveCuts` (función pura), `TestNoLivePage`
-- [ ] CA12: las cinco pestañas en `templates/layout.html` y `TestTemplateTokens` en verde (colores nuevos en ambos temas).
-- [ ] Gates de `CLAUDE.md` → «Definición de terminado» en verde; README y `AGENTS.md` (mapa, rutas) actualizados; navegador en las cinco pantallas, claro y oscuro, ancho de celular.
+- [x] CA12: las cinco pestañas en `templates/layout.html` y `TestTemplateTokens` en verde (colores nuevos en ambos temas).
+- [x] Gates de `CLAUDE.md` → «Definición de terminado» en verde; README y `AGENTS.md` (mapa, rutas) actualizados; navegador en las cinco pantallas, claro y oscuro, ancho de celular.
 
 ## Diseño propuesto
 
 - **1:** `dayRange` con `"30d"` (30 días); opción y título en `programsData`. `programRows` ya hace una pasada con búsqueda binaria; medir con datos sintéticos de 30 días.
-- **2:** en `cgauge`, filas con `href` = página con el estado (htmx cancela el default); sectores SVG sin `href`, con `tabindex="0" role="link" hx-trigger="click, keyup[key=='Enter']"`. Sin JS propio.
-- **3:** `liveAnalysis` lee `franja`, la valida contra los `Slot` del gráfico (`partInput`/`participationChart`) y reusa el armado del detalle de franja de Programas (extraer lo común de `programSlotLinks` a una función compartida). La franja viaja en el input oculto `.vq` como `ver`/`horas`.
+- **2:** en `cgauge`, filas como `<button>`; sectores SVG como `<g>` sin `href`, con `tabindex="0" role="button" hx-trigger="click, keyup[key=='Enter']"`. Sin JS propio.
+- **3:** `liveAnalysis` lee `pfranja`; `participationView` la valida contra las franjas del gráfico (`pickSlot`) y `momentSlotLinks` pone los links y arma el detalle (`SlotDetail`, plantilla `vivo-franja`). `part-chart` toma destino y `hx-sync` de cada pantalla. La franja viaja en el input oculto `.vq` como `ver`/`horas`.
 - **4:** `programDetail` arma siempre `d.Gauge` (con `labels` nil sin Claude); en `programas.html` una tarjeta «Categorías» propia y los temas en la suya.
 - **5:** `segmentBars(segs []LoyaltySegment)` en `loyalty.go` (pura) y SVG en la plantilla.
 - **6:** `commentScope` recibe el conjunto de IDs configurados (`Status().Channels`); con `Canal == ""` exige `ChannelID` en ese conjunto.

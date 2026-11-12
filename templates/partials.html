@@ -71,11 +71,11 @@
 </section>
 {{end}}
 
-{{define "vivo-q"}}{{if .Canal}}canal={{.Canal}}&video={{.Video}}&ver={{.Ver}}{{else}}video={{.Video}}{{end}}{{if .Abrir}}&abrir={{.Abrir}}{{end}}{{if .Motivos}}&motivos={{.Motivos}}{{end}}{{if .Franja}}&franja={{.Franja}}&sent={{.SentTab}}{{end}}{{end}}
+{{define "vivo-q"}}{{if .Canal}}canal={{.Canal}}&video={{.Video}}&ver={{.Ver}}{{else}}video={{.Video}}{{end}}{{if .Abrir}}&abrir={{.Abrir}}{{end}}{{if .Motivos}}&motivos={{.Motivos}}{{end}}{{if .Franja}}&franja={{.Franja}}&sent={{.SentTab}}{{end}}{{if .PFranja}}&pfranja={{.PFranja}}{{end}}{{end}}
 
 {{define "vivo-analisis"}}
 <div id="vivo-analisis" hx-get="/parcial/vivo/analisis?{{template "vivo-q" .}}&horas={{.Hours}}" hx-trigger="every 30s" hx-swap="outerHTML">
-{{if .Canal}}<input type="hidden" class="vq" name="ver" value="{{.Ver}}"><input type="hidden" class="vq" name="motivos" value="{{.Motivos}}">{{if .Franja}}<input type="hidden" class="vq" name="franja" value="{{.Franja}}"><input type="hidden" class="vq" name="sent" value="{{.SentTab}}">{{end}}{{end}}<input type="hidden" class="vq" name="horas" value="{{.Hours}}"><input type="hidden" class="vq" name="abrir" value="{{.Abrir}}">
+{{if .Canal}}<input type="hidden" class="vq" name="ver" value="{{.Ver}}"><input type="hidden" class="vq" name="motivos" value="{{.Motivos}}">{{if .Franja}}<input type="hidden" class="vq" name="franja" value="{{.Franja}}"><input type="hidden" class="vq" name="sent" value="{{.SentTab}}">{{end}}{{end}}{{if .PFranja}}<input type="hidden" class="vq" name="pfranja" value="{{.PFranja}}">{{end}}<input type="hidden" class="vq" name="horas" value="{{.Hours}}"><input type="hidden" class="vq" name="abrir" value="{{.Abrir}}">
 {{if .Label}}
 {{if .Canal}}<div class="selector">
   <div class="vbtns" role="group" aria-label="Qué parte del canal analizar">
@@ -181,6 +181,7 @@
       hx-get="/parcial/vivo/analisis?{{template "vivo-q" $}}&horas={{$h}}" hx-target="#vivo-analisis" hx-swap="outerHTML">Últimas {{$h}} h</button>{{end}}
   </div>
   {{with .Chart}}{{template "part-chart" .}}{{end}}
+  {{with .Slot}}{{template "vivo-franja" .}}{{else}}<p class="muted">Tocá una barra para ver los mensajes de esa franja.</p>{{end}}
   {{if .Outside}}<p class="muted">{{.Outside}}</p>{{end}}
   {{/* Una tarjeta por momento: los números a la vista y los mensajes plegados. */}}
   {{if .Moments}}<ol class="moms">
@@ -223,13 +224,8 @@
 </div>{{end}}
 
 {{with .Likes}}<section id="likes" class="card" aria-labelledby="likes-h">
-  <div class="chead"><h2 id="likes-h">Likes</h2><span class="muted">De los vivos de hoy y de lo publicado en los últimos 7 días</span></div>
-  <div class="grid2">
-    <div class="cchart">{{with .Chart}}<h3>Likes nuevos de los vivos · cada 30 min</h3>{{template "cchart" .}}{{else}}<h3>Likes nuevos de los vivos</h3><p class="muted">Todavía no hay likes nuevos de hoy: se guardan en cada revisión de videos.</p>{{end}}</div>
-    <div><h3>Lo que más gustó · 7 días</h3>
-    {{if .Top}}<ol class="liked">{{range .Top}}<li><span class="kind {{.Class}}">{{.Kind}}</span><a href="{{.Href}}" target="_blank" rel="noopener">{{.Title}}</a><span class="num">{{.Likes}}</span></li>{{end}}</ol>
-    {{else}}<p class="muted">Sin videos, shorts ni vivos del canal con likes en los últimos 7 días.</p>{{end}}</div>
-  </div>
+  <div class="chead"><h2 id="likes-h">Likes</h2><span class="muted">De los vivos de hoy</span></div>
+  <div class="cchart">{{with .Chart}}<h3>Likes nuevos de los vivos · cada 30 min</h3>{{template "cchart" .}}{{else}}<h3>Likes nuevos de los vivos</h3><p class="muted">Todavía no hay likes nuevos de hoy: se guardan en cada revisión de videos.</p>{{end}}</div>
   <p class="muted">Likes según YouTube en la última revisión. Los de cada programa están en Programas; los de cada video, en Comentarios y likes.</p>
 </section>{{end}}
 {{else}}<p class="muted">Este vivo ya no está en la lista de videos.</p>{{end}}
@@ -331,8 +327,8 @@ Lo usan En vivo y el detalle de Programas. */}}
   <div class="pchart">
     <svg viewBox="0 0 {{with .VW}}{{.}}{{else}}{{.W}}{{end}} 100" preserveAspectRatio="none" role="{{if .Links}}group{{else}}img{{end}}" aria-label="{{.Aria}}{{with .Viewers}}. {{.Aria}}{{end}}">
       {{range .Bands}}<rect class="banda" x="{{.X}}" y="{{.Y}}" width="{{.W}}" height="{{.H}}"></rect>{{end}}
-      {{/* En Programas cada barra pide los mensajes de su franja (Href). */}}
-      {{range .Bars}}{{if .Href}}<a id="{{.ID}}" class="pbar{{if .Sel}} sel{{end}}" href="#franja-det" hx-get="{{.Href}}" hx-sync="#programas:replace" hx-target="#programas" hx-swap="outerHTML" aria-label="{{.Label}}. Ver los mensajes">{{else}}<g>{{end}}<title>{{.Label}}</title><rect class="hit" x="{{.X}}" y="0" width="{{.W}}" height="100"></rect><rect class="bar{{if .Class}} {{.Class}}{{end}}" rx="0.2" ry="1.5" x="{{.X}}" y="{{.Y}}" width="{{.W}}" height="{{.H}}"></rect>{{if .Href}}</a>{{else}}</g>{{end}}
+      {{/* En Programas y en Momentos de En vivo cada barra pide los mensajes de su franja (Href). */}}
+      {{range .Bars}}{{if .Href}}<a id="{{.ID}}" class="pbar{{if .Sel}} sel{{end}}" href="{{with $.Anchor}}{{.}}{{else}}#franja-det{{end}}" hx-get="{{.Href}}" hx-sync="{{with $.Sync}}{{.}}{{else}}#programas:replace{{end}}" hx-target="{{with $.Target}}{{.}}{{else}}#programas{{end}}" hx-swap="outerHTML" aria-label="{{.Label}}. Ver los mensajes">{{else}}<g>{{end}}<title>{{.Label}}</title><rect class="hit" x="{{.X}}" y="0" width="{{.W}}" height="100"></rect><rect class="bar{{if .Class}} {{.Class}}{{end}}" rx="0.2" ry="1.5" x="{{.X}}" y="{{.Y}}" width="{{.W}}" height="{{.H}}"></rect>{{if .Href}}</a>{{else}}</g>{{end}}
       {{end}}{{range .Lines}}<line class="corte" x1="{{.X}}" x2="{{.X}}" y1="0" y2="100" vector-effect="non-scaling-stroke"></line>{{end}}
       {{if and .ByPct (not .Bands)}}<line class="tipica" x1="0" x2="{{.W}}" y1="{{.TypicalY}}" y2="{{.TypicalY}}"></line>{{end}}
       {{with .Median}}<path class="mediana" d="{{.}}" vector-effect="non-scaling-stroke"></path>{{end}}
@@ -345,6 +341,12 @@ Lo usan En vivo y el detalle de Programas. */}}
   <div class="pticks" aria-hidden="true">{{range .Ticks}}<span{{if .End}} class="end"{{end}} style="left: {{printf "%.2f" .Left}}%">{{.Label}}</span>{{end}}</div>
   {{if .Strip}}<ul class="sprogl" aria-label="Programas del gráfico">{{range .Strip}}<li title="{{.Range}} · {{.Name}}">{{.Hour}} · {{.Name}}</li>{{end}}</ul>{{end}}
 {{end}}
+
+{{/* Mensajes de la franja elegida en el gráfico de Momentos. */}}
+{{define "vivo-franja"}}<section id="pfranja-det" class="sdet" aria-labelledby="pfranja-det-h">
+    <div class="chead"><h3 id="pfranja-det-h">{{.Title}}</h3><button type="button" class="btn btn-s cerrar" hx-get="{{.Close}}" hx-sync="closest #vivo-analisis:replace" hx-target="#vivo-analisis" hx-swap="outerHTML">Cerrar</button></div>
+    {{if .Empty}}<p class="muted">{{.Empty}}</p>{{else}}{{template "fold-msgs" .List}}{{end}}
+  </section>{{end}}
 
 {{/* Mensajes de una sección desplegada, los más nuevos primero (FoldMsgs). */}}
 {{define "fold-msgs"}}{{with .}}<ul class="qlist fmsgs">{{range .Msgs}}<li>
@@ -390,12 +392,12 @@ cada grupo se despliega con sus preguntas. */}}
   <div class="gwrap">
     <div class="gchart">
       <svg viewBox="0 0 480 248" role="group" aria-label="Categorías: {{.Aria}}">
-        {{range .Sectors}}<a class="gsec {{.Key}}{{if .On}} on{{end}}" href="#cat-detalle" hx-get="{{.Href}}" hx-target="{{$g.Target}}" hx-swap="outerHTML"{{with $g.Sync}} hx-sync="{{.}}"{{end}} aria-label="{{.Title}}"><title>{{.Title}}</title><path d="{{.D}}"></path></a>{{end}}
+        {{/* Sin href: un ancla haría saltar la pantalla al tocar (htmx no cancela "#…"). */}}{{range .Sectors}}<g class="gsec {{.Key}}{{if .On}} on{{end}}" tabindex="0" role="button" hx-get="{{.Href}}" hx-trigger="click, keyup[key=='Enter']" hx-target="{{$g.Target}}" hx-swap="outerHTML"{{with $g.Sync}} hx-sync="{{.}}"{{end}} aria-label="{{.Title}}" aria-pressed="{{.On}}"><title>{{.Title}}</title><path d="{{.D}}"></path></g>{{end}}
       </svg>
       <div class="gcenter" aria-hidden="true"><span class="gnum">{{miles .Total}}</span><span class="muted">{{if .NoOther}}sin «Otros»{{else}}en total{{end}}</span></div>
     </div>
     <div class="gside">
-      <ul class="glist">{{range .Sectors}}<li><a class="grow{{if .On}} on{{end}}" href="#cat-detalle" hx-get="{{.Href}}" hx-target="{{$g.Target}}" hx-swap="outerHTML"{{with $g.Sync}} hx-sync="{{.}}"{{end}}{{if .On}} aria-current="true"{{end}}><span class="sw {{.Key}}" aria-hidden="true"></span><span class="gl">{{.Label}}</span><span class="num">{{miles .N}}</span><span class="num gp">{{.Share}}</span></a></li>{{end}}</ul>
+      <ul class="glist">{{range .Sectors}}<li><button type="button" class="grow{{if .On}} on{{end}}" hx-get="{{.Href}}" hx-target="{{$g.Target}}" hx-swap="outerHTML"{{with $g.Sync}} hx-sync="{{.}}"{{end}} aria-pressed="{{.On}}"><span class="sw {{.Key}}" aria-hidden="true"></span><span class="gl">{{.Label}}</span><span class="num">{{miles .N}}</span><span class="num gp">{{.Share}}</span></button></li>{{end}}</ul>
       <button type="button" class="btn btn-s" hx-get="{{.OtherHref}}" hx-target="{{.Target}}" hx-swap="outerHTML"{{with .Sync}} hx-sync="{{.}}"{{end}}>{{if .NoOther}}Sumar «Otros»{{else}}Sacar «Otros»{{end}}</button>
     </div>
   </div>

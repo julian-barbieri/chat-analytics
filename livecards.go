@@ -31,7 +31,6 @@ const (
 	trendBand    = 0.1              // participación: ±10 % de la típica es gris
 	hourAgoSlack = 10 * time.Minute // muestra de espectadores aceptable para "hace 1 h"
 	regularDays  = 7                // habitual: escribió otro día de los 7 anteriores
-	topLikedN    = 5
 	wordsShown   = 8
 	authorsShown = 5
 	shareTop     = 10
@@ -396,43 +395,14 @@ func authorTag(msgs []Message, author string, regulars map[string]bool) string {
 	return "nuevo"
 }
 
-// LikedRow es una fila de "Lo que más gustó · 7 días".
-type LikedRow struct{ Kind, Class, Title, Likes, Href string }
-
-// topLiked son los n contenidos del canal con más likes según la última
-// revisión: los publicados desde since y los vivos en curso (live), que
-// pueden haber empezado antes. Vivos, videos y shorts en una sola lista.
-func topLiked(recs []VideoRecord, chID string, live map[string]bool, since time.Time, n int) []LikedRow {
-	var pick []VideoRecord
-	for _, r := range recs {
-		if r.ChannelID == chID && r.Likes > 0 && (!r.PublishedAt.Before(since) || live[r.ID]) {
-			pick = append(pick, r)
-		}
-	}
-	sort.SliceStable(pick, func(i, j int) bool { return pick[i].Likes > pick[j].Likes })
-	var out []LikedRow
-	for _, r := range pick[:min(n, len(pick))] {
-		row := LikedRow{Kind: "Video", Class: "video", Title: r.Title, Likes: miles(r.Likes), Href: "https://www.youtube.com/watch?v=" + r.ID}
-		switch {
-		case r.Live:
-			row.Kind, row.Class = "Vivo", "vivo"
-		case r.Short:
-			row.Kind, row.Class = "Short", "short"
-		}
-		out = append(out, row)
-	}
-	return out
-}
-
 // likesView es la tarjeta "Likes" de En vivo de un canal.
 func (s *Server) likesView(snap Snapshot, ch ChannelStatus, ls liveScope, now time.Time) (Tile, map[string]any) {
 	day := dayStart(now)
 	ids := map[string]bool{}
-	live := map[string]bool{}
 	var cur *Video
 	for _, v := range snap.Videos {
 		if v.ChannelID == ch.ID && v.LiveStatus == "live" {
-			ids[v.ID], live[v.ID] = true, true
+			ids[v.ID] = true
 			if v.ID == ls.video {
 				cur = &v
 			}
@@ -456,7 +426,7 @@ func (s *Server) likesView(snap Snapshot, ch ChannelStatus, ls liveScope, now ti
 	} else {
 		tile = liveLikes(samples, nil, list, day, now)
 	}
-	view := map[string]any{"Top": topLiked(s.st.VideoArchive(), ch.ID, live, now.AddDate(0, 0, -regularDays), topLikedN)}
+	view := map[string]any{}
 	chart := likesTodayChart(samples, day, now)
 	for _, b := range chart.Bars {
 		if b.N > 0 {

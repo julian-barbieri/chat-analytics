@@ -39,7 +39,7 @@
     <div class="field"><span class="lbl">Período</span><div class="chips">{{range .Periods}}{{template "cfiltro" .}}{{end}}</div></div>
     <div class="field"><span class="lbl">Tipo</span><div class="chips">{{range .Types}}{{template "cfiltro" .}}{{end}}</div></div>
   </div>
-  <p class="muted">«Publicados en 30 días»: solo los videos y shorts publicados desde el {{fechaDia .View.PubSince}}, con todos sus comentarios y likes, lleguen el día que lleguen. Los likes de los vivos están por programa en Programas. Las publicaciones de la pestaña Comunidad no se pueden leer con la API de YouTube.</p>
+  <p class="muted">Los likes de los vivos están por programa en Programas. Las publicaciones de la pestaña Comunidad no se pueden leer con la API de YouTube.</p>
 </section>
 
 {{if .Empty}}<section class="card"><p>Todavía no hay comentarios guardados. El monitor los baja cada 10 minutos de los últimos videos de cada canal (de los canales extra, cada 30 minutos).</p></section>{{else}}
@@ -145,7 +145,7 @@
     <div class="chead"><h2 id="clikes-h">Cómo llegaron los likes</h2><span class="muted">Desde la publicación</span></div>
     {{with .LikeCurve}}{{template "cchart" .}}
     {{if not $d.LikesFrom.IsZero}}<p class="muted">Los likes se guardan desde el {{fecha $d.LikesFrom}}: lo de antes no está repartido.</p>{{end}}
-    {{else}}<p class="muted">Todavía no hay muestras de likes de este video. Se guardan en cada revisión, como mucho cada 30 minutos.</p>{{end}}
+    {{else}}{{with $d.LikesNone}}<p class="muted">{{.}}</p>{{else}}<p class="muted">Todavía no hay muestras de likes de este video. Se guardan en cada revisión, como mucho cada 30 minutos.</p>{{end}}{{end}}
   </section>
 </div>
 

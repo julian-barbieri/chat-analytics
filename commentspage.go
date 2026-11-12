@@ -49,6 +49,38 @@ func commentVideos(archive []VideoRecord, current []Video, now time.Time) []Vide
 	return out
 }
 
+// configuredOnly deja los videos de los canales que hoy están en Canales y
+// sus comentarios: el archivo guarda 30 días de todo lo revisado, también de
+// un canal quitado, y "Todos" no debe sumarlo. Un comentario de un video que
+// no está en el archivo (canal desconocido) también queda afuera. Sin canales
+// resueltos todavía (al arrancar) no filtra.
+func configuredOnly(msgs []Message, vids []VideoRecord, chans []ChannelStatus) ([]Message, []VideoRecord) {
+	ids := map[string]bool{}
+	for _, c := range chans {
+		if c.ID != "" {
+			ids[c.ID] = true
+		}
+	}
+	if len(ids) == 0 {
+		return msgs, vids
+	}
+	keep := map[string]bool{}
+	var outV []VideoRecord
+	for _, r := range vids {
+		if ids[r.ChannelID] {
+			keep[r.ID] = true
+			outV = append(outV, r)
+		}
+	}
+	var outM []Message
+	for _, m := range msgs {
+		if keep[m.VideoID] {
+			outM = append(outM, m)
+		}
+	}
+	return outM, outV
+}
+
 func (s *Server) commentsData(v url.Values) map[string]any {
 	now := s.clock()
 	snap := s.st.Status()
@@ -81,6 +113,7 @@ func (s *Server) commentsData(v url.Values) map[string]any {
 		data["CatOpts"], data["VOrders"] = catOptions(), videoOrders
 		return data
 	}
+	msgs, vids = configuredOnly(msgs, vids, snap.Channels)
 	view := CommentsSummary(msgs, vids, s.st.LikesSince(now.Add(-retention)), q, now)
 	data["View"] = view
 	chans := []Choice{}
@@ -101,7 +134,7 @@ func (s *Server) commentsData(v url.Values) map[string]any {
 	data["Types"] = choices(commentTypes, q.Tipo, q, func(n *CommentsQuery, v string) { n.Tipo = v })
 	data["Orders"] = choices(commentOrders, q.Orden, q, func(n *CommentsQuery, v string) { n.Orden = v })
 	data["Dests"] = choices(commentDests, q.Dest, q, func(n *CommentsQuery, v string) { n.Dest = v })
-	period := map[string]string{"7d": "en los últimos 7 días", "30d": "en los últimos 30 días", "pub": "de videos publicados en 30 días"}[q.Periodo]
+	period := map[string]string{"7d": "en los últimos 7 días", "30d": "en los últimos 30 días"}[q.Periodo]
 	data["Period"] = period
 	data["Tiles"] = []Tile{
 		{"Comentarios", miles(view.Total), period, ""},
