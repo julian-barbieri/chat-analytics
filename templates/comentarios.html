@@ -72,12 +72,16 @@
 <div class="grid2">
   <section class="card" aria-labelledby="cpal-h">
     <h2 id="cpal-h">De qué hablan</h2>
-    {{if .View.Words}}<div class="words">{{range .View.Words}}<span>{{.Key}} <span class="muted">{{.N}}</span></span>{{end}}</div>{{else}}<p class="muted">Sin comentarios en el período.</p>{{end}}
-    <h3 class="sub">Quiénes más comentan</h3>
-    {{if .View.Authors}}<table>
-      <thead><tr><th scope="col">Persona</th><th scope="col" class="n">Comentarios</th><th scope="col" class="n">Videos</th></tr></thead>
-      <tbody>{{range .View.Authors}}<tr><td>{{.Name}}</td><td class="n">{{miles .N}}</td><td class="n">{{miles .Videos}}</td></tr>{{end}}</tbody>
-    </table>{{end}}
+    {{if .View.WordRows}}<ol class="wlist">{{range .View.WordRows}}<li class="wrow" title="{{.Key}}: {{plural .N "comentario" "comentarios"}}"><span class="wk">{{.Key}}</span><span class="wtrack"><span class="wbar" style="width: {{printf "%.0f" .W}}%"></span></span><span class="num">{{miles .N}}</span></li>{{end}}</ol>
+    <p class="muted">Las 10 palabras que aparecen en más comentarios.</p>{{else}}<p class="muted">Sin comentarios en el período.</p>{{end}}
+  </section>
+  {{/* Ranking con barras: el largo es cuántos comentó y la parte fuerte, en
+       cuántos videos distintos (fiel si es casi toda, un hilo si es poca). */}}
+  <section class="card" aria-labelledby="cquien-h">
+    <h2 id="cquien-h">Quiénes más comentan</h2>
+    {{if .View.Authors}}<ol class="wlist rank">{{range .View.Authors}}<li class="wrow" title="{{.Name}}: {{plural .N "comentario" "comentarios"}} en {{plural .Videos "video" "videos"}}"><span class="wk who"><span class="av h{{.Hue}}" aria-hidden="true">{{.Initial}}</span>{{.Name}}</span><span class="wtrack" role="img" aria-label="{{plural .N "comentario" "comentarios"}} en {{plural .Videos "video" "videos"}}"><span class="wbar soft" style="width: {{printf "%.0f" .W}}%"><span class="wbar" style="width: {{printf "%.1f" .WVideos}}%"></span></span></span><span class="num">{{miles .N}}</span></li>{{end}}</ol>
+    <p class="leyenda"><span class="leg"><span class="sw wv" aria-hidden="true"></span>en distintos videos</span><span class="leg"><span class="sw wr" aria-hidden="true"></span>repetidos en el mismo video</span></p>
+    {{else}}<p class="muted">Sin comentarios en el período.</p>{{end}}
   </section>
 </div>
 

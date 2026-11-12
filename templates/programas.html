@@ -94,7 +94,7 @@
   <div class="detail-grid">
     {{template "talk" .Talk}}
     <div class="inner">
-      <h3>Categorías {{if .CatsClaude}}<span class="ia">Claude</span>{{else}}<span class="chip">por reglas</span>{{end}}</h3>
+      <h3>Categorías y preguntas {{if .CatsClaude}}<span class="ia">Claude</span>{{else}}<span class="chip">por reglas</span>{{end}}</h3>
       {{template "cgauge" .Gauge}}
       {{if .CatsClaude}}<p class="muted">Por Claude, con las tandas; el spam, por reglas{{if .CatsPending}}. {{.CatsPending}} todavía sin etiquetar (por reglas){{end}}. El CSV sigue por reglas.</p>
       {{else}}<p class="muted">Por reglas simples; el detalle fino hacelo con Claude sobre el CSV.</p>{{end}}
@@ -108,22 +108,6 @@
       <p class="muted leyenda"><span class="sw pos" aria-hidden="true"></span> Positivo <span class="sw neu" aria-hidden="true"></span> Neutro <span class="sw neg" aria-hidden="true"></span> Negativo <span class="sw low" aria-hidden="true"></span> Menos de 5 mensajes</p>
       {{if eq .SlotIn "sent"}}{{template "prog-franja" .Slot}}{{else}}<p class="muted">Tocá una franja para ver sus mensajes.</p>{{end}}
       {{else if .Sent}}<p class="muted">Todavía no hay mensajes analizados por Claude en este programa.</p>{{end}}
-    </div>
-    <div class="inner">
-      <h3>Preguntas {{if or .QGroups (and .Claude .Claude.Questions)}}<span class="ia">Claude</span>{{else if not .QClaude}}<span class="chip">por reglas</span>{{end}}</h3>
-      {{if .QGroups}}<p class="muted">{{.QHeader}}</p>
-      <ul class="qlist qgroups">{{range .QGroups}}{{template "prog-qg" .}}{{end}}</ul>
-      {{if .QRest}}<details class="plegable"{{if .QMore.Open}} open{{end}}>
-        <summary id="pf-maspreguntas" hx-get="{{.QMore.Href}}" hx-sync="#programas:replace" hx-target="#programas" hx-swap="outerHTML">Ver {{len .QRest}} más</summary>
-        <ul class="qlist qgroups">{{range .QRest}}{{template "prog-qg" .}}{{end}}</ul>
-      </details>{{end}}
-      <p class="muted">Agrupadas por Claude en las tandas; las cantidades las cuenta el monitor.</p>
-      {{else if and .Claude .Claude.Questions}}{{template "prog-items" .Claude.Questions}}
-      {{else if .QClaude}}<p class="muted">Claude no agrupó preguntas en este programa.</p>
-      {{else}}<ul class="qlist">{{range .Questions}}<li>
-        <div class="meta"><strong>{{.Author}}</strong> · {{fecha .At}}</div>
-        <div>{{.Text}}</div>
-      </li>{{else}}<li class="muted">Sin preguntas.</li>{{end}}</ul>{{end}}
     </div>
   </div>
   {{with .History}}{{template "historia" .}}{{end}}
@@ -153,12 +137,13 @@ El id deja el foco en la flecha y hx-sync corta un refresco en vuelo. Se
 cierra con </summary> en quien la usa. */}}
 {{define "pf-summary"}}<summary id="pf-{{.Key}}" hx-get="{{.Fold.Href}}" hx-sync="#programas:replace" hx-target="#programas" hx-swap="outerHTML">{{end}}
 
-{{/* Segmentos por asistencia en dos barras al 100 %: cuánta gente es cada
-segmento y cuánto escribe. Los números exactos están en la tabla de abajo. */}}
-{{define "segbars"}}{{with .}}<div class="segbars">{{range .}}<div class="segrow">
-      <span class="lbl">{{.Label}}</span>
-      <div class="segbar" role="img" aria-label="{{.Label}}: {{range $i, $p := .Parts}}{{if $i}}, {{end}}{{$p.Label}} {{printf "%.0f" $p.Pct}} %{{end}}">{{range .Parts}}<span class="sg {{.Key}}" style="width: {{printf "%.1f" .Pct}}%" title="{{.Label}}: {{printf "%.0f" .Pct}} %"></span>{{end}}</div>
-    </div>{{end}}</div>{{end}}{{end}}
+{{/* Segmentos por asistencia en cinta (SVG armado en Go, segmentFlow):
+Personas a la izquierda, Mensajes a la derecha. Los números exactos están en
+la tabla de abajo; cada segmento lleva su <title>. */}}
+{{define "segflow"}}{{with .}}<svg class="segflow" viewBox="0 0 340 214" role="img" aria-label="{{.Aria}}">
+  <text class="sfh" x="161" y="12" text-anchor="middle">Personas</text><text class="sfh" x="261" y="12" text-anchor="middle">Mensajes</text>
+  {{range .Bands}}<g class="sf {{.Key}}"><title>{{.Title}}</title><path class="sfb" d="{{.Path}}"></path><rect x="150" y="{{printf "%.1f" .LY}}" width="22" height="{{printf "%.1f" .LH}}" rx="3"></rect><rect x="250" y="{{printf "%.1f" .RY}}" width="22" height="{{printf "%.1f" .RH}}" rx="3"></rect>{{if .LShow}}<text x="144" y="{{printf "%.1f" .LTY}}" text-anchor="end">{{.LText}}</text>{{end}}{{if .RShow}}<text x="278" y="{{printf "%.1f" .RTY}}">{{.RText}}</text>{{end}}</g>{{end}}
+</svg>{{end}}{{end}}
 
 {{/* Mensajes de la franja elegida en Participación o en Sentimiento. */}}
 {{define "prog-franja"}}{{with .}}<section id="franja-det" class="sdet" aria-labelledby="franja-det-h">
@@ -166,6 +151,23 @@ segmento y cuánto escribe. Los números exactos están en la tabla de abajo. */
     {{if .Tabs}}<div class="vbtns" role="group" aria-label="Qué mensajes ver">{{range .Tabs}}<button type="button" class="seg" hx-get="{{.Href}}" hx-sync="#programas:replace" hx-target="#programas" hx-swap="outerHTML" aria-pressed="{{.On}}">{{.Label}}</button>{{end}}</div>{{end}}
     {{if .Empty}}<p class="muted">{{.Empty}}</p>{{else}}{{template "fold-msgs" .List}}{{end}}
   </section>{{end}}{{end}}
+
+{{/* Las preguntas del detalle de Pregunta en "Categorías y preguntas"
+(CatQuestions): los grupos de las tandas, las del resumen de Claude o las de
+reglas. */}}
+{{define "cat-preguntas"}}{{if .Groups}}<p class="muted">{{.Header}}</p>
+  <ul class="qlist qgroups">{{range .Groups}}{{template "prog-qg" .}}{{end}}</ul>
+  {{if .Rest}}<details class="plegable"{{if .More.Open}} open{{end}}>
+    <summary id="pf-maspreguntas" hx-get="{{.More.Href}}" hx-sync="#programas:replace" hx-target="#programas" hx-swap="outerHTML">Ver {{len .Rest}} más</summary>
+    <ul class="qlist qgroups">{{range .Rest}}{{template "prog-qg" .}}{{end}}</ul>
+  </details>{{end}}
+  <p class="muted">Agrupadas por Claude en las tandas; las cantidades las cuenta el monitor.</p>
+{{else if .Summary}}<p class="muted">Agrupadas por Claude en el resumen del programa.</p>{{template "prog-items" .Summary}}
+{{else if .NotGrouped}}<p class="muted">Claude no agrupó preguntas en este programa.</p>
+{{else}}<p class="lbl">Preguntas por reglas</p><ul class="qlist">{{range .Rules}}<li>
+    <div class="meta"><strong>{{.Author}}</strong> · {{fecha .At}}</div>
+    <div>{{.Text}}</div>
+  </li>{{else}}<li class="muted">Sin preguntas.</li>{{end}}</ul>{{end}}{{end}}
 
 {{/* Un grupo de preguntas de las tandas: con más de un mensaje, se despliega. */}}
 {{define "prog-qg"}}<li{{if .Answered}} class="hecha"{{end}}>{{if .Key}}<details class="plegable qg"{{if .Fold.Open}} open{{end}}>{{template "pf-summary" .}}{{template "qrow" .}}</summary>
@@ -228,7 +230,7 @@ el tipo y el monto adelante. */}}
       <div>
         <h3>Segmentos por asistencia</h3>
         <p class="muted">Cada participante se ubica según en cuántos de {{plural .Emissions "vivo" "vivos"}} del programa escribió.</p>
-        {{template "segbars" .SegBars}}
+        {{template "segflow" .SegFlow}}
         <div class="tablewrap"><table>
           <thead><tr><th scope="col">Segmento</th><th scope="col">Regla</th><th scope="col" class="n">Participantes</th><th scope="col" class="n">% personas</th><th scope="col" class="n">% mensajes</th></tr></thead>
           <tbody>{{range .Segments}}<tr><td><span class="sw {{.Key}}" aria-hidden="true"></span> {{.Label}}</td><td class="muted">{{.Rule}}</td><td class="n">{{miles .People}}</td><td class="n">{{printf "%.0f" .PeoplePct}} %</td><td class="n">{{printf "%.0f" .MsgsPct}} %</td></tr>{{end}}</tbody>

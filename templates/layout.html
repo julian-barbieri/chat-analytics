@@ -460,13 +460,14 @@ details summary { cursor: pointer; min-height: 32px; font-weight: 600; }
 .nhoras span { position: absolute; transform: translateX(-50%); }
 .nhoras span:first-child { transform: none; }
 .nhoras span:last-child { transform: translateX(-100%); }
-.segbars { display: flex; flex-direction: column; gap: 8px; margin: 8px 0 12px; }
-.segrow { display: grid; grid-template-columns: 6.5em minmax(0, 1fr); gap: 10px; align-items: center; }
-.segbar { display: flex; height: 22px; border-radius: 4px; overflow: hidden; background: var(--surface-0); }
-.sg.nuevos { background: var(--sent-neu); }
-.sg.ocasionales { background: var(--series-1); }
-.sg.habituales { background: var(--series-4); }
-.sg.nucleo { background: var(--series-2); }
+.segflow { display: block; width: 100%; max-width: 440px; height: auto; margin: 8px 0 12px; }
+.segflow text { font-size: 11px; fill: var(--text-secondary); }
+.segflow .sfh { font-weight: 600; fill: var(--text-muted); }
+.segflow .sfb { opacity: .28; }
+.sf.nuevos rect, .sf.nuevos .sfb { fill: var(--sent-neu); }
+.sf.ocasionales rect, .sf.ocasionales .sfb { fill: var(--series-1); }
+.sf.habituales rect, .sf.habituales .sfb { fill: var(--series-4); }
+.sf.nucleo rect, .sf.nucleo .sfb { fill: var(--series-2); }
 .tile small { font-size: 13px; font-weight: 600; color: var(--text-secondary); }
 .tile .v.warnv { color: var(--series-2); }
 table.heat td.m0 { background: var(--heat-0); }
@@ -529,6 +530,17 @@ a.seg[aria-current="true"] { background: var(--text-primary); color: var(--surfa
 .wrow .wk { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
 .wrow .num { text-align: right; }
 .wtrack { height: 10px; border-radius: 99px; background: var(--grid); overflow: hidden; }
+/* "Quiénes más comentan": la barra suave es el total y la fuerte, adentro, los videos distintos. */
+.wbar.soft { background: var(--bar-soft); }
+.sw.wv { background: var(--series-1); }
+.sw.wr { background: var(--bar-soft); }
+.wrow .who { display: flex; align-items: center; gap: 8px; }
+.av { flex: none; width: 24px; height: 24px; border-radius: 50%; display: inline-grid; place-items: center; font-size: 12px; font-weight: 700; color: var(--surface-1); }
+.av.h1 { background: var(--series-1); }
+.av.h2 { background: var(--series-2); }
+.av.h3 { background: var(--series-3); }
+.av.h4 { background: var(--series-4); }
+.av.h5 { background: var(--series-5); }
 .wbar { display: block; height: 100%; border-radius: 99px; background: var(--series-1); }
 .wbar.alt { background: var(--text-secondary); }
 .wup { color: var(--ok-text); font-size: 12px; }

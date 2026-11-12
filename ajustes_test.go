@@ -113,12 +113,12 @@ func TestProgramDetailGauge(t *testing.T) {
 	path := "/parcial/programas/detalle?tramo=" + url.QueryEscape(key)
 	_, off := programServer(t, now, false)
 	body := getBody(off.Routes(), path)
-	if !strings.Contains(body, `<h3>Categorías <span class="chip">por reglas</span></h3>`) || !strings.Contains(body, `class="cgauge`) {
+	if !strings.Contains(body, `<h3>Categorías y preguntas <span class="chip">por reglas</span></h3>`) || !strings.Contains(body, `class="cgauge`) {
 		t.Error("sin Claude: falta Categorías por reglas")
 	}
 	st, srv, key := claudeProgramServer(t, now)
 	body = getBody(srv.Routes(), "/parcial/programas/detalle?tramo="+url.QueryEscape(key))
-	if !strings.Contains(body, `<h3>Categorías <span class="ia">Claude</span></h3>`) || !strings.Contains(body, `class="cgauge`) {
+	if !strings.Contains(body, `<h3>Categorías y preguntas <span class="ia">Claude</span></h3>`) || !strings.Contains(body, `class="cgauge`) {
 		t.Error("con Claude: falta Categorías por Claude")
 	}
 	// Con el resumen de Claude con temas, Categorías sigue y los temas también.
@@ -127,37 +127,9 @@ func TestProgramDetailGauge(t *testing.T) {
 		Model: defaultClaudeModel, From: day.Add(8 * time.Hour), To: day.Add(10 * time.Hour), Sent: 25, Total: 25,
 		Result: ClaudeResult{Summary: "Resumen", Topics: []ClaudeGroup{{Text: "El clima", Msgs: 3, People: 2}}}})
 	body = getBody(srv.Routes(), "/parcial/programas/detalle?tramo="+url.QueryEscape(key))
-	for _, w := range []string{`<h3>Categorías <span class="ia">Claude</span></h3>`, `class="cgauge`, `Temas de conversación <span class="ia">Claude</span>`, "El clima"} {
+	for _, w := range []string{`<h3>Categorías y preguntas <span class="ia">Claude</span></h3>`, `class="cgauge`, `Temas de conversación <span class="ia">Claude</span>`, "El clima"} {
 		if !strings.Contains(body, w) {
 			t.Errorf("con resumen: falta %q", w)
-		}
-	}
-}
-
-// TestSegmentBars (CA5): Personas y Mensajes al 100 %, un tramo por segmento.
-func TestSegmentBars(t *testing.T) {
-	segs := []LoyaltySegment{
-		{Key: "nuevos", Label: "Nuevos / de paso", People: 6, PeoplePct: 60, MsgsPct: 20},
-		{Key: "ocasionales", Label: "Ocasionales", People: 2, PeoplePct: 20, MsgsPct: 20},
-		{Key: "habituales", Label: "Habituales", People: 0, PeoplePct: 0, MsgsPct: 0},
-		{Key: "nucleo", Label: "Núcleo", People: 2, PeoplePct: 20, MsgsPct: 60},
-	}
-	bars := segmentBars(segs)
-	if len(bars) != 2 || bars[0].Label != "Personas" || bars[1].Label != "Mensajes" {
-		t.Fatalf("barras = %+v", bars)
-	}
-	got := fmt.Sprint(bars[0].Parts, bars[1].Parts)
-	want := "[{nuevos Nuevos / de paso 60} {ocasionales Ocasionales 20} {nucleo Núcleo 20}] [{nuevos Nuevos / de paso 20} {ocasionales Ocasionales 20} {nucleo Núcleo 60}]"
-	if got != want {
-		t.Errorf("tramos:\n got %s\nwant %s", got, want)
-	}
-	if b := segmentBars([]LoyaltySegment{{Key: "nuevos"}, {Key: "nucleo"}}); b != nil {
-		t.Errorf("sin participantes no hay barras: %+v", b)
-	}
-	html := renderString(t, "segbars", bars)
-	for _, w := range []string{`class="segbar"`, `class="sg nucleo" style="width: 60.0%"`, `title="Núcleo: 60 %"`, `aria-label="Personas: Nuevos / de paso 60 %, Ocasionales 20 %, Núcleo 20 %"`} {
-		if !strings.Contains(html, w) {
-			t.Errorf("falta %q en:\n%s", w, html)
 		}
 	}
 }

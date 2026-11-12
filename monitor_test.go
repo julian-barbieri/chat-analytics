@@ -6881,10 +6881,11 @@ func TestProgramDetail(t *testing.T) {
 		}, []string{"<script>alert", `Temas de conversación <span class="chip">por reglas</span>`, `Preguntas <span class="chip">por reglas</span>`}},
 		{"sin análisis, apagado", false, nil, "/parcial/programas/detalle?tramo=" + url.QueryEscape(keyPoco), []string{
 			`<h2 id="det-h">POCO</h2>`, "Radio Test · 06:00 a 07:00 · " + closedEnded + " · 6 mensajes de 4 personas", claudeOffText,
-			`Temas de conversación <span class="chip">por reglas</span>`, `Preguntas <span class="chip">por reglas</span>`, "Sin Super Chats ni Super Stickers.",
+			`Temas de conversación <span class="chip">por reglas</span>`, `Categorías y preguntas <span class="chip">por reglas</span>`, "Sin Super Chats ni Super Stickers.",
 		}, []string{`<span class="ia">Claude</span>`}},
 		{"sin análisis, activo", true, nil, "/parcial/programas/detalle?tramo=" + url.QueryEscape(keyMan), []string{
-			"Todavía no hay resumen: se hace solo cuando termina el programa.", `Preguntas <span class="chip">por reglas</span>`, "¿Saludan a Rosario?",
+			// Las preguntas van en el detalle de Pregunta, elegida por defecto (rankings-segmentos-preguntas).
+			"Todavía no hay resumen: se hace solo cuando termina el programa.", `Categorías y preguntas <span class="chip">por reglas</span>`, "Preguntas por reglas", "¿Saludan a Rosario?",
 		}, nil},
 		{"al aire", true, nil, "/parcial/programas/detalle?tramo=" + url.QueryEscape(segmentKey("UC1", Segment{VideoID: "v1", Program: "LA TARDE", Start: day.Add(10 * time.Hour)})),
 			[]string{"10:00 a ahora · " + SegLive}, nil},
@@ -11839,25 +11840,24 @@ func TestProgramDetailClaudeQuestions(t *testing.T) {
 	now := noonToday()
 	_, srv, key := claudeProgramServer(t, now)
 	body := getBody(srv.Routes(), "/parcial/programas/detalle?tramo="+url.QueryEscape(key))
-	i := strings.Index(body, "<h3>Preguntas")
-	if i < 0 {
-		t.Fatal("falta la tarjeta de preguntas")
+	// Desde rankings-segmentos-preguntas, en el detalle de Pregunta de "Categorías y preguntas".
+	det := card(body, `id="cat-detalle"`)
+	if det == "" {
+		t.Fatal("falta el detalle de la categoría")
 	}
-	card := body[i:]
-	card = card[:strings.Index(card, "</div>\n  </div>")]
-	for _, w := range []string{`<span class="ia">Claude</span>`, "¿A qué hora pasan el pronóstico?", "¿Cómo se llama el tema?", ">4</strong>", ">2</strong>", "6 preguntas · 2 grupos"} {
-		if !strings.Contains(card, w) {
-			t.Errorf("falta %q en:\n%s", w, card)
+	for _, w := range []string{"Agrupadas por Claude en las tandas", "¿A qué hora pasan el pronóstico?", "¿Cómo se llama el tema?", ">4</strong>", ">2</strong>", "6 preguntas · 2 grupos"} {
+		if !strings.Contains(det, w) {
+			t.Errorf("falta %q en:\n%s", w, det)
 		}
 	}
-	if strings.Contains(card, "por reglas") || strings.Contains(card, "Marcar respondida") {
-		t.Errorf("sobra en:\n%s", card)
+	if strings.Contains(det, "por reglas") || strings.Contains(det, "Marcar respondida") {
+		t.Errorf("sobra en:\n%s", det)
 	}
 	// Sin Claude: por reglas, como antes.
 	_, off := programServer(t, now, false)
 	body = getBody(off.Routes(), "/parcial/programas/detalle?tramo="+url.QueryEscape(key))
-	if !strings.Contains(body, `<h3>Preguntas <span class="chip">por reglas</span>`) {
-		t.Error("sin Claude: falta el chip por reglas")
+	if !strings.Contains(card(body, `id="cat-detalle"`), "Preguntas por reglas") {
+		t.Error("sin Claude: faltan las preguntas por reglas")
 	}
 }
 
@@ -11867,7 +11867,7 @@ func TestProgramDetailClaudeCats(t *testing.T) {
 	now := noonToday()
 	_, srv, key := claudeProgramServer(t, now)
 	body := getBody(srv.Routes(), "/parcial/programas/detalle?tramo="+url.QueryEscape(key))
-	for _, w := range []string{`<h3>Categorías <span class="ia">Claude</span></h3>`, `<span class="gl">Preguntas</span>`, `<span class="gl">Elogios</span>`, `class="cgauge`} {
+	for _, w := range []string{`<h3>Categorías y preguntas <span class="ia">Claude</span></h3>`, `<span class="gl">Preguntas</span>`, `<span class="gl">Elogios</span>`, `class="cgauge`} {
 		if !strings.Contains(body, w) {
 			t.Errorf("falta %q", w)
 		}
@@ -12314,7 +12314,7 @@ func TestProgramSlotDetail(t *testing.T) {
 		t.Error("la barra elegida va marcada")
 	}
 	sent := getBody(h, base+"&franja="+f+"&desde=sent")
-	if i, j := strings.Index(sent, `id="franja-det"`), strings.Index(sent, "<h3>Preguntas"); i < 0 || j < i {
+	if k, i, j := strings.Index(sent, "<h3>Sentimiento del programa"), strings.Index(sent, `id="franja-det"`), strings.Index(sent, `id="supers"`); k < 0 || i < k || j < i {
 		t.Error("desde Sentimiento, el detalle va en esa tarjeta")
 	}
 	if !strings.Contains(sent, `aria-pressed="true">Negativos (0)`) || !strings.Contains(sent, "Ningún mensaje negativo en esta franja.") || !strings.Contains(sent, `class="sfila sel"`) {
@@ -12531,9 +12531,9 @@ func TestProgramQuestionsMore(t *testing.T) {
 	base := "/parcial/programas?dia=hoy&tramo=" + url.QueryEscape(key)
 
 	card := func(body string) (top, rest string) {
-		i := strings.Index(body, "<h3>Preguntas")
+		i := strings.Index(body, `id="cat-detalle"`)
 		if i < 0 {
-			t.Fatal("falta la tarjeta de preguntas")
+			t.Fatal("falta el detalle de Pregunta")
 		}
 		c := body[i:]
 		end := strings.Index(c, "Agrupadas por Claude")

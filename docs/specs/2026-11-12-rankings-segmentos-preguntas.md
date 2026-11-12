@@ -1,6 +1,6 @@
 # Spec: Rankings con barras, segmentos en cinta y preguntas dentro de Categorías
 
-- **Estado:** aprobada
+- **Estado:** implementada
 - **Tipo:** mejora
 - **Rama:** `feat/rankings-segmentos-preguntas`
 - **Origen:** pedido del usuario con capturas (2026-11-12), puntos 2, 3 y 5; maquetas
@@ -33,35 +33,35 @@ Categorías.
 
 ## Criterios de aceptación
 
-- [ ] CA1: "De qué hablan" de Comentarios muestra las 10 palabras más repetidas como
+- [x] CA1: "De qué hablan" de Comentarios muestra las 10 palabras más repetidas como
   barras (`.wlist` / `.wrow` / `.wbar`, las mismas de En vivo), cada una con su
   número y la barra relativa a la primera. — `TestCommentsSummary` y test de render.
-- [ ] CA2: "Quiénes más comentan" pasa a ser su propia tarjeta al lado de "De qué
+- [x] CA2: "Quiénes más comentan" pasa a ser su propia tarjeta al lado de "De qué
   hablan" (`grid2`): un ranking de 8 con barras cuyo largo es el total de
   comentarios, la parte fuerte son los videos distintos y la suave el resto; inicial
   en un círculo con color estable por nombre (de `--series-1..5`); `<title>` y
   `aria-label` con "N comentarios en M videos"; leyenda de las dos partes. — test de
   la función que arma las filas (tabla: 9 en 9, 5 en 1, 0 videos) y de render.
-- [ ] CA3: en Programas, "Segmentos por asistencia" reemplaza las dos barras por una
+- [x] CA3: en Programas, "Segmentos por asistencia" reemplaza las dos barras por una
   cinta en SVG armada en Go: a la izquierda la columna Personas, a la derecha
   Mensajes, y una cinta por segmento que une su tramo en una con su tramo en la otra,
   con los % rotulados y `<title>` por tramo. Segmento vacío sin tramo; sin
   participantes, sin gráfico. La tabla de abajo queda igual. — `TestSegmentBars`
   adaptado (o `TestSegmentFlow`), con un caso de segmento vacío.
-- [ ] CA4: en el detalle de Programas no está más la tarjeta "Preguntas"; la de
+- [x] CA4: en el detalle de Programas no está más la tarjeta "Preguntas"; la de
   Categorías se llama "Categorías y preguntas" y, con el sector **Pregunta** elegido,
   su detalle muestra los grupos de preguntas de las tandas (los `qgTop` primeros y
   "Ver N más" plegado en `maspreguntas`, como hoy) en lugar de "Últimos mensajes".
   — test de `programDetail` con etiquetas.
-- [ ] CA5: sin grupos de las tandas, el sector Pregunta muestra las del resumen de
+- [x] CA5: sin grupos de las tandas, el sector Pregunta muestra las del resumen de
   Claude (`prog-items`) y, si tampoco hay, las preguntas por reglas como hoy. — test
   con los tres casos.
-- [ ] CA6: en Programas, sin una categoría elegida en `abrir`, el semicírculo elige
+- [x] CA6: en Programas, sin una categoría elegida en `abrir`, el semicírculo elige
   **Pregunta** si hay preguntas (si no, la más grande sin Otros, como hoy). En vivo y
   Comentarios no cambian. — test de `programGauge`.
 - [ ] CA7: `TestTemplateTokens` en verde y vista previa de Comentarios y Programas en
   claro, oscuro y celular.
-- [ ] Gates de `CLAUDE.md` → "Definición de terminado" en verde.
+- [x] Gates de `CLAUDE.md` → "Definición de terminado" en verde.
 
 ## Diseño propuesto
 

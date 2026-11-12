@@ -98,7 +98,7 @@ type LoyaltyData struct {
 	CorePeople, CoreMsgs    float64
 	AtRisk                  int
 	Segments                []LoyaltySegment
-	SegBars                 []SegBar // Segments en barras al 100 %
+	SegFlow                 *SegFlow // Segments en cinta, de personas a mensajes
 	Cohorts                 []Cohort // de la semana más vieja a la más nueva
 }
 
@@ -207,7 +207,7 @@ func Loyalty(ems []Emission, now time.Time) LoyaltyData {
 		segs[k].MsgsPct = share(segMsgs[k], total)
 	}
 	l.Segments = segs
-	l.SegBars = segmentBars(segs)
+	l.SegFlow = segmentFlow(segs)
 	l.CorePeople, l.CoreMsgs = segs[3].PeoplePct, segs[3].MsgsPct
 	if len(people) > 0 {
 		l.Attendance = float64(attended) / float64(len(people))
@@ -720,38 +720,64 @@ func EmissionSummary(ems []Emission, ref time.Time) string {
 	return strings.Join(parts, " · ")
 }
 
-// SegBar es una barra apilada al 100 % de "Segmentos por asistencia".
-type SegBar struct {
-	Label string
-	Parts []SegPart
+// SegFlow es "Segmentos por asistencia" en cinta: la columna Personas a la
+// izquierda, Mensajes a la derecha y una cinta por segmento que une su tramo
+// en una con su tramo en la otra, así se ve el salto (por ejemplo, el núcleo
+// es poca gente y escribe mucho). Se dibuja en un SVG de viewBox fijo
+// (340 × 214, plantilla segflow); los números exactos están en la tabla.
+type SegFlow struct {
+	Aria  string
+	Bands []SegBand
 }
 
-// SegPart es el tramo de un segmento en una barra.
-type SegPart struct {
-	Key, Label string
-	Pct        float64
+// SegBand es un segmento: su tramo en cada columna (y y alto), la cinta y los
+// rótulos, que solo van si el tramo es lo bastante alto para no pisarse.
+type SegBand struct {
+	Key, Label, Title, LText, RText, Path string
+	LY, LH, RY, RH, LTY, RTY              float64
+	LShow, RShow                          bool
 }
 
-// segmentBars arma las barras de Personas y Mensajes de los segmentos, para
-// ver de un vistazo cuánto pesa cada uno (por ejemplo, el núcleo es poca gente
-// y escribe mucho). Los segmentos vacíos no tienen tramo; sin participantes no
-// hay barras.
-func segmentBars(segs []LoyaltySegment) []SegBar {
-	people := 0
+const (
+	segflowTop, segflowCol = 22.0, 180.0 // donde empiezan las columnas y su alto
+	segflowGap             = 3.0
+	segflowL, segflowR     = 150.0, 250.0 // x de cada columna, como en la plantilla
+	segflowBar             = 22.0
+	segflowMinText         = 11.0 // alto mínimo de un tramo para rotularlo
+)
+
+// segmentFlow arma la cinta de los segmentos con participantes; sin ninguno,
+// nil (no hay gráfico).
+func segmentFlow(segs []LoyaltySegment) *SegFlow {
+	var used []LoyaltySegment
 	for _, g := range segs {
-		people += g.People
+		if g.People > 0 {
+			used = append(used, g)
+		}
 	}
-	if people == 0 {
+	if len(used) == 0 {
 		return nil
 	}
-	bars := []SegBar{{Label: "Personas"}, {Label: "Mensajes"}}
-	for _, g := range segs {
-		if g.PeoplePct > 0 {
-			bars[0].Parts = append(bars[0].Parts, SegPart{g.Key, g.Label, g.PeoplePct})
+	f := &SegFlow{Aria: "De personas a mensajes: "}
+	avail := segflowCol - segflowGap*float64(len(used)-1)
+	ly, ry := segflowTop, segflowTop
+	x0, x1 := segflowL+segflowBar, segflowR
+	mid := (x0 + x1) / 2
+	for i, g := range used {
+		b := SegBand{Key: g.Key, Label: g.Label, LY: ly, RY: ry, LH: g.PeoplePct / 100 * avail, RH: g.MsgsPct / 100 * avail}
+		b.Title = fmt.Sprintf("%s: %.0f %% de las personas y %.0f %% de los mensajes", g.Label, g.PeoplePct, g.MsgsPct)
+		b.LText, b.RText = fmt.Sprintf("%s %.0f %%", g.Label, g.PeoplePct), fmt.Sprintf("%.0f %%", g.MsgsPct)
+		b.LShow, b.RShow = b.LH >= segflowMinText, b.RH >= segflowMinText
+		b.LTY, b.RTY = ly+b.LH/2+4, ry+b.RH/2+4
+		b.Path = fmt.Sprintf("M%.1f %.1f C%.1f %.1f %.1f %.1f %.1f %.1f V%.1f C%.1f %.1f %.1f %.1f %.1f %.1f Z",
+			x0, ly, mid, ly, mid, ry, x1, ry, ry+b.RH, mid, ry+b.RH, mid, ly+b.LH, x0, ly+b.LH)
+		f.Bands = append(f.Bands, b)
+		if i > 0 {
+			f.Aria += "; "
 		}
-		if g.MsgsPct > 0 {
-			bars[1].Parts = append(bars[1].Parts, SegPart{g.Key, g.Label, g.MsgsPct})
-		}
+		f.Aria += fmt.Sprintf("%s %.0f %% de las personas y %.0f %% de los mensajes", g.Label, g.PeoplePct, g.MsgsPct)
+		ly += b.LH + segflowGap
+		ry += b.RH + segflowGap
 	}
-	return bars
+	return f
 }
