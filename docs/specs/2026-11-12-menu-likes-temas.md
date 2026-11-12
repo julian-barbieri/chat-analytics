@@ -1,12 +1,12 @@
 # Spec: Menú lateral, selector de likes y "De qué se habla" unificado
 
-- **Estado:** borrador
+- **Estado:** aprobada
 - **Tipo:** mejora
 - **Rama:** `feat/menu-likes-temas`
 - **Origen:** pedido del usuario con capturas (2026-11-12), puntos 1, 7, 8, 9 y 10;
   maquetas en https://claude.ai/artifact/EgkYGxJybkC2KWBcTGv4Vd (opciones recomendadas).
   Tanda 1 de 3.
-- **Aprobada por / fecha:** —
+- **Aprobada por / fecha:** Julian Barbieri, 2026-11-12
 
 ## Contexto
 
