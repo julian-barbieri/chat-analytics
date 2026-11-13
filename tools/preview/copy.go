@@ -175,6 +175,8 @@ func prepare(cfg config) (*prepared, error) {
 		base + ".videos.jsonl":       "datos.videos.jsonl",
 		base + ".likes.jsonl":        "datos.likes.jsonl",
 		base + ".sinvivo.jsonl":      "datos.sinvivo.jsonl",
+		// Las recomendaciones redactadas por Claude (recomendaciones-por-rol); sus marcas, no.
+		base + ".recomendaciones.jsonl": "datos.recomendaciones.jsonl",
 	} {
 		copied, err := copyFile(src, filepath.Join(dir, dst))
 		if err != nil {

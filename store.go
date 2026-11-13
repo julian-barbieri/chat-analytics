@@ -40,8 +40,10 @@ type Store struct {
 	bpath     string // tandas de Claude con las etiquetas por mensaje (datos.etiquetas.jsonl)
 	vdpath    string // último dato de cada video (datos.videos.jsonl), para la pantalla Comentarios
 	lkpath    string // serie de likes por video (datos.likes.jsonl)
+	rpath     string // recomendaciones redactadas por Claude (datos.recomendaciones.jsonl)
 	msgs      []Message
 	analyses  []ClaudeAnalysis
+	recs      []ProgramRecs
 	batches   []ClaudeBatch
 	labels    map[string]MessageLabel // por Message.ID
 	sent      map[sentKey]*SentSlot   // sentimiento por canal, franja y programa (F4)
@@ -163,7 +165,8 @@ func OpenStore(path string) (*Store, error) {
 		apath: base + ".analisis.jsonl", cpath: base + ".claude.json", bpath: base + ".etiquetas.jsonl",
 		vdpath: base + ".videos.jsonl", archive: map[string]VideoRecord{}, saved: map[string]time.Time{},
 		lkpath: base + ".likes.jsonl", lastLike: map[string]LikeSample{},
-		seen: map[string]bool{}, labels: map[string]MessageLabel{},
+		rpath: base + ".recomendaciones.jsonl",
+		seen:  map[string]bool{}, labels: map[string]MessageLabel{},
 		sent: map[sentKey]*SentSlot{}, groups: map[string]BatchGroup{}}
 	if b, err := os.ReadFile(s.quota); err == nil {
 		var q quotaDay
@@ -228,6 +231,12 @@ func OpenStore(path string) (*Store, error) {
 		return nil, err
 	}
 	s.analyses = analyses
+	// Las recomendaciones vencen con el programa: desde su fin (To).
+	recs, err := loadJSONL(s.rpath, func(r ProgramRecs) bool { return r.Key != "" && !r.To.Before(cutoff) })
+	if err != nil {
+		return nil, err
+	}
+	s.recs = recs
 	// Las etiquetas vencen con la tanda: desde su último mensaje (To).
 	batches, err := loadJSONLMax(s.bpath, func(b ClaudeBatch) bool { return !b.To.Before(cutoff) }, maxBatchLine)
 	if err != nil {
@@ -599,6 +608,35 @@ func (s *Store) Analyses(channelID string, since time.Time) []ClaudeAnalysis {
 	for _, a := range s.analyses {
 		if a.ChannelID == channelID && !a.From.Before(since) {
 			out = append(out, a)
+		}
+	}
+	return out
+}
+
+// AddRecs guarda un pedido de recomendaciones al final de
+// datos.recomendaciones.jsonl. Nunca toca datos.jsonl.
+func (s *Store) AddRecs(r ProgramRecs) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.recs = append(s.recs, r)
+	f, err := os.OpenFile(s.rpath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	json.NewEncoder(f).Encode(r)
+}
+
+// Recs devuelve los pedidos de recomendaciones de un canal con programas
+// desde since, en el orden en que se hicieron. No se modifican después de
+// guardarlos, así que compartir sus listas internas es seguro.
+func (s *Store) Recs(channelID string, since time.Time) []ProgramRecs {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var out []ProgramRecs
+	for _, r := range s.recs {
+		if r.ChannelID == channelID && !r.From.Before(since) {
+			out = append(out, r)
 		}
 	}
 	return out

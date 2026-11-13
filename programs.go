@@ -388,6 +388,8 @@ type programsQuery struct {
 	Pag                                          int
 	// Pestana es la pestaña del detalle (programTabs); "" es Resumen.
 	Pestana string
+	// Rol es el filtro "Para quién" de Recomendaciones (recRoles); "" son todos.
+	Rol string
 }
 
 func (q programsQuery) values() url.Values {
@@ -401,7 +403,7 @@ func (q programsQuery) values() url.Values {
 	if q.Comparar != "" && q.Comparar != cmpNone {
 		v.Set("comparar", q.Comparar)
 	}
-	for k, val := range map[string]string{"pestana": q.Pestana, "abrir": q.Abrir, "buscar": q.Buscar, "cat": q.Cat, "senti": q.Senti, "tema": q.Tema, "sent": q.Sent, "desde": q.Desde} {
+	for k, val := range map[string]string{"pestana": q.Pestana, "rol": q.Rol, "abrir": q.Abrir, "buscar": q.Buscar, "cat": q.Cat, "senti": q.Senti, "tema": q.Tema, "sent": q.Sent, "desde": q.Desde} {
 		if val != "" {
 			v.Set(k, val)
 		}
@@ -426,7 +428,7 @@ func (q programsQuery) WithTramo(key string) programsQuery {
 	if key == q.Tramo {
 		return q
 	}
-	return programsQuery{Dia: q.Dia, Canal: q.Canal, Tramo: key, Comparar: q.Comparar, Pestana: q.Pestana}
+	return programsQuery{Dia: q.Dia, Canal: q.Canal, Tramo: key, Comparar: q.Comparar, Pestana: q.Pestana, Rol: q.Rol}
 }
 
 // programTabs son las pestañas del detalle de Programas. Lista cerrada: la
@@ -435,8 +437,7 @@ func (q programsQuery) WithTramo(key string) programsQuery {
 var programTabs = []struct{ Key, Label, Icon string }{
 	{"", "Resumen", ""}, {"conversacion", "Conversación", ""}, {"audiencia", "Audiencia y fidelización", ""}, {"chat", "Chat del programa", ""},
 	{"supers", "Super Chats", ""}, // a la derecha del chat, como en En vivo (rediseno-envivo-programas)
-	// Por ahora solo el lugar: las recomendaciones van en otra spec
-	// (pestana-recomendaciones).
+	// Recomendaciones por rol (recomendaciones-por-rol), con el robot de la IA.
 	{"recomendaciones", "Recomendaciones", "robot"},
 }
 
@@ -726,6 +727,8 @@ type ProgramDetail struct {
 	Tabs       TabBar
 	Nums       []Tile
 	LikesChart *CommentChart
+	// Recs es la pestaña Recomendaciones; nil en las otras.
+	Recs *RecsView
 }
 
 // ProgramHistory son las secciones de Programas que comparan emisiones.
@@ -869,6 +872,11 @@ func (s *Server) programDetail(ps ProgramSeg, msgs []Message, a *ClaudeAnalysis,
 	// Las 4 semanas de fidelización e historial solo se arman en su pestaña.
 	if sg.Program != "" && q.Pestana == "audiencia" {
 		d.History = s.programHistory(ps, ems, from, now)
+	}
+	// Las señales leen 4 semanas del programa: solo en su pestaña.
+	if q.Pestana == "recomendaciones" {
+		v := s.recsView(ps, msgs, a, snap, now, q)
+		d.Recs = &v
 	}
 	return d
 }
@@ -1061,13 +1069,19 @@ func (s *Server) programHistory(ps ProgramSeg, ems []Emission, from, now time.Ti
 // últimas 4 semanas, con sus mensajes y espectadores: sirven para la
 // historia y para la comparación del gráfico. from es el primer día.
 func (s *Server) programHistoryEms(ps ProgramSeg, snap Snapshot, now time.Time) (ems []Emission, from time.Time) {
+	return programHistoryOf(s.st, ps, snap.Videos, now)
+}
+
+// programHistoryOf es programHistoryEms con el Store: la usan también el
+// analista y las recomendaciones.
+func programHistoryOf(st *Store, ps ProgramSeg, videos []Video, now time.Time) (ems []Emission, from time.Time) {
 	var days []time.Time
 	for i := range int(loyaltyWindow / (24 * time.Hour)) {
 		days = append(days, dayStart(now).AddDate(0, 0, -i))
 	}
 	from = days[len(days)-1]
-	samples := s.st.Lives(from.Add(-12 * time.Hour))
-	segs := programSegs([]ChannelStatus{ps.Channel}, samples, snap.Videos, days, now)
+	samples := st.Lives(from.Add(-12 * time.Hour))
+	segs := programSegs([]ChannelStatus{ps.Channel}, samples, videos, days, now)
 	ems = programEmissions(segs, ps.Seg.Program, now)
 	ids := map[string]bool{}
 	for _, e := range ems {
@@ -1076,9 +1090,9 @@ func (s *Server) programHistoryEms(ps ProgramSeg, snap Snapshot, now time.Time) 
 		}
 	}
 	if len(ids) > 0 {
-		fillEmissions(ems, s.st.MessagesOf(ids, from.Add(-segmentLead)), videoTitles(snap.Videos))
+		fillEmissions(ems, st.MessagesOf(ids, from.Add(-segmentLead)), videoTitles(videos))
 		for id := range ids {
-			viewers := s.st.Viewers(id, from)
+			viewers := st.Viewers(id, from)
 			for i := range ems {
 				ems[i].addViewers(id, viewers)
 			}
@@ -1147,6 +1161,11 @@ func fillEmissions(ems []Emission, msgs []Message, titles map[string]string) {
 // espacio vacío para que cada franja tenga el mismo ancho aunque el programa
 // recién empiece. No son franjas: no llevan título ni cuentan en el aria.
 func (s *Server) programSlots(ps ProgramSeg, msgs []Message, ems []Emission, now time.Time) (slots []Slot, typical float64, ok bool, pad int) {
+	return programSlotsOf(s.st, ps, msgs, ems, now)
+}
+
+// programSlotsOf es programSlots con el Store (lo usan también las recomendaciones).
+func programSlotsOf(st *Store, ps ProgramSeg, msgs []Message, ems []Emission, now time.Time) (slots []Slot, typical float64, ok bool, pad int) {
 	sg, ids := ps.Seg, ps.videoIDs()
 	if len(ids) == 0 {
 		return nil, 0, false, 0
@@ -1165,7 +1184,7 @@ func (s *Server) programSlots(ps ProgramSeg, msgs []Message, ems []Emission, now
 		if pg.State == SegLive || to.After(end) {
 			to = end
 		}
-		for _, v := range s.st.Viewers(pg.VideoID, pg.Start) {
+		for _, v := range st.Viewers(pg.VideoID, pg.Start) {
 			if !v.At.After(to) {
 				viewers = append(viewers, v)
 			}

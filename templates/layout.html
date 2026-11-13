@@ -394,6 +394,24 @@ tr.sel td { background: var(--ia-bg); }
 .leyenda { display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: center; }
 .qrow { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: space-between; }
 .qgroups li.hecha { color: var(--text-muted); }
+/* Recomendaciones por rol: el borde de la izquierda dice la prioridad; lo marcado, atenuado. */
+.rlist { list-style: none; margin: 12px 0 0; padding: 0; display: grid; gap: 10px; }
+.rec { border: 1px solid var(--border); border-left: 4px solid var(--text-muted); border-radius: 10px; padding: 10px 14px; background: var(--surface-1); }
+.rec.alta { border-left-color: var(--crit-text); }
+.rec.media { border-left-color: var(--warn-text); }
+.rec.hecha, .rec.nosirve { color: var(--text-muted); border-left-color: var(--border); }
+.rec h4 { margin: 6px 0 4px; font-size: 15px; }
+.rec p { margin: 4px 0; }
+.rhead { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; font-size: 12px; }
+.rrol { font-weight: 700; }
+.rprio { color: var(--text-secondary); }
+.racts { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.rroles { margin: 4px 0 8px; }
+/* El parte se imprime sin la navegación ni los filtros. */
+@media print {
+  header.side, .noprint, .racts { display: none !important; }
+  body, .card, .rec { background: var(--surface-1); box-shadow: none; }
+}
 .claude .btn { margin: 4px 0; }
 .plegable.mom { border-top: 0; }
 .plegable.mom summary { padding-top: 0; }
@@ -533,7 +551,7 @@ table.heat tr.med th, table.heat tr.med td { border-top: 2px solid var(--border)
 .cfiltros { display: flex; flex-wrap: wrap; gap: 12px 24px; align-items: flex-start; }
 .cfiltros .chips { gap: 8px; }
 a.seg { display: inline-flex; align-items: center; text-decoration: none; }
-a.seg[aria-current="true"] { background: var(--text-primary); color: var(--surface-1); border-color: var(--text-primary); }
+a.seg[aria-current="true"], a.seg[aria-current="page"] { background: var(--text-primary); color: var(--surface-1); border-color: var(--text-primary); }
 .cchart svg { display: block; width: 100%; height: 200px; overflow: visible; }
 .bar.finde { fill: var(--sent-neu); }
 .likesl { fill: none; stroke: var(--series-2); stroke-width: 2; stroke-linejoin: round; vector-effect: non-scaling-stroke; pointer-events: none; }

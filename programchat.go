@@ -27,7 +27,7 @@ const (
 // qg1…qg30 los grupos de preguntas de las tandas (maspreguntas, los que pasan
 // de qgTop) y cq1…cq8 las preguntas del resumen, por posición como en En vivo.
 // El chat ya no se pliega: tiene su pestaña.
-var programFolds = slices.Concat([]string{"maspreguntas"}, numbered("tema", 5), numbered("qg", qgFolds), numbered("cq", cqFolds), catFoldKeys())
+var programFolds = slices.Concat([]string{"maspreguntas"}, numbered("tema", 5), numbered("qg", qgFolds), numbered("cq", cqFolds), catFoldKeys(), numbered("rec", recFolds))
 
 // chatSents son las opciones del filtro de sentimiento ("sin": sin etiqueta).
 var chatSents = []struct{ Key, Label, Class string }{
@@ -84,6 +84,7 @@ func readDetail(v url.Values, q *programsQuery) {
 		q.Franja = n
 	}
 	q.Sent = pickOf(v.Get("sent"), []string{"todos", "neg", "neu", "pos"})
+	q.Rol = pickOf(v.Get("rol"), recRoleKeys())
 	q.Desde = pickOf(v.Get("desde"), []string{"part", "sent"})
 }
 

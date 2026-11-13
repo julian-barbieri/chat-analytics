@@ -7,6 +7,7 @@ import (
 	"slices"
 	"sort"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -100,6 +101,7 @@ type AnalystConfig struct {
 	Settings   *Settings
 	Now        func() time.Time
 	Tick       <-chan time.Time
+	Recs       bool // pedir recomendaciones de los programas terminados (recomendaciones-por-rol)
 }
 
 // claudeConf es la configuración vigente en una vuelta del analista.
@@ -219,6 +221,10 @@ func (r *analystRun) step(now time.Time) bool {
 			continue
 		}
 		return r.analyze(p.Channel, p.Seg, snap, false, now)
+	}
+	// Las recomendaciones van al final: solo cuando no queda ningún resumen pendiente.
+	if !r.recs(now) {
+		return false
 	}
 	r.publish()
 	return true
@@ -656,4 +662,132 @@ func (r *analystRun) batchContext(channelID, program string, now time.Time) ([]B
 	}
 	slices.Reverse(open)
 	return open, motives
+}
+
+// recs pide, como mucho, las recomendaciones de un programa terminado de hoy
+// o de ayer (recomendaciones-por-rol): el primero que tenga el resumen final
+// de todos sus pedazos y no tenga recomendaciones hasta su fin. Los que no
+// tienen señales se anotan sin pedido. Devuelve false si hay que parar.
+func (r *analystRun) recs(now time.Time) bool {
+	if !r.cfg.Recs {
+		return true
+	}
+	// Con el tope alcanzado no se calcula nada: armar las señales lee 4 semanas
+	// por programa y, si no hay plata para la salida, no tiene sentido.
+	if r.st.ClaudeSpend()+claudeCost(r.cl.Model, 0, recMaxTokens) > r.conf.budget {
+		r.status.Capped = true
+		return true
+	}
+	snap := r.st.Status()
+	today := dayStart(now)
+	// Hoy primero: un programa que cruzó la medianoche va entero, no cortado a las 00:00.
+	days := []time.Time{today, today.AddDate(0, 0, -1)}
+	samples := r.st.Lives(days[1].Add(-12 * time.Hour))
+	from := pendingFrom(now)
+	for _, ch := range snap.Channels {
+		finals := map[string]ClaudeAnalysis{}
+		for _, a := range r.st.Analyses(ch.ID, from) {
+			if !a.Partial {
+				finals[a.Key] = a
+			}
+		}
+		seen := map[string]bool{} // un programa de hoy no se vuelve a mirar cortado en "ayer"
+		for _, d := range days {
+			for _, ps := range programSegs([]ChannelStatus{ch}, samples, snap.Videos, []time.Time{d}, now) {
+				if seen[ps.Key] {
+					continue
+				}
+				seen[ps.Key] = true
+				saved := latestRecs(r.st.Recs(ch.ID, from))
+				if p, ok := saved[ps.Key]; (ok && !p.To.Before(ps.Seg.End)) || ps.Seg.State == SegLive || ps.Seg.End.After(now) || !allFinal(ch.ID, ps, finals) {
+					continue
+				}
+				if rt := r.retries[recsRetryKey(ps.Key)]; rt != nil && now.Before(rt.next) {
+					continue
+				}
+				// Después de un pedido, o con el tope alcanzado, se corta la vuelta.
+				stop, ok := r.recommend(ch, ps, finals, snap, now)
+				if !ok || stop {
+					return ok
+				}
+			}
+		}
+	}
+	return true
+}
+
+func recsRetryKey(key string) string { return "recs|" + key }
+
+// recCalcs cuenta cuántas veces el analista calculó las señales de un
+// programa: con el tope alcanzado no tiene que crecer (lo miran los tests).
+var recCalcs atomic.Int64
+
+// allFinal dice si todos los pedazos del programa tienen su resumen final.
+func allFinal(channelID string, ps ProgramSeg, finals map[string]ClaudeAnalysis) bool {
+	for _, sg := range ps.pieces() {
+		if _, ok := finals[segmentKey(channelID, sg)]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
+// recommend calcula las señales de un programa y, si hay y el tope alcanza,
+// le pide a Claude que las redacte. stop dice que no hay que seguir con otro
+// programa en esta vuelta (salió un pedido o se llegó al tope); ok en false,
+// que hay que parar (contexto cancelado o análisis apagado).
+func (r *analystRun) recommend(ch ChannelStatus, ps ProgramSeg, finals map[string]ClaudeAnalysis, snap Snapshot, now time.Time) (stop, ok bool) {
+	recCalcs.Add(1)
+	ids := map[string]bool{}
+	for _, id := range ps.videoIDs() {
+		ids[id] = true
+	}
+	msgs := programMessages(r.st.MessagesOf(ids, ps.Seg.Start.Add(-segmentLead)), ps, videoTitles(snap.Videos))
+	sigs := recSignals(recInputOf(r.st, nil, ps, msgs, finalAnalysis(ps, finals), snap.Videos, now))
+	pr := ProgramRecs{At: now, Key: ps.Key, ChannelID: ch.ID, Program: ps.Seg.Program, From: ps.Seg.Start, To: ps.Seg.End, Signals: len(sigs)}
+	if len(sigs) == 0 {
+		// Se guarda igual (sin pedido ni costo) para no volver a mirarlo.
+		r.st.AddRecs(pr)
+		return false, true
+	}
+	send := recToSend(sigs)
+	user := recPrompt(channelName(ch), ps, send, msgs)
+	worst := recWorstCase(r.cl.Model, user)
+	if r.st.ClaudeSpend()+worst > r.conf.budget {
+		r.status.Capped = true
+		r.publish()
+		return true, true
+	}
+	key := recsRetryKey(ps.Key)
+	r.status.Busy = key
+	r.publish()
+	rep, raw, err := r.cl.Recommend(r.ctx, user)
+	r.status.Busy = ""
+	if r.ctx.Err() != nil {
+		return true, false
+	}
+	pr.CostMicros = r.charge(rep, r.cl.Model, worst)
+	pr.Model, pr.StopReason, pr.InputTokens, pr.OutputTokens = rep.Model, rep.StopReason, rep.InputTokens, rep.OutputTokens
+	if err != nil {
+		switch claudeKindOf(err) {
+		case errFatal:
+			log.Printf("aviso: %v. El análisis con Claude queda apagado hasta reiniciar el monitor.", err)
+			r.status.On, r.status.Off = false, err.Error()
+			r.publish()
+			return true, false
+		case errRetry:
+			if r.retry(key, err, false) {
+				return true, true
+			}
+		}
+		log.Printf("aviso: Claude, recomendaciones de %s de %s: %v", ps.Seg.Program, channelName(ch), err)
+		pr.Error = err.Error()
+	} else {
+		pr.Recs = validRecResult(raw, send)
+		log.Printf("Claude recomendó para %s de %s: %d recomendaciones de %d señales, US$ %s", ps.Seg.Program, channelName(ch), len(pr.Recs), len(send), usd(pr.CostMicros))
+	}
+	delete(r.retries, key)
+	r.st.AddRecs(pr)
+	r.publish()
+	return true, true
 }

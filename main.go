@@ -189,13 +189,16 @@ func main() {
 		if ccfg.On {
 			analyst = NewAnalyst()
 			st.SetClaudeStatus(ClaudeStatus{On: true, Model: ccfg.Model, Tope: ccfg.Budget})
-			go RunAnalyst(context.Background(), NewClaude(ccfg), st, analyst, AnalystConfig{Settings: settings})
+			go RunAnalyst(context.Background(), NewClaude(ccfg), st, analyst, AnalystConfig{Settings: settings, Recs: true})
 			c, _ := settings.Claude()
 			log.Printf("Clave de Claude cargada: tiempo real con %s cada %d s, resúmenes con %s, tope de US$ %s por día (0 = apagado)",
 				c.RealtimeModel, c.BatchSec, ccfg.Model, usd(c.BudgetMicros))
 		}
 		// Las preguntas marcadas como respondidas en En vivo (F4): una marca local.
 		answers, err := OpenAnswers("datos.respondidas.jsonl", time.Now())
+		check(err)
+		// Las marcas Hecha / No sirve de las recomendaciones: también locales.
+		recMarks, err := OpenRecMarks("datos.recmarcas.jsonl", time.Now())
 		check(err)
 		addr := *dash
 		if strings.HasPrefix(addr, ":") {
@@ -204,7 +207,7 @@ func main() {
 		log.Printf("Dashboard en http://%s (Ctrl+C para cortar)", addr)
 		// La pantalla Canales muestra los intervalos y estima la cuota; de Claude
 		// recibe solo el aviso de claudeConfig, nunca la clave.
-		srv := &Server{st: st, budget: *budget, analyst: analyst, settings: settings, answers: answers,
+		srv := &Server{st: st, budget: *budget, analyst: analyst, settings: settings, answers: answers, recMarks: recMarks,
 			chat:       ChatSettings{Peak: time.Duration(*chatPeak) * time.Second, Off: time.Duration(*chatSeg) * time.Second, PeakFrom: peakFrom, PeakTo: peakTo},
 			claudeWarn: warn, claudeModel: *claudeModel, claudeUSD: *claudeUSD}
 		check(http.ListenAndServe(addr, srv.Routes()))
