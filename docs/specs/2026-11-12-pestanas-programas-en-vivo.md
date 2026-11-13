@@ -1,10 +1,10 @@
 # Spec: pestañas en Programas y En vivo
 
-- **Estado:** borrador
+- **Estado:** aprobada
 - **Tipo:** mejora
 - **Rama:** `feat/pestanas-programas-en-vivo`
 - **Origen:** pedido del usuario (opciones A de Programas y C de En vivo del lienzo de diseño, probadas en la vista previa con datos reales). Reemplaza a `programas-mosaico-chat-derecha`, que no se implementa.
-- **Aprobada por / fecha:** —
+- **Aprobada por / fecha:** Julian Barbieri, 2026-11-13
 
 ## Contexto
 
