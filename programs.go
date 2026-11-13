@@ -430,17 +430,21 @@ func (q programsQuery) WithTramo(key string) programsQuery {
 }
 
 // programTabs son las pestañas del detalle de Programas. Lista cerrada: la
-// primera (Resumen) no viaja en la URL y nada de afuera se refleja.
-var programTabs = []struct{ Key, Label string }{
-	{"", "Resumen"}, {"conversacion", "Conversación"}, {"audiencia", "Audiencia y fidelización"}, {"chat", "Chat del programa"},
-	{"supers", "Super Chats"}, // la última, como en En vivo (rediseno-envivo-programas)
+// primera (Resumen) no viaja en la URL y nada de afuera se refleja. Icon es
+// un ícono de la plantilla tabs ("robot": lo hecho con IA).
+var programTabs = []struct{ Key, Label, Icon string }{
+	{"", "Resumen", ""}, {"conversacion", "Conversación", ""}, {"audiencia", "Audiencia y fidelización", ""}, {"chat", "Chat del programa", ""},
+	{"supers", "Super Chats", ""}, // a la derecha del chat, como en En vivo (rediseno-envivo-programas)
+	// Por ahora solo el lugar: las recomendaciones van en otra spec
+	// (pestana-recomendaciones).
+	{"recomendaciones", "Recomendaciones", "robot"},
 }
 
 // TabLink es una pestaña: un link común (Page) que htmx pide como parcial.
 // ID deja el foco en la pestaña tocada cuando htmx reemplaza la pantalla.
 type TabLink struct {
-	ID, Label, Page, Partial string
-	On                       bool
+	ID, Label, Page, Partial, Icon string
+	On                             bool
 }
 
 // TabBar es la barra de pestañas de Programas o de En vivo.
@@ -456,7 +460,7 @@ func programTabBar(q programsQuery) TabBar {
 	for _, t := range programTabs {
 		tq := q
 		tq.Pestana = t.Key
-		b.Tabs = append(b.Tabs, TabLink{ID: "tab-" + cmp.Or(t.Key, "resumen"), Label: t.Label, Page: tq.Page(), Partial: tq.Partial(), On: t.Key == q.Pestana})
+		b.Tabs = append(b.Tabs, TabLink{ID: "tab-" + cmp.Or(t.Key, "resumen"), Label: t.Label, Icon: t.Icon, Page: tq.Page(), Partial: tq.Partial(), On: t.Key == q.Pestana})
 	}
 	return b
 }
