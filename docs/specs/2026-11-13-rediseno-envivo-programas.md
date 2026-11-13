@@ -54,6 +54,6 @@ Que las cuatro pantallas queden como en el diseño aprobado, sin datos nuevos, s
 ## Riesgos
 
 - **Cuota, Claude y datos:** nada. Solo cambian las plantillas, el CSS y cómo se filtran en memoria datos que ya se leen.
-- **Cambio visible:** "Preguntas agrupadas" arranca en los últimos 5 min, cuando hoy muestra todo el programa. Es lo que muestra el diseño. Si se prefiere arrancar en "Todo el programa", es cambiar la ventana por defecto solo para preguntas.
+- **Cambio visible:** "Preguntas agrupadas" arranca en los últimos 5 min, cuando hoy muestra todo el programa. Lo confirmó el usuario (2026-11-13), como en el diseño. Para ver todo, está "Todo el programa".
 - **Links guardados:** un `?pestana=supers` en Programas antes no existía y caía en Resumen; ahora abre la pestaña. Un valor fuera de la lista sigue sin reflejarse.
 - **Celular:** las tres columnas y los dos grids nuevos se apilan en menos de 900 px y de 720 px. Se verifica en la vista previa (CA8).
