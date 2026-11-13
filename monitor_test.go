@@ -6909,7 +6909,7 @@ func TestProgramDetail(t *testing.T) {
 		}, []string{"<script>alert", `Temas de conversación <span class="chip">por reglas</span>`, `Preguntas <span class="chip">por reglas</span>`}},
 		{"sin análisis, apagado", false, nil, "/parcial/programas/detalle?tramo=" + url.QueryEscape(keyPoco), []string{
 			`<h2 id="det-h">POCO</h2>`, "Radio Test · 06:00 a 07:00 · " + closedEnded + " · 6 mensajes de 4 personas", claudeOffText,
-			`Temas de conversación <span class="chip">por reglas</span>`, `Categorías y preguntas <span class="chip">por reglas</span>`, "Sin Super Chats ni Super Stickers.",
+			`Temas de conversación <span class="chip">por reglas</span>`, `Categorías y preguntas <span class="chip">por reglas</span>`, "Sin Super Chats ni Super Stickers en este programa.",
 		}, []string{`<span class="ia">Claude</span>`}},
 		{"sin análisis, activo", true, nil, "/parcial/programas/detalle?tramo=" + url.QueryEscape(keyMan), []string{
 			// Las preguntas van en el detalle de Pregunta, elegida por defecto (rankings-segmentos-preguntas).
@@ -7192,7 +7192,7 @@ func TestProgramSentiment(t *testing.T) {
 		body := getBody(srv.Routes(), path)
 		hm := func(t time.Time) string { return t.Local().Format("15:04") }
 		for _, w := range []string{
-			`class="sfilas"`, hm(man(0)) + ": 100 % positivo, 0 % neutro, 0 % negativo (5 mensajes)",
+			`class="schart"`, hm(man(0)) + ": 100 % positivo, 0 % neutro, 0 % negativo (5 mensajes)",
 			hm(man(5)) + ": 0 % positivo, 40 % neutro, 60 % negativo (5 mensajes)", hm(man(10)) + ": 4 mensajes, menos de 5: sin color",
 			"Por qué hubo mensajes negativos", "3 negativos en todo el programa", "Quejas por el tránsito", "67 %", "«mensaje man 5»",
 			"Qué fue lo que gustó", "9 positivos en todo el programa", "La música", "22 %",
@@ -7206,9 +7206,10 @@ func TestProgramSentiment(t *testing.T) {
 				t.Errorf("sobra %q", w)
 			}
 		}
-		// Las filas van de la más nueva a la más vieja (orden-graficos-alertas-tecnicas).
-		if strings.Index(body, hm(man(0))+": 100 %") < strings.Index(body, hm(man(5))+": 0 %") {
-			t.Errorf("filas fuera de orden")
+		// Las barras van de la más vieja (izquierda) a la más nueva, como En vivo
+		// (rediseno-envivo-programas).
+		if strings.Index(body, hm(man(0))+": 100 %") > strings.Index(body, hm(man(5))+": 0 %") {
+			t.Errorf("barras fuera de orden")
 		}
 	})
 	t.Run("sin tandas", func(t *testing.T) {
@@ -7221,7 +7222,7 @@ func TestProgramSentiment(t *testing.T) {
 	t.Run("Claude apagado", func(t *testing.T) {
 		_, srv := programServer(t, now, false)
 		body := getBody(srv.Routes(), path)
-		if strings.Contains(body, "Por qué hubo mensajes negativos") || strings.Contains(body, `class="sfilas"`) {
+		if strings.Contains(body, "Por qué hubo mensajes negativos") || strings.Contains(body, `class="schart"`) {
 			t.Errorf("con Claude apagado no van las filas ni los motivos")
 		}
 	})
@@ -9709,7 +9710,9 @@ func TestQuestionGroups(t *testing.T) {
 		newGroups = append(newGroups, groups[id])
 	}
 	st.AddBatch(ClaudeBatch{At: now, ChannelID: "UCB", To: now, Labels: ls, NewGroups: newGroups})
-	body := getBody(srv.Routes(), path)
+	// Las preguntas son de toda la tarde: la tarjeta mira todo el programa
+	// (rediseno-envivo-programas: por defecto, los últimos 5 min).
+	body := getBody(srv.Routes(), path+"&motivos=programa")
 	for _, w := range []string{"Preguntas agrupadas <span class=\"ia\">Claude</span>", "12 preguntas · 4 grupos", "<strong class=\"num\">3</strong> · ¿A qué hora es el sorteo?"} {
 		if !strings.Contains(body, w) {
 			t.Errorf("falta %q", w)
@@ -10159,7 +10162,8 @@ func TestParticipationProgramsStrip(t *testing.T) {
 
 // TestProgramSentimentAverage (CA1 de orden-graficos-alertas-tecnicas):
 // "Sentimiento del programa" lleva arriba el promedio de todo el tramo (suma
-// de conteos) y las franjas van de la más nueva a la más vieja.
+// de conteos); desde rediseno-envivo-programas las barras van de la más vieja
+// (izquierda) a la más nueva y el promedio dice el tono que más pesa.
 func TestProgramSentimentAverage(t *testing.T) {
 	now := noonToday()
 	day := dayStart(now)
@@ -10181,15 +10185,15 @@ func TestProgramSentimentAverage(t *testing.T) {
 	body := getBody(srv.Routes(), "/parcial/programas/detalle?tramo="+url.QueryEscape(key))
 	hm := func(t time.Time) string { return t.Local().Format("15:04") }
 	avg := "Promedio del programa: 64 % positivo, 14 % neutro, 21 % negativo (14 mensajes)"
-	if !strings.Contains(body, avg) || !strings.Contains(body, `<span class="h">Promedio</span>`) {
+	if !strings.Contains(body, avg) || !strings.Contains(body, `<span class="cbig">64 %</span> positivo`) {
 		t.Fatalf("falta el promedio %q", avg)
 	}
 	iAvg := strings.Index(body, avg)
 	i10 := strings.Index(body, hm(man(10))+": 4 mensajes")
 	i5 := strings.Index(body, hm(man(5))+": 0 % positivo")
 	i0 := strings.Index(body, hm(man(0))+": 100 % positivo")
-	if iAvg < 0 || i10 < 0 || i5 < 0 || i0 < 0 || !(iAvg < i10 && i10 < i5 && i5 < i0) {
-		t.Errorf("orden: promedio %d, 08:10 %d, 08:05 %d, 08:00 %d; quería promedio y después de la más nueva a la más vieja", iAvg, i10, i5, i0)
+	if iAvg < 0 || i10 < 0 || i5 < 0 || i0 < 0 || !(iAvg < i0 && i0 < i5 && i5 < i10) {
+		t.Errorf("orden: promedio %d, 08:00 %d, 08:05 %d, 08:10 %d; quería promedio y después de la más vieja a la más nueva", iAvg, i0, i5, i10)
 	}
 }
 
@@ -10730,11 +10734,11 @@ func TestProgramDetailSections(t *testing.T) {
 	day := dayStart(now)
 	_, srv := programServer(t, now, false)
 	keyMan := segmentKey("UC1", Segment{VideoID: "v1", Program: "LA MAÑANA", Start: day.Add(8 * time.Hour)})
-	// Super Chats en Resumen; la historia en Audiencia y fidelización
-	// (pestanas-programas-en-vivo).
+	// La historia en Audiencia y fidelización (pestanas-programas-en-vivo) y
+	// Super Chats en su pestaña, la última (rediseno-envivo-programas).
 	body := programAllTabs(srv.Routes(), "/parcial/programas/detalle?tramo="+url.QueryEscape(keyMan))
 	last := -1
-	for _, id := range []string{`id="supers"`, `id="fidelizacion"`, `id="emisiones"`, `id="franjas"`, `id="mapa"`} {
+	for _, id := range []string{`id="fidelizacion"`, `id="emisiones"`, `id="franjas"`, `id="mapa"`, `id="supers"`} {
 		i := strings.Index(body, id)
 		if i < 0 || i < last {
 			t.Errorf("%s en %d (el anterior en %d)", id, i, last)
@@ -12382,7 +12386,7 @@ func TestProgramSlotDetail(t *testing.T) {
 	slot := day.Add(8*time.Hour + 5*time.Minute)
 	f := fmt.Sprint(slot.Unix())
 	closed := getBody(h, base)
-	for _, w := range []string{`class="pbar"`, "desde=part&amp;dia=hoy&amp;franja=" + f, "desde=sent&amp;dia=hoy&amp;franja=" + f, `class="sfila"`, "Ver los mensajes"} {
+	for _, w := range []string{`class="pbar"`, "desde=part&amp;dia=hoy&amp;franja=" + f, "desde=sent&amp;dia=hoy&amp;franja=" + f, `class="sbar"`, "Ver los mensajes"} {
 		if !strings.Contains(closed, w) {
 			t.Errorf("links: falta %q", w)
 		}
@@ -12396,7 +12400,7 @@ func TestProgramSlotDetail(t *testing.T) {
 	if i < 0 {
 		t.Fatal("falta el detalle de la franja")
 	}
-	if j := strings.Index(part, "<h3>Resumen del chat"); j < i {
+	if j := strings.Index(part, "<h3>Sentimiento del programa"); j < i {
 		t.Error("desde Participación, el detalle va abajo de ese gráfico")
 	}
 	d := part[i:]
@@ -12414,10 +12418,10 @@ func TestProgramSlotDetail(t *testing.T) {
 		t.Error("la barra elegida va marcada")
 	}
 	sent := getBody(h, base+"&franja="+f+"&desde=sent")
-	if k, i, j := strings.Index(sent, "<h3>Sentimiento del programa"), strings.Index(sent, `id="franja-det"`), strings.Index(sent, `id="supers"`); k < 0 || i < k || j < i {
+	if k, i, j := strings.Index(sent, "<h3>Sentimiento del programa"), strings.Index(sent, `id="franja-det"`), strings.Index(sent, "<h3>Por qué hubo mensajes negativos"); k < 0 || i < k || j < i {
 		t.Error("desde Sentimiento, el detalle va en esa tarjeta")
 	}
-	if !strings.Contains(sent, `aria-pressed="true">Negativos (0)`) || !strings.Contains(sent, "Ningún mensaje negativo en esta franja.") || !strings.Contains(sent, `class="sfila sel"`) {
+	if !strings.Contains(sent, `aria-pressed="true">Negativos (0)`) || !strings.Contains(sent, "Ningún mensaje negativo en esta franja.") || !strings.Contains(sent, `class="sbar sel"`) {
 		t.Error("desde Sentimiento abre en Negativos")
 	}
 	for _, bad := range []string{fmt.Sprint(slot.Unix() + 60), fmt.Sprint(day.Add(11 * time.Hour).Unix()), fmt.Sprint(day.Add(7 * time.Hour).Unix()), "abc"} {
@@ -12519,7 +12523,7 @@ func TestProgramReviewFixes(t *testing.T) {
 	})
 	t.Run("id para el foco", func(t *testing.T) {
 		body := getBody(h, base)
-		if !strings.Contains(body, `<a id="pb-`+f+`" class="pbar"`) || !strings.Contains(body, `<a id="sf-`+f+`" class="sfila"`) {
+		if !strings.Contains(body, `<a id="pb-`+f+`" class="pbar"`) || !strings.Contains(body, `<a id="sf-`+f+`" class="sbar"`) {
 			t.Error("faltan los id de la barra y de la fila")
 		}
 	})
@@ -12580,8 +12584,8 @@ func TestProgramSupers(t *testing.T) {
 	st, srv, key := claudeProgramServer(t, now)
 	h := srv.Routes()
 	supers := func() string {
-		body := getBody(h, "/parcial/programas/detalle?tramo="+url.QueryEscape(key))
-		i := strings.Index(body, `<div id="supers"`)
+		body := getBody(h, "/parcial/programas/detalle?pestana=supers&tramo="+url.QueryEscape(key))
+		i := strings.Index(body, `<section id="supers"`)
 		if i < 0 {
 			t.Fatal("falta #supers")
 		}
@@ -13222,9 +13226,9 @@ func TestProgramsTabs(t *testing.T) {
 		`<div class="l">Mensajes</div><div class="v">26</div>`, `<div class="l">Personas</div><div class="v">4</div>`,
 		`<div class="l">Preguntas</div>`, `<div class="l">Super Chats</div>`, `<div class="l">Likes</div>`, `<div class="l">Likes c/1.000 esp.</div>`,
 		`<nav class="tabs" aria-label="Partes del programa">`, `<a id="tab-resumen" class="tab"`, `aria-current="page">Resumen</a>`,
-		">Conversación</a>", ">Audiencia y fidelización</a>", `<a id="tab-chat" class="tab"`, ">Chat del programa</a>",
-		"Participación durante el programa", "Resumen del chat", "Sentimiento del programa", "Super Chats del programa")
-	notIn(t, "resumen", body, "Categorías y preguntas", `id="palabras"`, "Fidelización del chat", "Emisión por emisión",
+		">Conversación</a>", ">Audiencia y fidelización</a>", `<a id="tab-chat" class="tab"`, ">Chat del programa</a>", `<a id="tab-supers" class="tab"`, ">Super Chats</a>",
+		"Resumen del chat", "Participación durante el programa", "Sentimiento del programa")
+	notIn(t, "resumen", body, "Categorías y preguntas", `id="palabras"`, "Fidelización del chat", "Emisión por emisión", `id="supers"`,
 		`id="chat-programa"`, "Likes del vivo cada 30 minutos", `<th scope="col">Canal</th>`,
 		`<th scope="col" class="n">Super Chats</th>`, `Likes c/1.000 esp.</th>`, "YouTube da un solo contador")
 	if !strings.Contains(body, `hx-trigger="every 60s"`) {
@@ -13243,6 +13247,8 @@ func TestProgramsTabs(t *testing.T) {
 		{"chat", []string{`aria-current="page">Chat del programa</a>`, `id="chat-programa"`, "Chat del programa (26 mensajes)",
 			`id="f-chat"`, `<input type="hidden" name="pestana" value="chat">`},
 			[]string{"Participación durante el programa", "Fidelización del chat", `hx-trigger="every 60s"`}},
+		{"supers", []string{`aria-current="page">Super Chats</a>`, `id="supers"`, "Super Chats del programa"},
+			[]string{"Participación durante el programa", "Fidelización del chat", `id="chat-programa"`, `id="palabras"`}},
 	}
 	for _, c := range tabs {
 		body := getBody(h, base+"&pestana="+c.key)

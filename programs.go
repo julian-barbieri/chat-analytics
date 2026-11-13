@@ -433,6 +433,7 @@ func (q programsQuery) WithTramo(key string) programsQuery {
 // primera (Resumen) no viaja en la URL y nada de afuera se refleja.
 var programTabs = []struct{ Key, Label string }{
 	{"", "Resumen"}, {"conversacion", "Conversación"}, {"audiencia", "Audiencia y fidelización"}, {"chat", "Chat del programa"},
+	{"supers", "Super Chats"}, // la última, como en En vivo (rediseno-envivo-programas)
 }
 
 // TabLink es una pestaña: un link común (Page) que htmx pide como parcial.
@@ -694,11 +695,13 @@ type ProgramDetail struct {
 	Supers              []SuperRow
 	SupersNote          string
 	SuperMsgs           []ChatLine // cada pago, con los tags del chat del programa
-	// Sentimiento de las tandas de Claude: una fila por franja de 5 min y los
-	// motivos de todo el programa. Sin Claude, Sent va en false.
+	// Sentimiento de las tandas de Claude: una barra por franja de 5 min (lo
+	// más viejo a la izquierda, como En vivo) y los motivos de todo el
+	// programa. Sin Claude, Sent va en false.
 	Sent, Motives bool
-	SentRows      []SentRow // de la más nueva a la más vieja
-	SentAvg       *SentRow  // todo el tramo, arriba de las franjas
+	SentChart     *SentChart // nil sin franjas
+	SentAvg       *SentRow   // todo el tramo, arriba de las barras
+	SentLead      *SentLead  // el tono que más pesa en el promedio
 	Neg, Pos      []MotiveRow
 	NegN, PosN    int
 	// Participación de todo el tramo (el gráfico de "Momentos con más
@@ -735,15 +738,12 @@ type ProgramHistory struct {
 	MinEmissions int
 }
 
-// SentRow es una fila de "Sentimiento del programa": una franja de 5 min con
-// sus % (Low: menos de minChartMsgs, sin color).
+// SentRow es el promedio de "Sentimiento del programa": sus % (Low: menos
+// de minChartMsgs) y el texto para lectores de pantalla.
 type SentRow struct {
-	Hour, Label   string
+	Label         string
 	Pos, Neu, Neg float64
 	Low           bool
-	Start         time.Time
-	Href, ID      string // pide los mensajes de la franja; vacíos en el promedio
-	Sel           bool
 }
 
 // programDetail arma el detalle de un tramo con sus mensajes ya filtrados.
@@ -1282,6 +1282,45 @@ func padChart(chart map[string]any, pad int, end time.Time) {
 	}
 }
 
+// programSentChart es "Sentimiento del programa" en barras verticales, como
+// el de En vivo: una por franja de 5 min del tramo, de start a end, lo más
+// viejo a la izquierda, con un rótulo por hora en punto. Los links de cada
+// barra los pone programSlotLinks.
+func programSentChart(slots []SentSlot, start, end time.Time, live bool) *SentChart {
+	from := slotOf(start)
+	n := max(int((end.Sub(from)+slotStep-1)/slotStep), 1)
+	c := &SentChart{W: float64(n), Target: "#programas", Sync: "#programas:replace", Anchor: "#franja-det"}
+	withData := 0
+	for _, sl := range mergeSlots(slots) {
+		i := int(sl.Start.Sub(from) / slotStep)
+		if i < 0 || i >= n {
+			continue
+		}
+		withData++
+		b := sentStack(sl)
+		b.Start = sl.Start
+		b.X, b.W = float64(i)+0.1, 0.8
+		c.Bars = append(c.Bars, b)
+	}
+	c.Ticks = []Tick{{Left: 0, Label: from.Local().Format("15:04")}}
+	d := dayStart(from)
+	// Cada hora en punto a 30 min o más de las puntas, para que los
+	// rótulos no se pisen con el del principio ni con el del final.
+	for h := d.Add(from.Sub(d).Truncate(time.Hour)).Add(time.Hour); h.Before(end.Add(-30 * time.Minute)); h = h.Add(time.Hour) {
+		if h.Sub(from) < 30*time.Minute {
+			continue
+		}
+		c.Ticks = append(c.Ticks, Tick{Left: float64(h.Sub(from)) / float64(slotStep) / float64(n) * 100, Label: h.Local().Format("15:04")})
+	}
+	last := end.Local().Format("15:04")
+	if live {
+		last += " en curso"
+	}
+	c.Ticks = append(c.Ticks, Tick{Left: 100, Label: last, End: true})
+	c.Aria = fmt.Sprintf("Sentimiento del programa cada 5 min desde las %s: %s", from.Local().Format("15:04"), plural(withData, "franja con datos", "franjas con datos"))
+	return c
+}
+
 // programSentiment suma al detalle las franjas de sentimiento del tramo
 // (Store.SentSlots, ya sumadas al guardar) y los motivos de las tandas que
 // tocan el tramo, contando solo los mensajes del tramo. No pide nada a Claude.
@@ -1293,22 +1332,32 @@ func (s *Server) programSentiment(d *ProgramDetail, ps ProgramSeg, msgs []Messag
 	}
 	d.Sent = true
 	var all SentSlot
+	var slots []SentSlot
 	for _, sl := range s.st.SentSlots(ps.Channel.ID, sg.Start) {
 		if !strings.EqualFold(sl.Program, sg.Program) || sl.Start.After(end) || sl.Total() == 0 {
 			continue
 		}
-		b := sentStack(sl)
-		p := sentPct(sl)
-		d.SentRows = append(d.SentRows, SentRow{Hour: sl.Start.Local().Format("15:04"), Label: b.Label, Low: b.Low, Pos: p.Pos, Neu: p.Neu, Neg: p.Neg, Start: sl.Start})
+		slots = append(slots, sl)
 		all.Pos, all.Neu, all.Neg = all.Pos+sl.Pos, all.Neu+sl.Neu, all.Neg+sl.Neg
 	}
-	// Lo más nuevo arriba, como los gráficos; el promedio suma los conteos de
-	// todas las franjas (una franja de pocos mensajes no pesa como una llena).
-	slices.Reverse(d.SentRows)
+	if len(slots) > 0 {
+		d.SentChart = programSentChart(slots, sg.Start, end, sg.State == SegLive)
+	}
+	// El promedio suma los conteos de todas las franjas (una franja de pocos
+	// mensajes no pesa como una llena).
 	if all.Total() > 0 {
 		p := sentPct(all)
-		d.SentAvg = &SentRow{Hour: "Promedio", Pos: p.Pos, Neu: p.Neu, Neg: p.Neg, Low: all.Total() < minChartMsgs,
+		d.SentAvg = &SentRow{Pos: p.Pos, Neu: p.Neu, Neg: p.Neg, Low: all.Total() < minChartMsgs,
 			Label: fmt.Sprintf("Promedio del programa: %.0f %% positivo, %.0f %% neutro, %.0f %% negativo (%s)", p.Pos, p.Neu, p.Neg, plural(all.Total(), "mensaje", "mensajes"))}
+		lead := SentLead{Pct: fmt.Sprintf("%.0f %%", p.Pos), Word: "positivo"}
+		if p.Neu > p.Pos && p.Neu >= p.Neg {
+			lead = SentLead{Pct: fmt.Sprintf("%.0f %%", p.Neu), Word: "neutro"}
+		} else if p.Neg > p.Pos && p.Neg > p.Neu {
+			lead = SentLead{Pct: fmt.Sprintf("%.0f %%", p.Neg), Word: "negativo"}
+		}
+		if !d.SentAvg.Low {
+			d.SentLead = &lead
+		}
 	}
 	byID := messagesByID(msgs)
 	for _, l := range labels {

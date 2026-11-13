@@ -59,8 +59,15 @@
   </div>
   {{with .Nums}}<div class="tiles pnums">{{range .}}<div class="tile inner"><div class="l">{{.Label}}</div><div class="v">{{.Value}}</div>{{with .Note}}<div class="muted">{{.}}</div>{{end}}</div>{{end}}</div>{{end}}
   {{template "tabs" .Tabs}}
-  {{if eq .Tab ""}}<div class="tcols">
-  <div class="tmain">
+  {{/* Resumen en una columna (rediseno-envivo-programas): resumen del chat,
+       participación, sentimiento en barras como En vivo y los motivos. */}}
+  {{if eq .Tab ""}}<div class="pres">
+  <div class="inner">
+    <h3>Resumen del chat {{if .Claude}}<span class="ia">Claude</span>{{end}}</h3>
+    {{if .Claude}}<p>{{.Claude.Summary}}</p><p class="muted">{{.Claude.Footer}}</p>{{with .ClaudeFor}}<p class="muted">{{.}}</p>{{end}}
+    {{else if .ClaudeErr}}<div class="note">{{.ClaudeErr}}</div>
+    {{else}}<p class="muted">{{.NoSummary}}</p>{{end}}
+  </div>
   {{with .Part}}<div class="inner">
     <h3>Participación durante el programa</h3>
     {{with .Summary}}<p class="psum">{{.}}</p>{{end}}
@@ -71,10 +78,23 @@
     {{if eq $.SlotIn "part"}}{{template "prog-franja" $.Slot}}{{else}}<p class="muted">Tocá una barra para ver sus mensajes.</p>{{end}}
   </div>{{end}}
   <div class="inner">
-    <h3>Resumen del chat {{if .Claude}}<span class="ia">Claude</span>{{end}}</h3>
-    {{if .Claude}}<p>{{.Claude.Summary}}</p><p class="muted">{{.Claude.Footer}}</p>{{with .ClaudeFor}}<p class="muted">{{.}}</p>{{end}}
-    {{else if .ClaudeErr}}<div class="note">{{.ClaudeErr}}</div>
-    {{else}}<p class="muted">{{.NoSummary}}</p>{{end}}
+    <h3>Sentimiento del programa {{if .Claude}}<span class="ia">Claude</span>{{end}}</h3>
+    {{if and .Claude (or .Claude.Sent .Claude.Tone)}}{{template "claude-sent" .Claude}}
+    {{else if not .Sent}}<p class="muted">Sale del resumen de Claude: todavía no hay.</p>{{end}}
+    {{if .SentChart}}
+    {{with .SentAvg}}<div class="psent">
+      {{with $.SentLead}}<p class="ctop"><span class="cbig">{{.Pct}}</span> {{.Word}} <span class="muted">· promedio del programa</span></p>{{end}}
+      {{if .Low}}<div class="cbar" role="img" aria-label="{{.Label}}"><span class="low" style="flex-grow: 1"></span></div>
+      <p class="muted">Menos de 5 mensajes analizados en todo el programa: sin color.</p>
+      {{else}}<div class="cbar" role="img" aria-label="{{.Label}}"><span class="pos" style="flex-grow: {{printf "%.1f" .Pos}}"></span><span class="neu" style="flex-grow: {{printf "%.1f" .Neu}}"></span><span class="neg" style="flex-grow: {{printf "%.1f" .Neg}}"></span></div>{{end}}
+      <ul class="cleg"><li><span class="sw pos" aria-hidden="true"></span> Positivo <strong>{{printf "%.0f" .Pos}} %</strong></li><li><span class="sw neu" aria-hidden="true"></span> Neutro <strong>{{printf "%.0f" .Neu}} %</strong></li><li><span class="sw neg" aria-hidden="true"></span> Negativo <strong>{{printf "%.0f" .Neg}} %</strong></li></ul>
+    </div>{{end}}
+    {{with .SentChart}}<h4 class="lbl">Cómo fue cambiando · cada 5 min, con las tandas de Claude</h4>
+    {{template "sent-bars" .}}
+    <div class="pticks" aria-hidden="true">{{range .Ticks}}<span{{if .End}} class="end"{{end}} style="left: {{printf "%.2f" .Left}}%">{{.Label}}</span>{{end}}</div>{{end}}
+    <p class="muted leyenda"><span class="sw pos" aria-hidden="true"></span> Positivo <span class="sw neu" aria-hidden="true"></span> Neutro <span class="sw neg" aria-hidden="true"></span> Negativo <span class="sw low" aria-hidden="true"></span> Menos de 5 mensajes: sin color</p>
+    {{if eq .SlotIn "sent"}}{{template "prog-franja" .Slot}}{{else}}<p class="muted">Tocá una barra para ver sus mensajes.</p>{{end}}
+    {{else if .Sent}}<p class="muted">Todavía no hay mensajes analizados por Claude en este programa.</p>{{end}}
   </div>
   {{if .Motives}}<div class="grid2">
     <div class="inner">
@@ -88,28 +108,6 @@
       {{template "motivos" .Pos}}
     </div>
   </div>{{end}}
-  </div>
-  <div class="tside">
-    <div class="inner">
-      <h3>Sentimiento del programa {{if .Claude}}<span class="ia">Claude</span>{{end}}</h3>
-      {{if and .Claude (or .Claude.Sent .Claude.Tone)}}{{template "claude-sent" .Claude}}
-      {{else if not .Sent}}<p class="muted">Sale del resumen de Claude: todavía no hay.</p>{{end}}
-      {{if .SentRows}}<p class="muted">Promedio del programa y cada 5 min, lo más nuevo arriba, con las tandas de Claude:</p>
-      <ul class="sfilas">{{with .SentAvg}}{{template "sfila" .}}{{end}}{{range .SentRows}}{{template "sfila" .}}{{end}}</ul>
-      <p class="muted leyenda"><span class="sw pos" aria-hidden="true"></span> Positivo <span class="sw neu" aria-hidden="true"></span> Neutro <span class="sw neg" aria-hidden="true"></span> Negativo <span class="sw low" aria-hidden="true"></span> Menos de 5 mensajes</p>
-      {{if eq .SlotIn "sent"}}{{template "prog-franja" .Slot}}{{else}}<p class="muted">Tocá una franja para ver sus mensajes.</p>{{end}}
-      {{else if .Sent}}<p class="muted">Todavía no hay mensajes analizados por Claude en este programa.</p>{{end}}
-    </div>
-  <div id="supers" class="inner supers">
-      <h3>Super Chats del programa</h3>
-      {{if .Supers}}<table>
-        <tr><th scope="col">Moneda</th><th scope="col" class="n">Cantidad</th><th scope="col" class="n">Total</th></tr>
-        {{range .Supers}}<tr><td>{{.Currency}}</td><td class="n">{{miles .N}}</td><td class="n">{{.Total}}</td></tr>{{end}}
-      </table>{{else}}<p class="muted">Sin Super Chats ni Super Stickers.</p>{{end}}
-      {{if .SuperMsgs}}<ul class="qlist chatl">{{range .SuperMsgs}}{{template "chat-line" .}}{{end}}</ul>{{end}}
-      <p class="muted">{{.SupersNote}}</p>
-  </div>
-  </div>
   </div>
   {{else if eq .Tab "conversacion"}}<div class="grid2 tstart">
     <div class="inner">
@@ -128,16 +126,31 @@
     {{template "cchart" .}}
     <p class="muted">Cada barra tiene el color del programa que estaba al aire: el mismo que el cuadradito junto a su nombre en la tabla (pasá el mouse por una barra para ver cuál). YouTube da un solo contador de likes por vivo: los de cada programa son lo que subió durante su horario («—» si todavía no hay dos muestras).</p>
   </div>{{end}}
+  {{else if eq .Tab "supers"}}<section id="supers" class="inner supers" aria-labelledby="supers-h">
+    <h3 id="supers-h">Super Chats del programa</h3>
+    {{if .Supers}}
+    {{/* Total por moneda en grande (nunca se mezclan monedas), la tabla y los pagos. */}}
+    <div class="tiles sbigs">{{range .Supers}}<div class="card tile sbig"><div class="l">{{.Currency}}</div><div class="v">{{.Total}}</div><div class="muted">{{plural .N "pago" "pagos"}}</div></div>{{end}}</div>
+    <div class="grid2 tstart">
+      <div>
+        <h4>Por moneda</h4>
+        <div class="tablewrap"><table>
+          <tr><th scope="col">Moneda</th><th scope="col" class="n">Cantidad</th><th scope="col" class="n">Total</th></tr>
+          {{range .Supers}}<tr><td>{{.Currency}}</td><td class="n">{{miles .N}}</td><td class="n">{{.Total}}</td></tr>{{end}}
+        </table></div>
+      </div>
+      <div>
+        <h4>Pagos del programa</h4>
+        {{if .SuperMsgs}}<ul class="qlist chatl">{{range .SuperMsgs}}{{template "chat-line" .}}{{end}}</ul>{{end}}
+      </div>
+    </div>
+    {{else}}<p class="muted">Sin Super Chats ni Super Stickers en este programa.</p>{{end}}
+    <p class="muted">{{.SupersNote}}</p>
+  </section>
   {{else}}{{template "prog-chat" .Chat}}{{end}}
 {{else}}<p class="muted">Ese programa ya no está guardado.</p>{{end}}
 </section>
 {{end}}
-
-{{/* Una fila de "Sentimiento del programa": el promedio o una franja de 5 min,
-que pide sus mensajes (Href). */}}
-{{define "sfila"}}<li title="{{.Label}}"{{if eq .Hour "Promedio"}} class="prom"{{end}}>{{if .Href}}<a id="{{.ID}}" class="sfila{{if .Sel}} sel{{end}}" href="#franja-det" hx-get="{{.Href}}" hx-sync="#programas:replace" hx-target="#programas" hx-swap="outerHTML" aria-label="{{.Label}}. Ver los mensajes">{{template "sfila-in" .}}</a>{{else}}{{template "sfila-in" .}}{{end}}</li>{{end}}
-{{define "sfila-in"}}<span class="h">{{.Hour}}</span>
-  <span class="hbar" role="img" aria-label="{{.Label}}">{{if .Low}}<span class="low" style="width: 100%"></span>{{else}}<span class="pos" style="width: {{printf "%.1f" .Pos}}%"></span><span class="neu" style="width: {{printf "%.1f" .Neu}}%"></span><span class="neg" style="width: {{printf "%.1f" .Neg}}%"></span>{{end}}</span>{{end}}
 
 {{/* La flecha de lo que se despliega en Programas: pide el detalle con la
 sección cambiada en "abrir", así sigue abierta después del refresco de 60 s.
@@ -232,26 +245,27 @@ el tipo y el monto adelante. */}}
       <div class="card tile"><div class="l">Núcleo</div><div class="v">{{printf "%.0f" .CorePeople}} %</div><div class="muted">de los participantes escribe el {{printf "%.0f" .CoreMsgs}} % de los mensajes</div></div>
       <div class="card tile"><div class="l">En riesgo</div><div class="v warnv">{{miles .AtRisk}}</div><div class="muted">habituales sin escribir hace 7+ días</div></div>
     </div>
-    <div class="grid2">
+    {{/* El gráfico a la izquierda y su tabla a la derecha; Cohortes debajo (rediseno-envivo-programas). */}}
+    <h3>Segmentos por asistencia</h3>
+    <p class="muted">Cada participante se ubica según en cuántos de {{plural .Emissions "vivo" "vivos"}} del programa escribió.</p>
+    <div class="segcols">
+      {{template "segflow" .SegFlow}}
       <div>
-        <h3>Segmentos por asistencia</h3>
-        <p class="muted">Cada participante se ubica según en cuántos de {{plural .Emissions "vivo" "vivos"}} del programa escribió.</p>
-        {{template "segflow" .SegFlow}}
         <div class="tablewrap"><table>
           <thead><tr><th scope="col">Segmento</th><th scope="col">Regla</th><th scope="col" class="n">Participantes</th><th scope="col" class="n">% personas</th><th scope="col" class="n">% mensajes</th></tr></thead>
           <tbody>{{range .Segments}}<tr><td><span class="sw {{.Key}}" aria-hidden="true"></span> {{.Label}}</td><td class="muted">{{.Rule}}</td><td class="n">{{miles .People}}</td><td class="n">{{printf "%.0f" .PeoplePct}} %</td><td class="n">{{printf "%.0f" .MsgsPct}} %</td></tr>{{end}}</tbody>
         </table></div>
         <p class="muted">La regla va en % de vivos (núcleo = 50 % o más; habituales, 20 % o más), así un programa semanal y uno diario se comparan igual. Quedan afuera el dueño del canal, los moderadores (desde que se guarda ese dato) y los mensajes de spam. Las personas se cuentan por nombre visible.</p>
       </div>
-      <div>
-        <h3>Cohortes: ¿vuelven los que llegan?</h3>
-        <p class="muted">Agrupados por la semana de su primer mensaje en el programa; % que volvió a escribir en cada semana siguiente.</p>
-        <div class="tablewrap"><table class="heat">
+    </div>
+    <div class="cohortes">
+      <h3>Cohortes: ¿vuelven los que llegan?</h3>
+      <p class="muted">Agrupados por la semana de su primer mensaje en el programa; % que volvió a escribir en cada semana siguiente.</p>
+      <div class="tablewrap"><table class="heat">
           <thead><tr><th scope="col">Cohorte</th><th scope="col" class="n">Nuevos</th><th scope="col" class="n">Sem. 0</th><th scope="col" class="n">+1</th><th scope="col" class="n">+2</th><th scope="col" class="n">+3</th></tr></thead>
           <tbody>{{range .Cohorts}}<tr><td>Sem. {{.Start.Local.Format "02/01"}}</td><td class="n">{{miles .New}}</td>{{range .Cells}}<td class="n {{.Class}}">{{.Text}}</td>{{end}}</tr>{{end}}</tbody>
         </table></div>
-        <p class="muted">Leer en diagonal: si cada cohorte nueva retiene más en +1, el programa fideliza mejor que antes. "—" = semana que todavía no pasó. Solo se guardan 30 días: la primera semana incluye a quienes ya venían de antes.</p>
-      </div>
+      <p class="muted">Leer en diagonal: si cada cohorte nueva retiene más en +1, el programa fideliza mejor que antes. "—" = semana que todavía no pasó. Solo se guardan 30 días: la primera semana incluye a quienes ya venían de antes.</p>
     </div>
     {{else}}<p class="muted">Todavía no hay mensajes de chat de este programa en las últimas 4 semanas.</p>{{end}}{{end}}
   </div>

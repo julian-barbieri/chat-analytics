@@ -221,25 +221,31 @@ tr.sel td { background: var(--ia-bg); }
 .vivo { display: flex; flex-direction: column; gap: 16px; }
 #vivo-analisis, #vivo-abajo { display: flex; flex-direction: column; gap: 16px; }
 /* Pestañas de En vivo. Los 7 números van en una fila desde ~1.280 px. En
-   Ahora, el análisis no cuenta como caja (display: contents) y la sección es
-   una grilla: el chat a la izquierda, fijo al bajar, y Sentimiento y
-   Preguntas a la derecha. En las otras pestañas el chat sigue en la página
-   (detecta el cambio de vivo) pero oculto. */
+   Ahora, el análisis no cuenta como caja (display: contents) y el orden
+   pone el chat entre las tarjetas de arriba y Sentimiento. En las otras
+   pestañas el chat sigue en la página (detecta el cambio de vivo) pero
+   oculto. */
 #vivo-analisis .tiles { grid-template-columns: repeat(auto-fit, minmax(128px, 1fr)); }
 #vivo-analisis .tiles .tile .v { font-size: 26px; }
 #vivo:not(.t-ahora) #chat { display: none; }
-#vivo.t-ahora { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); align-items: start; }
 #vivo.t-ahora #vivo-analisis { display: contents; }
-#vivo.t-ahora > *, #vivo.t-ahora #vivo-analisis > * { grid-column: 1 / -1; min-width: 0; }
-#vivo.t-ahora #chat { grid-column: 1; grid-row: span 2; order: 1; position: sticky; top: 16px; }
-#vivo.t-ahora #chat .vfeed { max-height: calc(100vh - 200px); }
-#vivo.t-ahora #sentimiento, #vivo.t-ahora #preguntas { grid-column: 2; order: 2; }
+/* Ahora (rediseno-envivo-programas): el chat a lo ancho, debajo el
+   sentimiento y debajo los motivos y las preguntas en tres columnas. */
+#vivo.t-ahora #chat { order: 1; }
+#vivo.t-ahora #sentimiento { order: 2; }
+#vivo.t-ahora #motivos { order: 3; }
 #vivo.t-ahora #vivo-abajo { display: none; }
+#vivo.t-ahora #chat .vfeed { max-height: 360px; }
+#vivo.t-ahora #chat .vfeed li { display: grid; grid-template-columns: minmax(0, 340px) minmax(0, 1fr); gap: 4px 16px; align-items: baseline; }
+.sgrid { display: grid; grid-template-columns: minmax(0, 320px) minmax(0, 1fr); gap: 16px 32px; align-items: start; }
+.sgraf h3 { margin-top: 0; }
+.mcols { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; align-items: start; }
+.mcols > :only-child { grid-column: 1 / -1; }
+.mcols h3 { margin-top: 0; }
+#motivos .mwin { margin: 0; }
 @media (max-width: 900px) {
-  #vivo.t-ahora { grid-template-columns: minmax(0, 1fr); }
-  #vivo.t-ahora #chat, #vivo.t-ahora #sentimiento, #vivo.t-ahora #preguntas { grid-column: 1; }
-  #vivo.t-ahora #chat { grid-row: auto; position: static; }
-  #vivo.t-ahora #chat .vfeed { max-height: 420px; }
+  .sgrid, .mcols { grid-template-columns: minmax(0, 1fr); }
+  #vivo.t-ahora #chat .vfeed li { grid-template-columns: minmax(0, 1fr); }
 }
 .vbtns { display: flex; flex-wrap: wrap; gap: 8px; }
 .vbtn { font: inherit; font-size: 14px; font-weight: 600; min-height: 44px; padding: 0 16px; border-radius: 99px; cursor: pointer;
@@ -290,12 +296,16 @@ tr.sel td { background: var(--ia-bg); }
 .pnums { grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; }
 .pnums .tile { padding: 12px 14px; }
 .pnums .tile .v { font-size: 24px; }
-.tcols { display: flex; flex-wrap: wrap; gap: 14px; align-items: flex-start; }
-.tmain { flex: 2 1 520px; min-width: 0; display: flex; flex-direction: column; gap: 14px; }
-.tside { flex: 1 1 300px; min-width: 0; display: flex; flex-direction: column; gap: 14px; }
 .tstart { align-items: start; }
-/* En la columna principal los dos motivos entran lado a lado. */
-.tmain .grid2 { grid-template-columns: repeat(auto-fit, minmax(min(260px, 100%), 1fr)); gap: 14px; }
+/* Resumen de Programas: una columna (rediseno-envivo-programas). */
+.pres { display: flex; flex-direction: column; gap: 14px; }
+.pres .grid2 { gap: 14px; }
+.psent { display: flex; flex-direction: column; gap: 10px; margin: 6px 0 14px; }
+/* Segmentos por asistencia: el gráfico a la izquierda y la tabla a la derecha. */
+.segcols { display: grid; grid-template-columns: minmax(0, 440px) minmax(0, 1fr); gap: 16px 32px; align-items: center; }
+.segcols .segflow { margin: 0; }
+.cohortes { margin-top: 20px; }
+@media (max-width: 900px) { .segcols { grid-template-columns: minmax(0, 1fr); } }
 /* Línea de oyentes dentro del SVG de las barras, con su propia escala (el
    máximo va a la derecha de .pmax). No toma el mouse: el tooltip lo da la franja. */
 .oyentes { fill: none; stroke: var(--text-primary); stroke-width: 2; stroke-linejoin: round; pointer-events: none; }
@@ -356,10 +366,6 @@ tr.sel td { background: var(--ia-bg); }
 .pchart a:focus-visible .bar, .pchart a.sel .bar { stroke: var(--text-primary); stroke-width: 2px; vector-effect: non-scaling-stroke; }
 /* Una franja sin mensajes tiene barra de alto 0: el foco y la elegida se marcan en toda la columna. */
 .pchart a:focus-visible .hit, .pchart a.sel .hit { fill: var(--grid); }
-.sfilas a.sfila { display: flex; flex: 1; align-items: center; gap: 8px; min-height: 44px; color: inherit; text-decoration: none; border-radius: 3px; }
-.sfilas a.sfila:hover .hbar { opacity: .8; }
-.sfilas a.sfila:focus-visible, .sfilas a.sel { outline: 2px solid var(--text-primary); outline-offset: 1px; }
-.sfilas a.sel .h { color: var(--text-primary); font-weight: 600; }
 .tsolo { padding: 11px 0; }
 /* Chat del programa: filtros en una fila que se parte y la lista con scroll propio. */
 .chatf { display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-end; margin: 8px 0; }
@@ -375,12 +381,7 @@ tr.sel td { background: var(--ia-bg); }
 .sprog { position: absolute; top: 0; height: 22px; padding: 0 4px; box-sizing: border-box; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
   font-size: 12px; line-height: 22px; color: var(--text-secondary); background: var(--surface-0); border-left: 2px solid var(--text-muted); }
 .sprogl { list-style: none; margin: 4px 0; padding: 0; display: flex; flex-wrap: wrap; gap: 2px 14px; font-size: 13px; color: var(--text-secondary); }
-/* Programas de hoy: una fila por franja de 5 min con la barra apilada. */
-.sfilas { list-style: none; margin: 4px 0; padding: 0; max-height: 420px; overflow-y: auto; }
-.sfilas li { display: flex; align-items: center; gap: 8px; padding: 1px 0; font-size: 12px; }
-.sfilas li.prom { font-weight: 600; padding-bottom: 6px; margin-bottom: 4px; border-bottom: 1px solid var(--border); }
-.sfilas li.prom .h { color: var(--text-primary); }
-.sfilas .h { width: 60px; flex: none; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+/* Barra apilada positivo/neutro/negativo (Emisión por emisión). */
 .hbar { display: flex; flex: 1; height: 12px; border-radius: 3px; overflow: hidden; }
 .hbar .pos { background: var(--sent-pos); }
 .hbar .neu { background: var(--sent-neu); }
@@ -556,6 +557,7 @@ a.seg[aria-current="true"] { background: var(--text-primary); color: var(--surfa
 .cbar .pos { background: var(--sent-pos); }
 .cbar .neu { background: var(--sent-neu); }
 .cbar .neg { background: var(--sent-neg); }
+.cbar .low { background: var(--sent-low); }
 .cleg { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 4px 18px; font-size: 13.5px; color: var(--text-secondary); }
 /* Mejores momentos: una tarjeta por momento. */
 .moms { list-style: none; margin: 8px 0 12px; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(min(250px, 100%), 1fr)); gap: 12px; }
@@ -590,6 +592,9 @@ a.seg[aria-current="true"] { background: var(--text-primary); color: var(--surfa
 /* "De qué se habla": los subtítulos de la tarjeta, sin mayúsculas (llevan chips). */
 .talk .lbl { margin: 12px 0 6px; font-size: 13px; font-weight: 600; letter-spacing: 0; text-transform: none; color: var(--text-secondary); }
 .talk .chead + .lbl { margin-top: 0; }
+.card.talk .tcols2 > div > .lbl:first-child { margin-top: 0; }
+.card.talk .tcols2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px 32px; }
+@media (max-width: 720px) { .card.talk .tcols2 { grid-template-columns: minmax(0, 1fr); } }
 .talk .words { margin-bottom: 4px; }
 .ktag { font-size: 12px; font-weight: 400; color: var(--text-muted); }
 .hstack .hab, .sw.hab { background: var(--text-primary); }
@@ -638,6 +643,15 @@ a.seg[aria-current="true"] { background: var(--text-primary); color: var(--surfa
 .gtrend.bad { color: var(--warn-text); }
 .gtrend.good { color: var(--ok-text); }
 .gbars { display: block; width: 100%; height: 64px; }
+/* En vivo (rediseno-envivo-programas): el semicírculo y su lista a la
+   izquierda y el detalle de la elegida a la derecha; en celular, apilados. */
+#vivo #categorias .cgauge { display: grid; grid-template-columns: minmax(0, 420px) minmax(0, 1fr); gap: 16px 32px; align-items: start; }
+#vivo #categorias .gwrap { flex-direction: column; align-items: stretch; }
+#vivo #categorias .gchart { max-width: none; flex: none; }
+#vivo #categorias .gside { flex: none; }
+#vivo #categorias .gdet { margin-top: 0; }
+#vivo #categorias .cgauge > :only-child { grid-column: 1 / -1; }
+@media (max-width: 900px) { #vivo #categorias .cgauge { grid-template-columns: minmax(0, 1fr); } }
 .gbars rect { fill: var(--sent-neu); opacity: .55; }
 .gbars rect.now { opacity: 1; }
 .gdet .btn { align-self: flex-start; }
