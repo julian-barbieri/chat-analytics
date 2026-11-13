@@ -198,6 +198,10 @@ func (f *fakeAPI) claude(w http.ResponseWriter, r *http.Request) {
 	if strings.Contains(string(req.Output.Format.Schema), "grupos_nuevos") && len(req.Messages) > 0 {
 		text = fakeBatch(req.Messages[0].Content)
 	}
+	// Las recomendaciones (ADR 0011), también por el esquema.
+	if strings.Contains(string(req.Output.Format.Schema), "recomendaciones") && len(req.Messages) > 0 {
+		text = fakeRecs(req.Messages[0].Content)
+	}
 	writeJSON(w, map[string]any{
 		"id": "msg_vista_previa", "type": "message", "role": "assistant", "model": req.Model,
 		"content":     []any{map[string]any{"type": "text", "text": text}},
@@ -206,6 +210,20 @@ func (f *fakeAPI) claude(w http.ResponseWriter, r *http.Request) {
 }
 
 var reBatchLine = regexp.MustCompile(`(?m)^\[(\d+)\] `)
+
+// reRecLine es "[3] tecnica · roles: tecnica, direccion" en un pedido de recomendaciones.
+var reRecLine = regexp.MustCompile(`(?m)^\[(\d+)\] \S+ · roles: ([a-z]+)`)
+
+// fakeRecs arma una recomendación simulada por señal, para su primer rol,
+// sin números (validRecResult descarta los que no están en la señal).
+func fakeRecs(user string) string {
+	var items []string
+	for _, m := range reRecLine.FindAllStringSubmatch(user, -1) {
+		items = append(items, fmt.Sprintf(`{"senal":%s,"rol":%q,"prioridad":"media","titulo":"Recomendación simulada de la vista previa",`+
+			`"accion":"Texto simulado: no lo armó Claude y los mensajes no salieron de esta PC."}`, m[1], m[2]))
+	}
+	return `{"recomendaciones":[` + strings.Join(items, ",") + `]}`
+}
 
 // fakeBatch arma etiquetas simuladas para los números de mensaje de una tanda:
 // sentimientos y categorías que rotan, una pregunta simulada y un motivo de

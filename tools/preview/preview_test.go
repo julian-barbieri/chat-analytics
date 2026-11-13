@@ -337,6 +337,9 @@ func TestPreviewStartup(t *testing.T) {
 		writeFile(t, filepath.Join(src, "datos.likes.jsonl"), `{"VideoID":"grabado1111","At":"2026-10-30T10:00:00Z","Likes":5}`+"\n")
 		// Y las revisiones sin vivo (pantalla Sin vivo, sin-vivo-monitor-apagado).
 		writeFile(t, filepath.Join(src, "datos.sinvivo.jsonl"), `{"At":"2026-10-30T10:00:00Z","ChannelID":"UCsintetico"}`+"\n")
+		// Y las recomendaciones de Claude (recomendaciones-por-rol); las marcas, no.
+		writeFile(t, filepath.Join(src, "datos.recomendaciones.jsonl"), `{"Key":"UCsintetico|vivoViejo11|PROGRAMA|2026-10-30T10:00:00Z","ChannelID":"UCsintetico","To":"2026-10-30T11:00:00Z"}`+"\n")
+		writeFile(t, filepath.Join(src, "datos.recmarcas.jsonl"), `{"At":"2026-10-30T10:00:00Z","Rec":"x","State":"hecha"}`+"\n")
 		writeFile(t, filepath.Join(src, "datos.claude.json"), `{"Day":"2026-10-30","Micros":999}`)
 		writeFile(t, filepath.Join(src, "datos.canales.json"), `{}`)
 		writeFile(t, filepath.Join(src, "otro.txt"), "no se copia")
@@ -358,10 +361,10 @@ func TestPreviewStartup(t *testing.T) {
 		if runtime.GOOS != "windows" && info.Mode().Perm() != 0o700 {
 			t.Errorf("permisos de la copia %v, quiero 0700", info.Mode().Perm())
 		}
-		if got := strings.Join(entries(t, p.dir), ","); got != "datos.analisis.jsonl,datos.cuota.json,datos.espectadores.jsonl,datos.etiquetas.jsonl,datos.jsonl,datos.likes.jsonl,datos.sinvivo.jsonl,datos.videos.jsonl,datos.vivos.jsonl" {
+		if got := strings.Join(entries(t, p.dir), ","); got != "datos.analisis.jsonl,datos.cuota.json,datos.espectadores.jsonl,datos.etiquetas.jsonl,datos.jsonl,datos.likes.jsonl,datos.recomendaciones.jsonl,datos.sinvivo.jsonl,datos.videos.jsonl,datos.vivos.jsonl" {
 			t.Errorf("copió %s", got)
 		}
-		for _, n := range []string{"datos.jsonl", "datos.cuota.json", "datos.espectadores.jsonl", "datos.vivos.jsonl", "datos.analisis.jsonl", "datos.etiquetas.jsonl", "datos.videos.jsonl", "datos.likes.jsonl", "datos.sinvivo.jsonl"} {
+		for _, n := range []string{"datos.jsonl", "datos.cuota.json", "datos.espectadores.jsonl", "datos.vivos.jsonl", "datos.analisis.jsonl", "datos.etiquetas.jsonl", "datos.videos.jsonl", "datos.likes.jsonl", "datos.sinvivo.jsonl", "datos.recomendaciones.jsonl"} {
 			a, _ := os.ReadFile(filepath.Join(src, n))
 			b, _ := os.ReadFile(filepath.Join(p.dir, n))
 			if !bytes.Equal(a, b) {
@@ -828,5 +831,23 @@ func TestFakeClaudeMessages(t *testing.T) {
 	// Lo que llega no se guarda: el falso no tiene dónde.
 	if strings.Contains(fmt.Sprintf("%+v", fake), secret) {
 		t.Errorf("el falso guardó el texto recibido")
+	}
+}
+
+// TestFakeRecs (recomendaciones-por-rol): la API simulada responde una
+// recomendación por señal, para su primer rol y con el esquema de Claude.
+func TestFakeRecs(t *testing.T) {
+	got := fakeRecs("Programa: X\n\n[1] tecnica · roles: tecnica\nDato: 3 quejas\n\n[2] tema · roles: redes, produccion\nDato: 8 mensajes\n")
+	var raw struct {
+		Recomendaciones []struct {
+			Senal                          int
+			Rol, Prioridad, Titulo, Accion string
+		}
+	}
+	if err := json.Unmarshal([]byte(got), &raw); err != nil {
+		t.Fatal(err)
+	}
+	if len(raw.Recomendaciones) != 2 || raw.Recomendaciones[0].Rol != "tecnica" || raw.Recomendaciones[1].Senal != 2 || raw.Recomendaciones[1].Rol != "redes" {
+		t.Errorf("fakeRecs = %s", got)
 	}
 }

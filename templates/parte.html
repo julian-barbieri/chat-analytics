@@ -1,0 +1,22 @@
+{{template "head" .}}
+{{/* Parte por rol (recomendaciones-por-rol): lo de ayer o de los últimos 7
+días, para leer o imprimir (Ctrl+P: el CSS de impresión saca la navegación y
+los filtros). Los filtros son links comunes con listas cerradas. */}}
+<section id="parte" class="card parte" aria-labelledby="parte-h">
+  <h2 id="parte-h">{{.Title}}</h2>
+  <div class="cfiltros noprint">
+    <div class="field"><span class="lbl">Período</span><nav class="chips" aria-label="Período">{{range .Periods}}<a class="seg" href="{{.Page}}"{{if .On}} aria-current="page"{{end}}>{{.Label}}</a>{{end}}</nav></div>
+    <div class="field"><span class="lbl">Para quién</span><nav class="chips" aria-label="Para quién">{{range .Roles}}<a class="seg" href="{{.Page}}"{{if .On}} aria-current="page"{{end}}>{{.Label}}</a>{{end}}</nav></div>
+  </div>
+  <p class="psum">{{.Line}}</p>
+  <p class="muted noprint"><a href="{{.Txt}}">Texto para copiar</a> · Para imprimirlo, usá Imprimir del navegador (Ctrl+P). Lo marcado como No sirve no aparece.{{if .Semana}} Lo que se repitió en varias emisiones va una sola vez, con el texto de la última.{{end}}</p>
+  {{if .Empty}}<p class="muted">No hay recomendaciones para este período.</p>
+  {{else}}<ul class="rlist">{{range .Items}}<li class="rec {{.Prio}}{{with .State}} {{.}}{{end}}">
+    <div class="rhead"><span class="rrol">{{.RoleLabel}}</span><span class="rprio">Prioridad {{.Prio}}</span>{{with .StateLabel}}<span class="chip">{{.}}</span>{{end}}</div>
+    <h4>{{.Title}}</h4>
+    <p>{{.Action}}</p>
+    <p class="muted rfacts">{{.Facts}}</p>
+    <p class="muted">{{.Where}}{{if gt .Times 1}} · se repitió en {{.Times}} emisiones{{end}}</p>
+  </li>{{end}}</ul>{{end}}
+</section>
+{{template "foot" .}}

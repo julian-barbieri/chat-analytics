@@ -16,6 +16,7 @@ type Answers struct {
 	mu   sync.Mutex
 	path string
 	done map[string]bool // por ID de grupo
+	n    int             // marcas guardadas desde que se abrió: la versión (Version)
 }
 
 // AnswerMark es una línea de datos.respondidas.jsonl.
@@ -58,7 +59,19 @@ func (a *Answers) Mark(channelID, group string, undo bool, now time.Time) error 
 		return err
 	}
 	a.done[group] = !undo
+	a.n++
 	return nil
+}
+
+// Version cambia con cada marca: el parte de recomendaciones la usa para
+// saber si tiene que volver a armarse. Con a en nil, siempre 0.
+func (a *Answers) Version() int {
+	if a == nil {
+		return 0
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.n
 }
 
 // Answered dice si el grupo está marcado como respondido. Con a en nil

@@ -1,6 +1,6 @@
 # Spec: recomendaciones por rol y parte diario
 
-- **Estado:** aprobada
+- **Estado:** implementada
 - **Tipo:** mejora
 - **Rama:** `feat/recomendaciones-por-rol`
 - **Origen:** pedido del usuario: generar automáticamente recomendaciones a partir del chat
@@ -37,7 +37,7 @@ Se ven en dos lugares:
 
 ## Criterios de aceptación
 
-- [ ] CA1: `recSignals` es una función pura que devuelve las señales de un tramo. Cada
+- [x] CA1: `recSignals` es una función pura que devuelve las señales de un tramo. Cada
   una tiene `Kind`, `Roles`, números, IDs de mensajes y un `ID` estable
   (`<kind>|<sujeto>`). Por cada tipo hay un caso que dispara la señal y otro que no
   llega al umbral — `TestRecSignals`:
@@ -53,10 +53,10 @@ Se ven en dos lugares:
   | `corte` | El tramo se cortó sin vivo | Técnica |
   | `supers` | ≥ 1 Super Chat, con los montos por moneda | Comercial |
   | `pico` | Pico de espectadores sobre lo normal | Comercial |
-- [ ] CA2: sin Claude, o sin una redacción guardada, cada señal sale con un texto fijo
+- [x] CA2: sin Claude, o sin una redacción guardada, cada señal sale con un texto fijo
   por tipo y la prioridad por reglas (`recFallback`). La evidencia la arma siempre Go
   (por ejemplo, "23 personas · 09:10–09:40") — `TestRecFallback`.
-- [ ] CA3: al guardarse el análisis final de un programa, `RunAnalyst` manda un pedido
+- [x] CA3: al guardarse el análisis final de un programa, `RunAnalyst` manda un pedido
   de recomendaciones con `-claude-modelo`. La prioridad es la más baja, después de los
   programas terminados. Lo que se manda:
   - las señales y los textos de hasta 5 mensajes de ejemplo por señal, sin `Author`,
@@ -64,7 +64,7 @@ Se ven en dos lugares:
   - con un chequeo de peor caso contra el tope (`recWorstCase`) antes de mandar.
 
   Si no hay señales, no hay pedido — `TestAnalystRecs` y `TestRecPrompt`.
-- [ ] CA4: de la respuesta solo se toman recomendaciones que cumplan todo esto:
+- [x] CA4: de la respuesta solo se toman recomendaciones que cumplan todo esto:
   - que se refieran a una señal mandada y a uno de sus roles;
   - con prioridad de una lista cerrada (`alta`, `media`, `baja`);
   - con un título de ≤ 90 runas y una acción de ≤ 240;
@@ -72,14 +72,14 @@ Se ven en dos lugares:
 
   Las que no cumplen se descartan y esas señales quedan con el texto fijo
   (`validRecResult`) — `TestValidRecResult`.
-- [ ] CA5: las redacciones se guardan en `datos.recomendaciones.jsonl` (`ProgramRecs`:
+- [x] CA5: las redacciones se guardan en `datos.recomendaciones.jsonl` (`ProgramRecs`:
   clave del tramo, modelo, tokens, costo, recomendaciones y error):
   - retención de 30 días desde el fin del tramo al abrir, con tmp + `os.Rename`;
   - el gasto se suma al del día;
   - la vista previa copia el archivo.
 
-  Se verifica con `TestRecsStore` y `TestCopyData` de `tools/preview`.
-- [ ] CA6: la pestaña Recomendaciones muestra una tarjeta por recomendación, ordenadas
+  Se verifica con `TestRecsStore` y `TestPreviewStartup` de `tools/preview`.
+- [x] CA6: la pestaña Recomendaciones muestra una tarjeta por recomendación, ordenadas
   por prioridad. Cada tarjeta tiene:
   - el rol, la prioridad, el título y la acción;
   - la evidencia, con un `<details>` que lista los mensajes;
@@ -92,7 +92,7 @@ Se ven en dos lugares:
   - sin señales, se muestra "Este programa no dejó recomendaciones".
 
   Se verifica con `TestProgramRecsTab`, que se amplía.
-- [ ] CA7: las marcas Hecha, No sirve y Deshacer funcionan así:
+- [x] CA7: las marcas Hecha, No sirve y Deshacer funcionan así:
   - se mandan con `POST /recomendaciones/marca` (`rec=<clave>|<ID>`, `estado=hecha|nosirve|deshacer`);
   - pasan por `sameOrigin` y `localRequest` y el cuerpo es de 1 KB como mucho;
   - se guardan en `datos.recmarcas.jsonl`, con mutex propio, retención de 30 días y fuera
@@ -101,7 +101,7 @@ Se ven en dos lugares:
 
   Una marcada pasa al final y se ve atenuada. La vista previa no copia el archivo —
   `TestRecMarks` (guardas, valores fuera de lista y persistencia).
-- [ ] CA8: `GET /parte` (`?rol=` y `periodo=dia|semana`) muestra un parte por rol:
+- [x] CA8: `GET /parte` (`?rol=` y `periodo=dia|semana`) muestra un parte por rol:
   - **Con `dia`:** junta las recomendaciones de los programas de ayer de los canales
     configurados.
   - **Con `semana`:** junta las de los 7 días anteriores a hoy, con las del mismo
@@ -112,10 +112,10 @@ Se ven en dos lugares:
   - **Caché:** se arma una vez por día local y por rol (caché en memoria con mutex).
 
   Se verifica con `TestParte`.
-- [ ] CA9: `GET /parte.txt` devuelve el mismo parte en texto plano, para copiar. La página
+- [x] CA9: `GET /parte.txt` devuelve el mismo parte en texto plano, para copiar. La página
   tiene CSS de impresión, sin JS propio, y un link "Parte de ayer" desde la pestaña
   Recomendaciones — `TestParte`.
-- [ ] CA10: el ADR `0011` explica las dos capas y qué se manda a Claude. El README suma
+- [x] CA10: el ADR `0011` explica las dos capas y qué se manda a Claude. El README suma
   el costo (~US$ 0,03 por programa con Sonnet 5.5) y los archivos nuevos. AGENTS.md
   incluye el mapa y las reglas de privacidad.
 - [ ] Gates de `CLAUDE.md` → "Definición de terminado" en verde. Navegador: pestaña y

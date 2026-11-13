@@ -11,13 +11,14 @@ privacidad, clasificador, concurrencia) están en `AGENTS.md` y se importan acá
 canales de YouTube (piloto de Alphamedia con Radio Rivadavia). Dos modos con el mismo
 binario: informe puntual (`go run .`) y continuo con dashboard htmx de cinco pantallas:
 En vivo, Programas, Comentarios, Sin vivo y Canales (`-dashboard :8080`).
-No publica, no modera, no usa OAuth. El dashboard escribe en tres puntos, solo desde la PC
+No publica, no modera, no usa OAuth. El dashboard escribe en cuatro puntos, solo desde la PC
 del monitor (`sameOrigin` + `localRequest`): la configuración de canales e intervalos de la
-pantalla Canales, incluida la tarjeta de Claude (`datos.canales.json`, ADR 0005 y 0009), pedir un análisis a Claude (cola)
-y marcar una pregunta agrupada como respondida en En vivo (`datos.respondidas.jsonl`, una marca local).
+pantalla Canales, incluida la tarjeta de Claude (`datos.canales.json`, ADR 0005 y 0009), pedir un análisis a Claude (cola),
+marcar una pregunta agrupada como respondida en En vivo (`datos.respondidas.jsonl`, una marca local)
+y marcar una recomendación como Hecha / No sirve (`datos.recmarcas.jsonl`, ADR 0011).
 Si se activa (`CLAUDE_API_KEY` y un tope > 0, de `-claude-usd` o de Canales), el dashboard
 manda el **texto** de los mensajes de chat (sin autores) a la API de Anthropic para resumir
-cada programa (ADR 0006) y etiquetar el chat en tandas (ADR 0009). Sigue sin escribir en YouTube.
+cada programa (ADR 0006), etiquetar el chat en tandas (ADR 0009) y redactar las recomendaciones por rol (ADR 0011). Sigue sin escribir en YouTube.
 
 ## Comandos exactos
 
@@ -173,7 +174,7 @@ solo, `/factory`.
   toca el dashboard o lo que muestra): `go run ./tools/preview -datos <checkout
   principal>/datos.jsonl` levanta la rama en `http://localhost:8081` con una copia
   temporal de los datos (`datos.jsonl`, `datos.cuota.json`, `datos.espectadores.jsonl`,
-  `datos.vivos.jsonl`, `datos.videos.jsonl`, `datos.likes.jsonl`, `datos.sinvivo.jsonl`, `datos.analisis.jsonl` y `datos.etiquetas.jsonl`; no `datos.claude.json` ni
+  `datos.vivos.jsonl`, `datos.videos.jsonl`, `datos.likes.jsonl`, `datos.sinvivo.jsonl`, `datos.analisis.jsonl`, `datos.etiquetas.jsonl` y `datos.recomendaciones.jsonl`; no `datos.claude.json` ni
   `datos.canales.json`) y una API simulada; `go run ./tools/preview -cortar` la corta y
   borra la copia. Siempre se corta antes de cerrar la tarea.
 - Modelo y esfuerzo fijos en el frontmatter de cada agente (no heredan la sesión):

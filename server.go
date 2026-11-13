@@ -56,6 +56,8 @@ type Server struct {
 	settings                *Settings     // canales e intervalos editables (ADR 0005); nil: Canales en solo lectura
 	answers                 *Answers      // preguntas marcadas como respondidas (F4); nil: sin el botón
 	regs                    regularsCache // habituales por canal, una vez por día (Quiénes participan)
+	recMarks                *RecMarks     // marcas Hecha / No sirve de las recomendaciones; nil: sin botones
+	parteC                  parteCache    // el parte por rol, armado una vez por día
 }
 
 // ChatSettings son los intervalos del chat que usa el worker (WorkerConfig).
@@ -108,6 +110,9 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /parcial/canales/claude/proyeccion", s.channelsClaudeProj)
 	mux.HandleFunc("POST /claude/analizar", s.claudeAnalyze)
 	mux.HandleFunc("POST /preguntas/respondida", s.answerPost)
+	mux.HandleFunc("POST /recomendaciones/marca", s.recMarkPost)
+	mux.HandleFunc("GET /parte", s.partePage)
+	mux.HandleFunc("GET /parte.txt", s.parteText)
 	mux.HandleFunc("GET /export.csv", s.export)
 	mux.Handle("GET /static/", http.FileServerFS(staticFS))
 	return mux

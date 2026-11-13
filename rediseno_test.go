@@ -285,46 +285,6 @@ func TestProgramSupersTab(t *testing.T) {
 	}
 }
 
-// TestProgramRecsTab (spec pestana-recomendaciones): Recomendaciones es la
-// última pestaña de Programas, con el robot de la IA, y por ahora solo dice
-// que viene pronto. El robot no aparece en las pestañas de En vivo.
-func TestProgramRecsTab(t *testing.T) {
-	if k := programTabs[len(programTabs)-1]; k.Key != "recomendaciones" || k.Label != "Recomendaciones" || k.Icon != "robot" {
-		t.Fatalf("la última pestaña es %+v", k)
-	}
-	now := noonToday()
-	day := dayStart(now)
-	_, srv := programServer(t, now, false)
-	h := srv.Routes()
-	keyMan := segmentKey("UC1", Segment{VideoID: "v1", Program: "LA MAÑANA", Start: day.Add(8 * time.Hour)})
-	base := "/parcial/programas?dia=hoy&tramo=" + url.QueryEscape(keyMan)
-	resumen := getBody(h, base)
-	link := from(resumen, `id="tab-recomendaciones"`, "</a>")
-	if link == "" || !strings.Contains(link, "pestana=recomendaciones") || !strings.Contains(link, `class="ico ico-robot"`) || !strings.Contains(link, `aria-hidden="true"`) || !strings.Contains(link, "Recomendaciones") {
-		t.Fatalf("la pestaña con el robot no está bien:\n%s", link)
-	}
-	if strings.Contains(link, `aria-current="page"`) {
-		t.Error("en Resumen, Recomendaciones no está elegida")
-	}
-	body := getBody(h, base+"&pestana=recomendaciones")
-	for _, w := range []string{`id="tab-recomendaciones"`, `aria-current="page"><svg class="ico ico-robot"`, `id="recomendaciones"`, "Próximamente", "Recomendaciones con IA"} {
-		if !strings.Contains(body, w) {
-			t.Errorf("falta %q", w)
-		}
-	}
-	for _, no := range []string{`id="chat-programa"`, "<h3>Resumen del chat", `id="supers"`} {
-		if strings.Contains(body, no) {
-			t.Errorf("la pestaña muestra %q", no)
-		}
-	}
-	if !strings.Contains(getBody(h, "/programas?dia=hoy&pestana=recomendaciones&tramo="+url.QueryEscape(keyMan)), `id="recomendaciones"`) {
-		t.Error("la pantalla entera abre la pestaña desde la URL")
-	}
-	if live := getBody(h, "/"); strings.Contains(live, "ico-robot") {
-		t.Error("el robot aparece en En vivo")
-	}
-}
-
 // TestProgramAudienceLayout (CA7): el gráfico de segmentos a la izquierda, la
 // tabla a la derecha y Cohortes debajo.
 func TestProgramAudienceLayout(t *testing.T) {

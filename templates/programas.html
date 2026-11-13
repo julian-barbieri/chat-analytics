@@ -147,12 +147,7 @@
     {{else}}<p class="muted">Sin Super Chats ni Super Stickers en este programa.</p>{{end}}
     <p class="muted">{{.SupersNote}}</p>
   </section>
-  {{else if eq .Tab "recomendaciones"}}<section id="recomendaciones" class="inner recs" aria-labelledby="recs-h">
-    {{/* Por ahora solo el lugar (pestana-recomendaciones): no se manda nada a Claude. */}}
-    <h3 id="recs-h">Recomendaciones con IA <span class="ia">Próximamente</span></h3>
-    <p>Acá van a aparecer recomendaciones para este programa, armadas con IA a partir de su chat: qué temas sumar, qué preguntas conviene responder al aire y en qué momentos se engancha más la audiencia.</p>
-    <p class="muted">Todavía no está disponible: por ahora no se manda nada a Claude desde esta pestaña.</p>
-  </section>
+  {{else if eq .Tab "recomendaciones"}}{{template "recs" .Recs}}
   {{else}}{{template "prog-chat" .Chat}}{{end}}
 {{else}}<p class="muted">Ese programa ya no está guardado.</p>{{end}}
 </section>
@@ -309,3 +304,28 @@ el tipo y el monto adelante. */}}
     </div>
   </div>
 {{end}}
+
+{{/* Pestaña Recomendaciones (recomendaciones-por-rol): una tarjeta por
+recomendación, la más importante primero y las marcadas al final. El filtro
+"Para quién" son links que piden el parcial con rol (lista cerrada). Las
+marcas responden la sección entera. */}}
+{{define "recs"}}<section id="recomendaciones" class="inner recs" aria-labelledby="recs-h">
+  <div class="chead"><h3 id="recs-h">Recomendaciones {{if .Claude}}<span class="ia">Claude</span>{{else}}<span class="chip">por reglas</span>{{end}}</h3><a class="btn btn-s" href="{{.Parte}}">Parte de ayer</a></div>
+  <nav class="vbtns rroles" aria-label="Para quién">{{range .Roles}}<a class="seg" href="{{.Page}}" hx-get="{{.Partial}}" hx-target="#programas" hx-swap="outerHTML" hx-push-url="{{.Page}}" hx-sync="#programas:replace"{{if .On}} aria-current="page"{{end}}>{{.Label}}</a>{{end}}</nav>
+  <p class="muted">{{if .Claude}}Redactadas por Claude cuando terminó el programa, a partir de lo que calculó el monitor: los números y los mensajes de cada una salen del monitor.{{else}}Por reglas, con textos fijos. Con Claude prendido, se redactan solas cuando termina el programa. Los números y los mensajes salen del monitor.{{end}}</p>
+  {{with .Empty}}<p class="muted">{{.}}</p>{{end}}
+  {{with .Cards}}<ul class="rlist">{{range .}}{{template "rec-card" .}}{{end}}</ul>{{end}}
+</section>{{end}}
+
+{{define "rec-card"}}<li class="rec {{.Prio}}{{with .State}} {{.}}{{end}}">
+  <div class="rhead"><span class="rrol">{{.RoleLabel}}</span><span class="rprio">Prioridad {{.Prio}}</span>{{if .Claude}}<span class="ia">Claude</span>{{end}}{{with .StateLabel}}<span class="chip">{{.}}</span>{{end}}</div>
+  <h4>{{.Title}}</h4>
+  <p>{{.Action}}</p>
+  <p class="muted rfacts">{{.Facts}}</p>
+  {{with .Href}}<p><a href="{{.}}" target="_blank" rel="noopener">Abrir el momento en YouTube</a>{{with $.Hint}} <span class="muted">{{.}}</span>{{end}}</p>{{end}}
+  {{if .Key}}<details class="plegable rmsgs"{{if .Fold.Open}} open{{end}}>{{template "pf-summary" .}}Ver {{plural .N "mensaje" "mensajes"}}</summary>{{if .Fold.Open}}{{template "fold-msgs" .List}}{{end}}</details>{{end}}
+  {{if .Marks}}<form class="racts" hx-post="/recomendaciones/marca" hx-target="#recomendaciones" hx-swap="outerHTML">{{range .Hidden}}<input type="hidden" name="{{.Name}}" value="{{.Value}}">{{end}}
+    {{if .State}}<button type="submit" class="btn btn-s" name="estado" value="deshacer">Deshacer</button>
+    {{else}}<button type="submit" class="btn btn-s" name="estado" value="hecha">Hecha</button><button type="submit" class="btn btn-s" name="estado" value="nosirve">No sirve</button>{{end}}
+  </form>{{end}}
+</li>{{end}}
