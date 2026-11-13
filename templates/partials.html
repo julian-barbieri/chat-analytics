@@ -95,7 +95,7 @@
 {{template "tabs" .Tabs}}
 
 {{/* Cada pestaña muestra solo lo suyo; el chat (#chat) va aparte y en Ahora
-     el CSS lo pone a la izquierda de Sentimiento y Preguntas. */}}
+     el CSS lo pone a lo ancho entre las tarjetas de arriba y Sentimiento. */}}
 {{if eq .Pestana ""}}
 {{with .Alertas}}<section id="alertas" class="card" aria-labelledby="alertas-h">
   <div class="chead"><h2 id="alertas-h">Alertas</h2><span class="chip">Claude</span></div>
@@ -117,6 +117,8 @@
   {{if .Off}}<p class="muted">{{.Off}}</p>
   {{else if .Empty}}<p class="muted">{{.Empty}}</p>
   {{else}}
+  <div class="sgrid">
+  <div class="sclima">
   {{with .View}}
   {{if .Banner}}<div class="cartel warn"><strong>{{.Banner}}</strong></div>{{end}}
   {{/* Clima del chat: el tono que más pesa en grande y la barra apilada con los mismos %. */}}
@@ -127,17 +129,14 @@
   </div>{{else}}<p class="muted">Sin mensajes analizados en los últimos 5 min.</p>{{end}}
   <p class="muted">{{.Typical}}</p>
   {{end}}
+  </div>
+  <div class="sgraf">
   {{with .Chart}}<h3>Cómo fue cambiando · cada 5 min</h3>
   {{/* Cada barra pide el análisis con su franja: abajo aparecen sus mensajes. */}}
   {{/* Con todo el día cada franja mide lo mismo que con el programa en curso
        (Px) y el gráfico se desplaza; direction: rtl hace que arranque en ahora. */}}
   {{with .Px}}<div class="sscroll"><div class="sfijo" style="width: {{.}}px">{{end}}
-  <div class="schart{{if .Sel}} has-sel{{end}}">
-    <svg viewBox="0 0 {{.W}} 100" preserveAspectRatio="none" role="group" aria-label="{{.Aria}}">
-      {{range .Bars}}<a class="sbar{{if .Sel}} sel{{end}}" href="#sent-detalle" hx-get="{{.Href}}" hx-sync="closest #vivo-analisis:replace" hx-target="#vivo-analisis" hx-swap="outerHTML" aria-label="{{.Label}}. Ver los mensajes"><title>{{.Label}}</title>{{if .Low}}<rect class="low" x="{{.X}}" y="0" width="{{.W}}" height="100"></rect>{{else}}<rect class="neg" x="{{.X}}" y="0" width="{{.W}}" height="{{.NegH}}"></rect><rect class="neu" x="{{.X}}" y="{{.NeuY}}" width="{{.W}}" height="{{.NeuH}}"></rect><rect class="pos" x="{{.X}}" y="{{.PosY}}" width="{{.W}}" height="{{.PosH}}"></rect>{{end}}</a>
-      {{end}}{{range .Lines}}<line class="corte" x1="{{.X}}" x2="{{.X}}" y1="0" y2="100" vector-effect="non-scaling-stroke"></line>{{end}}
-    </svg>
-  </div>
+  {{template "sent-bars" .}}
   {{if .Strip}}<div class="sprogs" aria-hidden="true">{{range .Strip}}<span class="sprog" style="left: {{printf "%.2f" .Left}}%; width: {{printf "%.2f" .Width}}%" title="{{.Range}} · {{.Name}}">{{.Name}}</span>{{end}}</div>{{end}}
   <div class="pticks" aria-hidden="true">{{range .Ticks}}<span{{if .End}} class="end"{{end}} style="left: {{printf "%.2f" .Left}}%">{{.Label}}</span>{{end}}</div>
   {{if .Px}}</div></div>{{end}}
@@ -145,14 +144,26 @@
   <p class="muted leyenda"><span class="sw pos" aria-hidden="true"></span> Positivo <span class="sw neu" aria-hidden="true"></span> Neutro <span class="sw neg" aria-hidden="true"></span> Negativo <span class="sw low" aria-hidden="true"></span> Menos de 5 mensajes: sin color</p>
   {{if not .Sel}}<p class="muted">Tocá una barra para ver sus mensajes.</p>{{end}}
   {{end}}
+  </div>
+  </div>
   {{with .Slot}}<section id="sent-detalle" class="inner sdet" aria-labelledby="sent-detalle-h">
     <div class="chead"><h3 id="sent-detalle-h">{{.Title}}</h3><button type="button" class="btn btn-s cerrar" hx-get="{{.Close}}" hx-sync="closest #vivo-analisis:replace" hx-target="#vivo-analisis" hx-swap="outerHTML">Cerrar</button></div>
     <div class="vbtns" role="group" aria-label="Qué mensajes ver">{{range .Tabs}}<button type="button" id="sent-{{.Key}}" class="seg" hx-get="{{.Href}}" hx-sync="closest #vivo-analisis:replace" hx-target="#vivo-analisis" hx-swap="outerHTML" aria-pressed="{{.On}}">{{.Label}}</button>{{end}}</div>
     {{if .Empty}}<p class="muted">{{.Empty}}</p>{{else}}{{template "fold-msgs" .List}}{{end}}
   </section>{{end}}
-  <div class="vbtns mwin" role="group" aria-label="Período de los motivos">{{range .Wins}}<button type="button" id="mot-{{.Key}}" class="vbtn" aria-pressed="{{.On}}"
-    hx-get="{{.Href}}" hx-target="#vivo-analisis" hx-swap="outerHTML">{{.Label}}</button>{{end}}</div>
-  <div class="grid2">
+  {{end}}
+</section>{{end}}{{end}}
+
+{{/* Motivos y preguntas en tres columnas, con una sola ventana (Últimos 5 min,
+     30 min, 1 h, todo el programa) para los tres. Sin Claude, solo las
+     preguntas por reglas, sin ventana. */}}
+<section id="motivos" class="card" aria-labelledby="motivos-h">
+  {{$mot := and .Canal .Sent (not .Sent.Off) (not .Sent.Empty)}}
+  <div class="chead"><h2 id="motivos-h">Qué dice el chat</h2>
+  {{if $mot}}{{with .Sent}}<div class="vbtns mwin" role="group" aria-label="Período de los motivos y las preguntas">{{range .Wins}}<button type="button" id="mot-{{.Key}}" class="vbtn" aria-pressed="{{.On}}"
+    hx-get="{{.Href}}" hx-target="#vivo-analisis" hx-swap="outerHTML">{{.Label}}</button>{{end}}</div>{{end}}{{end}}</div>
+  <div class="mcols">
+  {{if $mot}}{{with .Sent}}
     <div class="inner">
       <h3>Por qué hay mensajes negativos</h3>
       <p class="muted">{{plural .NegN "negativo" "negativos"}} {{.When}}</p>
@@ -163,12 +174,11 @@
       <p class="muted">{{plural .PosN "positivo" "positivos"}} {{.When}}</p>
       {{template "motivos" .Pos}}
     </div>
+  {{end}}{{end}}
+  {{template "vivo-preguntas" .}}
   </div>
-  <p class="muted">Lo arma Claude con las tandas: puede equivocarse con la ironía o el lunfardo. Los motivos son de Claude; las citas, mensajes del chat sin el autor.</p>
-  {{end}}
-</section>{{end}}{{end}}
-
-{{template "vivo-preguntas" .}}
+  {{if $mot}}<p class="muted">Lo arma Claude con las tandas: puede equivocarse con la ironía o el lunfardo. Los motivos son de Claude; las citas, mensajes del chat sin el autor.</p>{{end}}
+</section>
 {{else if eq .Pestana "momentos"}}
 {{with .Part}}<section id="momentos" class="card" aria-labelledby="momentos-h">
   <h2 id="momentos-h">Momentos con más participación (para reels)</h2>
@@ -215,11 +225,10 @@
 {{else if eq .Pestana "temas"}}
 {{template "claude-card" .Claude}}
 
-{{/* De qué se habla es la misma tarjeta que Programas, con el mismo alcance que el resto del análisis. */}}
-<div class="grid2 tstart">
-  {{template "categorias" .}}
+{{/* Categorías a lo ancho, con el detalle de la elegida al costado; debajo
+     De qué se habla, la misma tarjeta que Programas, con el mismo alcance. */}}
+{{template "categorias" .}}
 {{with .Monitor}}{{template "talk" $.Talk}}{{end}}
-</div>
 {{end}}
 {{else}}<p class="muted">Este vivo ya no está en la lista de videos.</p>{{end}}
 </div>
@@ -250,6 +259,15 @@
 {{end}}</div>
 {{end}}
 
+{{/* Barras de sentimiento cada 5 min (SentChart), las mismas en En vivo y
+     Programas: cada una pide su franja a Target. */}}
+{{define "sent-bars"}}{{$c := .}}<div class="schart{{if .Sel}} has-sel{{end}}">
+    <svg viewBox="0 0 {{.W}} 100" preserveAspectRatio="none" role="group" aria-label="{{.Aria}}">
+      {{range .Bars}}<a{{with .ID}} id="{{.}}"{{end}} class="sbar{{if .Sel}} sel{{end}}" href="{{$c.Anchor}}" hx-get="{{.Href}}" hx-sync="{{$c.Sync}}" hx-target="{{$c.Target}}" hx-swap="outerHTML" aria-label="{{.Label}}. Ver los mensajes"><title>{{.Label}}</title>{{if .Low}}<rect class="low" x="{{.X}}" y="0" width="{{.W}}" height="100"></rect>{{else}}<rect class="neg" x="{{.X}}" y="0" width="{{.W}}" height="{{.NegH}}"></rect><rect class="neu" x="{{.X}}" y="{{.NeuY}}" width="{{.W}}" height="{{.NeuH}}"></rect><rect class="pos" x="{{.X}}" y="{{.PosY}}" width="{{.W}}" height="{{.PosH}}"></rect>{{end}}</a>
+      {{end}}{{range .Lines}}<line class="corte" x1="{{.X}}" x2="{{.X}}" y1="0" y2="100" vector-effect="non-scaling-stroke"></line>{{end}}
+    </svg>
+  </div>{{end}}
+
 {{/* "De qué se habla", la misma en En vivo (Card: tarjeta con <h2>, los temas
      se despliegan en #vivo-analisis) y en Programas (recuadro con <h3>, en
      #programas con pf-summary): temas arriba, de Claude si hay un análisis del
@@ -257,6 +275,8 @@
      repetidas abajo. */}}
 {{define "talk"}}<section id="palabras" class="{{if .Card}}card{{else}}inner{{end}} talk" aria-labelledby="palabras-h">
   <div class="chead">{{if .Card}}<h2 id="palabras-h">De qué se habla</h2>{{else}}<h3 id="palabras-h">De qué se habla</h3>{{end}}<span class="muted">{{plural .Total "mensaje" "mensajes"}}</span></div>
+  {{/* Temas y palabras: dos columnas en la tarjeta de En vivo, una abajo de la otra en Programas. */}}
+  <div class="tcols2"><div>
   {{if .Claude}}{{if .Card}}<h3 class="lbl">{{else}}<h4 class="lbl">{{end}}Temas de conversación <span class="ia">Claude</span>{{if .Card}}</h3>{{else}}</h4>{{end}}
   {{range .Claude}}{{if .Key}}<details class="plegable"{{if .Fold.Open}} open{{end}}>{{if $.Card}}<summary id="plegar-{{.Key}}" hx-get="{{.Fold.Href}}" hx-sync="closest #vivo-analisis:replace" hx-target="#vivo-analisis" hx-swap="outerHTML">{{else}}{{template "pf-summary" .}}{{end}}{{.Text}} · {{.Count}}</summary>
     {{template "fold-msgs" .List}}
@@ -266,10 +286,12 @@
   {{if .Rules}}<ol class="wlist">{{range .Rules}}<li class="wrow" title="{{.Label}}: {{plural .N "mensaje" "mensajes"}}"><span class="wk">{{.Label}}</span><span class="wtrack"><span class="wbar" style="width: {{printf "%.0f" .Pct}}%"></span></span><span class="num">{{miles .N}}</span></li>{{end}}</ol>
   {{else}}<p class="muted">Todavía no hay temas: por reglas solo se juntan las palabras que van casi siempre juntas (como «dólar blue»).</p>{{end}}
   {{with .RulesNote}}<p class="muted">{{.}}</p>{{end}}{{end}}
+  </div><div>
   {{if .Card}}<h3 class="lbl">{{else}}<h4 class="lbl">{{end}}Palabras más repetidas{{with .Of}} {{.}}{{end}}{{if .Card}}</h3>{{else}}</h4>{{end}}
   {{if .Words}}<div class="words">{{range .Words}}<span>{{.Key}} <span class="muted">{{miles .N}}</span>{{if .Up}} <span class="wup" title="En alza en la última media hora">▲</span>{{end}}</span>{{end}}</div>
   {{if .AnyUp}}<p class="muted">▲ En alza: en la última media hora aparece el doble que antes.</p>{{end}}
   {{else}}<p class="muted">Sin datos todavía</p>{{end}}
+  </div></div>
 </section>{{end}}
 
 {{/* Resumen de Claude (009). El botón responde esta misma tarjeta (hx-target="#claude-card"); el resto se refresca con el análisis cada 30 s. */}}
@@ -377,21 +399,23 @@ cada grupo se despliega con sus preguntas. */}}
       {{template "fold-msgs" .List}}
     </details>{{else}}<div>{{template "qrow" .}}</div>{{end}}
   </li>{{end}}
-{{define "vivo-preguntas"}}<section id="preguntas" class="card" aria-labelledby="preguntas-h">
+{{define "vivo-preguntas"}}<section id="preguntas" class="inner" aria-labelledby="preguntas-h">
   {{with .QG}}{{if .ByRules}}
-  <div class="chead"><h2 id="preguntas-h">Preguntas para producción</h2><span class="chip">por reglas</span></div>
+  <h3 id="preguntas-h">Preguntas para producción <span class="chip">por reglas</span></h3>
   <ul class="qlist">{{range $.A.Questions}}<li>
     <div class="meta"><strong>{{.Author}}</strong> · {{fecha .At}}{{if .Likes}} · {{.Likes}} likes{{end}}</div>
     <div>{{.Text}}</div>
   </li>{{else}}<li class="muted">Sin preguntas todavía.</li>{{end}}</ul>
   <p class="muted">Para agruparlas, Claude tiene que estar analizando este canal en tandas (ver Canales). Para borradores de respuesta, descargá el CSV y usá el pedido del README.</p>
   {{else}}
-  <div class="chead"><h2 id="preguntas-h">Preguntas agrupadas <span class="ia">Claude</span></h2><span class="muted">{{.Header}}</span></div>
+  <h3 id="preguntas-h">Preguntas agrupadas <span class="ia">Claude</span></h3>
+  <p class="muted">{{.Header}}</p>
   {{if .Top}}<ul class="qlist qgroups">{{range .Top}}{{template "qgrupo" .}}{{end}}</ul>
   {{if .Rest}}<details class="plegable"{{if .Fold.Open}} open{{end}}>
     <summary id="plegar-maspreguntas" hx-get="{{.Fold.Href}}" hx-sync="closest #vivo-analisis:replace" hx-target="#vivo-analisis" hx-swap="outerHTML">Ver {{len .Rest}} más</summary>
     <ul class="qlist qgroups">{{range .Rest}}{{template "qgrupo" .}}{{end}}</ul>
   </details>{{end}}
+  {{else if and .All .When}}<p class="muted">Sin preguntas agrupadas {{.When}}. Elegí un período más largo para ver las demás.</p>
   {{else}}<p class="muted">Claude todavía no agrupó preguntas en este alcance.</p>{{end}}
   <p class="muted">Agrupadas por Claude en las tandas; las cantidades las cuenta el monitor.</p>
   {{end}}{{end}}

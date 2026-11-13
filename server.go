@@ -466,9 +466,10 @@ func keepView(q url.Values) (hours, open, motives, tab string) {
 	return hours, foldValue(foldParam(q)), motiveParam(q), liveTabParam(q)
 }
 
-// motiveWindows son las ventanas de "Por qué hay mensajes negativos" y "Qué
-// está gustando": la clave del parámetro "motivos", su texto y cuánto mira
-// (0: todo el programa o todo el día). Lista cerrada, como "abrir".
+// motiveWindows son las ventanas de "Por qué hay mensajes negativos", "Qué
+// está gustando" y "Preguntas agrupadas" (rediseno-envivo-programas): la
+// clave del parámetro "motivos", su texto y cuánto mira (0: todo el
+// programa o todo el día). Lista cerrada, como "abrir".
 var motiveWindows = []struct {
 	Key, Label, When string
 	Span             time.Duration
@@ -477,6 +478,27 @@ var motiveWindows = []struct {
 	{"30", "30 min", "en los últimos 30 min", 30 * time.Minute},
 	{"60", "1 h", "en la última hora", time.Hour},
 	{"programa", "Todo el programa", "en todo el programa", 0},
+}
+
+// motiveSince es desde cuándo mira la ventana elegida ("" son los últimos 5
+// min) y su texto. La comparten los motivos y "Preguntas agrupadas". whole
+// dice que es todo el alcance (todo el programa o todo el día): las
+// preguntas no se filtran, porque los mensajes del programa arrancan
+// segmentLead antes de ls.start y el número de arriba los cuenta.
+func motiveSince(ls liveScope, motives string, now time.Time) (since time.Time, when string, whole bool) {
+	for _, mw := range motiveWindows {
+		if mw.Key != motives && !(mw.Key == "5" && motives == "") {
+			continue
+		}
+		if mw.Span > 0 {
+			return now.Add(-mw.Span), mw.When, false
+		}
+		if ls.prog == "" {
+			return dayStart(now), "en todo el día", true
+		}
+		return ls.start, mw.When, true
+	}
+	return now.Add(-slotStep), motiveWindows[0].When, false
 }
 
 // motiveParam es la ventana de los motivos pedida; "" son los últimos 5 min
@@ -1183,14 +1205,18 @@ func (s *Server) channelAnalysis(w http.ResponseWriter, snap Snapshot, ch Channe
 	}
 	data["Alertas"] = alertsData(Alerts(ls.msgs, labels, now), fold)
 	data["Sent"] = s.sentimentData(snap, ch, ls, labels, now, motives, fold, sel)
-	qg := s.questionsData(snap, ls, labels, fold)
+	since, when, whole := motiveSince(ls, motives, now)
+	if whole {
+		since = time.Time{}
+	}
+	qg := s.questionsData(snap, ls, labels, fold, since, when)
 	data["QG"] = qg
 	if !qg.ByRules {
-		// El tile cuenta lo mismo que "Preguntas agrupadas": con dos números
-		// distintos para lo mismo, la persona no sabía cuál creer.
+		// El tile cuenta las mismas preguntas que "Preguntas agrupadas", pero
+		// de todo el alcance: la tarjeta se puede mirar en otra ventana.
 		for i, t := range data["Tiles"].([]Tile) {
 			if t.Label == "Preguntas" {
-				data["Tiles"].([]Tile)[i] = Tile{"Preguntas", miles(qg.N), "agrupadas por Claude", ""}
+				data["Tiles"].([]Tile)[i] = Tile{"Preguntas", miles(qg.All), "agrupadas por Claude", ""}
 			}
 		}
 	}
@@ -1398,21 +1424,16 @@ func (s *Server) sentimentData(snap Snapshot, ch ChannelStatus, ls liveScope, la
 		byID[m.ID] = m
 	}
 	d := SentData{Chart: sentimentChart(chart, ls.segs, chartFrom, now)}
+	d.Chart.Target, d.Chart.Sync, d.Chart.Anchor = "#vivo-analisis", "closest #vivo-analisis:replace", "#sent-detalle"
 	s.slotLinks(&d, ls, fold, sel)
-	since := now.Add(-slotStep)
+	since, when, _ := motiveSince(ls, motives, now)
+	d.When = when
 	for _, mw := range motiveWindows {
-		key, label, when := mw.Key, mw.Label, mw.When
-		start := now.Add(-mw.Span)
-		if mw.Span == 0 {
-			start = ls.start
-			if ls.prog == "" {
-				label, when, start = "Todo el día", "en todo el día", dayStart(now)
-			}
+		key, label := mw.Key, mw.Label
+		if mw.Span == 0 && ls.prog == "" {
+			label = "Todo el día"
 		}
 		on := key == motives || key == "5" && motives == ""
-		if on {
-			since, d.When = start, when
-		}
 		q := maps.Clone(fold.Query)
 		q.Del("motivos")
 		if key != "5" {
@@ -1593,7 +1614,9 @@ func motiveFolds(rows []MotiveRow, prefix string, fold foldState) []MotiveRow {
 // Claude o sin etiquetas, la lista por reglas de siempre.
 type QGData struct {
 	ByRules   bool
-	N         int // preguntas en grupos: la suma de las cantidades
+	N         int    // preguntas en grupos de la ventana: la suma de las cantidades
+	All       int    // lo mismo en todo el alcance, para el número de arriba
+	When      string // el texto de la ventana: "en los últimos 5 min"
 	Header    string
 	Top, Rest []QGRow // las qgTop primeras a la vista; el resto, plegado
 	Fold      Fold    // "Ver N más": sigue abierto después del refresco
@@ -1613,9 +1636,11 @@ type QGRow struct {
 // el resto de la pantalla.
 const qgTop = 5
 
-// questionsData arma "Preguntas agrupadas". Sin botones: "Respondida" se
-// sigue mostrando si había una marca guardada, pero ya no se ofrece marcar.
-func (s *Server) questionsData(snap Snapshot, ls liveScope, labels map[string]MessageLabel, fold foldState) QGData {
+// questionsData arma "Preguntas agrupadas" con los mensajes desde since
+// (cero: todo el alcance) y when, el texto de la ventana. Sin botones:
+// "Respondida" se sigue mostrando si había una marca guardada, pero ya no se
+// ofrece marcar.
+func (s *Server) questionsData(snap Snapshot, ls liveScope, labels map[string]MessageLabel, fold foldState, since time.Time, when string) QGData {
 	if !s.claudeActive(snap) || len(labels) == 0 {
 		return QGData{ByRules: true}
 	}
@@ -1625,8 +1650,22 @@ func (s *Server) questionsData(snap Snapshot, ls liveScope, labels map[string]Me
 			gids = append(gids, l.Group)
 		}
 	}
-	rows, n := questionGroups(ls.msgs, labels, s.st.Groups(gids), s.answers.Answered)
-	d := QGData{N: n, Header: plural(n, "pregunta", "preguntas") + " · " + plural(len(rows), "grupo", "grupos"), Fold: fold.link("maspreguntas")}
+	groups := s.st.Groups(gids)
+	_, all := questionGroups(ls.msgs, labels, groups, s.answers.Answered)
+	msgs := ls.msgs
+	if !since.IsZero() {
+		msgs = nil
+		for _, m := range ls.msgs {
+			if !m.At.Before(since) {
+				msgs = append(msgs, m)
+			}
+		}
+	}
+	rows, n := questionGroups(msgs, labels, groups, s.answers.Answered)
+	d := QGData{N: n, All: all, When: when, Header: plural(n, "pregunta", "preguntas") + " · " + plural(len(rows), "grupo", "grupos"), Fold: fold.link("maspreguntas")}
+	if when != "" {
+		d.Header += " " + when
+	}
 	for i, r := range rows {
 		row := QGRow{QGroupRow: r, Count: miles(r.N)}
 		if i < qgFolds {
@@ -1634,7 +1673,7 @@ func (s *Server) questionsData(snap Snapshot, ls liveScope, labels map[string]Me
 			row.Fold = fold.link(row.Key)
 			if row.Fold.Open {
 				var in []Message
-				for _, m := range ls.msgs {
+				for _, m := range msgs {
 					if labels[m.ID].Group == r.ID {
 						in = append(in, m)
 					}
@@ -1694,7 +1733,7 @@ func (s *Server) answerPost(w http.ResponseWriter, r *http.Request) {
 	}
 	ls := s.channelScope(snap, ch, r.PostForm.Get("video"), now)
 	labels := s.st.Labels(messageIDs(ls.msgs))
-	s.render(w, "vivo-preguntas", map[string]any{"QG": s.questionsData(snap, ls, labels, foldState{}), "A": Analyze(ls.msgs)})
+	s.render(w, "vivo-preguntas", map[string]any{"QG": s.questionsData(snap, ls, labels, foldState{}, time.Time{}, ""), "A": Analyze(ls.msgs)})
 }
 
 // claudeLine es la línea de Claude debajo del selector: hasta dónde

@@ -470,6 +470,7 @@ type SentStack struct {
 	Label            string
 	Start            time.Time // inicio de la franja: el clic pide sus mensajes
 	Href             string    // lo arma el servidor, con la consulta del análisis
+	ID               string    // en Programas, para dejar el foco en la barra tocada
 	Sel              bool      // la franja desplegada abajo
 }
 
@@ -494,6 +495,9 @@ type SentChart struct {
 	Ticks []Tick
 	Aria  string
 	Sel   bool // hay una franja elegida: las otras barras se atenúan
+	// A dónde va el clic de una barra: En vivo pide el análisis y Programas
+	// la pantalla, con el ancla donde sale el detalle.
+	Target, Sync, Anchor string
 }
 
 // sentimentChart arma el gráfico desde from (alineado a 5 min) hasta now con

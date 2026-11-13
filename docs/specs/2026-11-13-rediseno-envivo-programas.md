@@ -1,6 +1,6 @@
 # Spec: rediseño de En vivo y Programas
 
-- **Estado:** aprobada
+- **Estado:** implementada
 - **Tipo:** mejora
 - **Rama:** `feat/rediseno-envivo-programas`
 - **Origen:** pedido del usuario con capturas; diseño aprobado en https://claude.ai/artifact/3MuSJa3AXYKoAWHDeZa3Xx (5 pantallas)
@@ -19,16 +19,16 @@ Que las cuatro pantallas queden como en el diseño aprobado, sin datos nuevos, s
 
 ## Criterios de aceptación
 
-- [ ] **CA1 En vivo › Ahora:** el orden del HTML es Alertas → `#chat` a todo el ancho (una fila por mensaje: categoría, autor, hora y texto) → `#sentimiento` (el clima a la izquierda y "Cómo fue cambiando" a la derecha) → una sección nueva `#motivos`. Esa sección tiene el filtro (`mot-5`, `mot-30`, `mot-60`, `mot-programa`) y, en tres columnas, Negativos, Qué está gustando y `#preguntas`. Los motivos ya no van dentro de `#sentimiento`. — `TestLiveNowLayout`
-- [ ] **CA2 Preguntas con período:** "Preguntas agrupadas" cuenta solo los mensajes de la ventana elegida (por defecto, los últimos 5 min; con "Todo el programa", o "Todo el día" sin vivo, todo el alcance como hoy). El encabezado lo dice ("… en los últimos 30 min"). Un `motivos` fuera de la lista no se refleja. El número "Preguntas" de arriba sigue contando todo el alcance. Lo plegado (`qg1…`, `maspreguntas`) conserva `motivos`. — `TestQuestionsWindow`
-- [ ] **CA3 Sin Claude:** sin tandas, `#motivos` muestra solo las preguntas por reglas, sin filtro, como hoy. — `TestQuestionsWindow` (caso apagado)
-- [ ] **CA4 En vivo › De qué se habla:** en `#categorias`, el semicírculo y su lista van a la izquierda y `#cat-detalle` a la derecha (en celular, apilados). `#palabras` va debajo, a todo el ancho, con temas y palabras en dos columnas. La tarjeta de Programas › Conversación no cambia. — `TestLiveTopicsLayout` + navegador
-- [ ] **CA5 Programas › Resumen:** el orden es Resumen del chat → Participación → Sentimiento del programa → los dos motivos lado a lado. El sentimiento son barras verticales apiladas (`.schart`, como En vivo), con el promedio arriba. Cada barra abre su franja como la fila de hoy (`desde=sent&franja=…`) y la elegida queda marcada. En Resumen no hay `#supers`. — `TestProgramSummaryLayout`
-- [ ] **CA6 Programas › Super Chats:** la pestaña nueva `supers` es la **última** de `programTabs` (después de Chat del programa) y aparece aunque no haya pagos. Muestra el total por moneda, la tabla por moneda y la lista de pagos del programa. Sin pagos dice "Sin Super Chats ni Super Stickers en este programa.". — `TestProgramSupersTab`
-- [ ] **CA7 Programas › Audiencia:** en Segmentos por asistencia, el `segflow` va a la izquierda y su tabla a la derecha. Cohortes va después, a todo el ancho. — `TestProgramAudienceLayout`
+- [x] **CA1 En vivo › Ahora:** el orden del HTML es Alertas → `#chat` a todo el ancho (una fila por mensaje: categoría, autor, hora y texto) → `#sentimiento` (el clima a la izquierda y "Cómo fue cambiando" a la derecha) → una sección nueva `#motivos`. Esa sección tiene el filtro (`mot-5`, `mot-30`, `mot-60`, `mot-programa`) y, en tres columnas, Negativos, Qué está gustando y `#preguntas`. Los motivos ya no van dentro de `#sentimiento`. — `TestLiveNowLayout`
+- [x] **CA2 Preguntas con período:** "Preguntas agrupadas" cuenta solo los mensajes de la ventana elegida (por defecto, los últimos 5 min; con "Todo el programa", o "Todo el día" sin vivo, todo el alcance como hoy). El encabezado lo dice ("… en los últimos 30 min"). Un `motivos` fuera de la lista no se refleja. El número "Preguntas" de arriba sigue contando todo el alcance. Lo plegado (`qg1…`, `maspreguntas`) conserva `motivos`. — `TestQuestionsWindow`
+- [x] **CA3 Sin Claude:** sin tandas, `#motivos` muestra solo las preguntas por reglas, sin filtro, como hoy. — `TestQuestionsWindow` (caso apagado)
+- [x] **CA4 En vivo › De qué se habla:** en `#categorias`, el semicírculo y su lista van a la izquierda y `#cat-detalle` a la derecha (en celular, apilados). `#palabras` va debajo, a todo el ancho, con temas y palabras en dos columnas. La tarjeta de Programas › Conversación no cambia. — `TestLiveTopicsLayout` + navegador
+- [x] **CA5 Programas › Resumen:** el orden es Resumen del chat → Participación → Sentimiento del programa → los dos motivos lado a lado. El sentimiento son barras verticales apiladas (`.schart`, como En vivo), con el promedio arriba. Cada barra abre su franja como la fila de hoy (`desde=sent&franja=…`) y la elegida queda marcada. En Resumen no hay `#supers`. — `TestProgramSummaryLayout`
+- [x] **CA6 Programas › Super Chats:** la pestaña nueva `supers` es la **última** de `programTabs` (después de Chat del programa) y aparece aunque no haya pagos. Muestra el total por moneda, la tabla por moneda y la lista de pagos del programa. Sin pagos dice "Sin Super Chats ni Super Stickers en este programa.". — `TestProgramSupersTab`
+- [x] **CA7 Programas › Audiencia:** en Segmentos por asistencia, el `segflow` va a la izquierda y su tabla a la derecha. Cohortes va después, a todo el ancho. — `TestProgramAudienceLayout`
 - [ ] **CA8:** las cinco pantallas con datos, vistas en la vista previa en claro, oscuro y ancho de celular.
-- [ ] **CA9:** AGENTS.md (pestañas de Programas, layout de Ahora) y README (Resumen, pestaña Super Chats, preguntas con período) actualizados.
-- [ ] Gates de `CLAUDE.md` → "Definición de terminado" en verde.
+- [x] **CA9:** AGENTS.md (pestañas de Programas, layout de Ahora) y README (Resumen, pestaña Super Chats, preguntas con período) actualizados.
+- [x] Gates de `CLAUDE.md` → "Definición de terminado" en verde.
 
 ## Diseño propuesto
 
@@ -39,7 +39,7 @@ Que las cuatro pantallas queden como en el diseño aprobado, sin datos nuevos, s
 - **Categorías de En vivo:** se usa un CSS limitado a `#vivo #categorias`. `.cgauge` pasa a ser un grid de 2 columnas (`.gwrap` en columna a la izquierda y `.gdet` a la derecha). En la pestaña temas se saca `.grid2` y `#palabras` va a todo el ancho, con temas y palabras en dos columnas.
 - **Programas Resumen:**
   - Se reordena `programa-detalle` en una sola columna y se sacan `.tcols`, `.tmain` y `.tside` si quedan sin uso.
-  - `programSentiment` arma también un `SentChart` (reusa `sentimentChart` con las franjas del tramo), y el `Href` de cada barra sale de `programSlotLinks` igual que las filas.
+  - `programSentiment` arma un `SentChart` con `programSentChart`, en lugar de las filas `SentRows`. Es una función aparte de `sentimentChart` porque el eje va del inicio al fin del tramo y no hasta "ahora". El `Href` y el `id` (`sf-…`) de cada barra salen de `programSlotLinks`, igual que antes en las filas.
   - Las barras del gráfico se sacan de En vivo a una plantilla común `sent-bars`, con su `hx-target`.
 - **Pestaña Super Chats:** se agrega `{"supers", "Super Chats"}` al final de `programTabs` y se mueve `#supers` de Resumen a `{{else if eq .Tab "supers"}}`, en el formato de En vivo (`.sbigs`, tabla y lista). Se refresca cada 60 s como el resto (no es Chat).
 - **Audiencia:** se arma un contenedor `.segcols` (grid `minmax(0,440px) 1fr`) para el `segflow` y la tabla, y Cohortes queda fuera de `.grid2`.
@@ -50,6 +50,7 @@ Que las cuatro pantallas queden como en el diseño aprobado, sin datos nuevos, s
 - Los otros gráficos y tarjetas, la pantalla Comentarios, las pestañas Momentos y Super Chats de En vivo, y Programas › Conversación.
 - Marcar preguntas como respondidas (sigue sin botón).
 - Cualquier cambio en las tandas, el clasificador o los datos guardados.
+- Lo desplegado de "Preguntas agrupadas" (`qg1…qg30`) sigue guardado por posición, como antes. Con la ventana de 5 min el orden cambia más seguido, y un grupo abierto puede pasar a ser otro después de un refresco (revisión 1, punto 7). Queda para otra tarea.
 
 ## Riesgos
 

@@ -369,16 +369,21 @@ func programSlotLinks(d *ProgramDetail, slots []Slot, msgs []Message, labels map
 		}
 		chart["Links"] = true
 	}
-	for i := range d.SentRows {
-		r := &d.SentRows[i]
-		r.Href, r.ID = link(r.Start, "sent"), id("sf-", r.Start)
-		r.Sel = ok && r.Start.Equal(at)
+	if c := d.SentChart; c != nil {
+		for i := range c.Bars {
+			b := &c.Bars[i]
+			b.Href, b.ID = link(b.Start, "sent"), id("sf-", b.Start)
+			b.Sel = ok && b.Start.Equal(at)
+		}
+		// Solo desde Sentimiento: elegida desde Participación, ninguna barra
+		// queda marcada y no tiene sentido atenuarlas todas.
+		c.Sel = ok && q.Desde == "sent"
 	}
 	if !ok {
 		return
 	}
 	d.SlotIn = "part"
-	if q.Desde == "sent" && len(d.SentRows) > 0 {
+	if q.Desde == "sent" && d.SentChart != nil {
 		d.SlotIn = "sent"
 	}
 	end := at.Add(slotStep)
