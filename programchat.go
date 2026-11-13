@@ -26,7 +26,8 @@ const (
 // el orden en que se escribe "abrir". tema1…tema5 son los temas del resumen,
 // qg1…qg30 los grupos de preguntas de las tandas (maspreguntas, los que pasan
 // de qgTop) y cq1…cq8 las preguntas del resumen, por posición como en En vivo.
-var programFolds = slices.Concat([]string{"chat", "maspreguntas"}, numbered("tema", 5), numbered("qg", qgFolds), numbered("cq", cqFolds), catFoldKeys())
+// El chat ya no se pliega: tiene su pestaña.
+var programFolds = slices.Concat([]string{"maspreguntas"}, numbered("tema", 5), numbered("qg", qgFolds), numbered("cq", cqFolds), catFoldKeys())
 
 // chatSents son las opciones del filtro de sentimiento ("sin": sin etiqueta).
 var chatSents = []struct{ Key, Label, Class string }{
@@ -49,14 +50,25 @@ var slotTabs = []struct{ Key, Sentiment, Label string }{
 // listas cerradas se guarda (así no se refleja); el texto buscado se recorta.
 func readDetail(v url.Values, q *programsQuery) {
 	open := map[string]bool{}
+	chat := false
 	for _, raw := range v["abrir"] {
 		for _, sec := range strings.Split(raw, ",") {
 			if slices.Contains(programFolds, sec) {
 				open[sec] = true
 			}
+			chat = chat || sec == "chat"
 		}
 	}
 	q.Abrir = foldsValue(open)
+	for _, t := range programTabs[1:] {
+		if t.Key == v.Get("pestana") {
+			q.Pestana = t.Key
+		}
+	}
+	// Un link de antes con el chat desplegado abre su pestaña.
+	if chat && q.Pestana == "" {
+		q.Pestana = "chat"
+	}
 	if r := []rune(strings.TrimSpace(v.Get("buscar"))); len(r) > maxSearch {
 		q.Buscar = string(r[:maxSearch])
 	} else {
@@ -110,8 +122,6 @@ func (q programsQuery) openSet() map[string]bool {
 	}
 	return open
 }
-
-func (q programsQuery) isOpen(sec string) bool { return q.openSet()[sec] }
 
 // fold es la flecha de una sección: pide el parcial con la sección cambiada
 // en "abrir", así sigue abierta en el refresco de 60 s.
@@ -268,7 +278,7 @@ type HiddenField struct{ Name, Value string }
 
 // programChatSection arma la sección del chat; la lista, solo abierta.
 func programChatSection(msgs []Message, labels map[string]MessageLabel, groups map[string]BatchGroup, topics []ClaudeGroup, q programsQuery) ProgramChat {
-	c := ProgramChat{Fold: q.fold("chat")}
+	c := ProgramChat{Fold: Fold{Open: q.Pestana == "chat"}}
 	for _, m := range msgs {
 		if m.Source == "chat" {
 			c.N++

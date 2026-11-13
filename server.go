@@ -1,6 +1,7 @@
 package main
 
 import (
+	"cmp"
 	"embed"
 	"encoding/csv"
 	"encoding/json"
@@ -127,7 +128,50 @@ func (s *Server) page(w http.ResponseWriter, r *http.Request) {
 	chanOf, _ := s.dayLives(snap, s.clock())
 	sel, _ := pickChannel(snap, q.Get("canal"), q.Get("vivo"), chanOf)
 	s.render(w, "page.html", map[string]any{"Tab": "vivo", "Channel": snap.Channel,
-		"Vivo": map[string]any{"Canal": sel.Canal, "Video": sel.Video}})
+		"Vivo": map[string]any{"Canal": sel.Canal, "Video": sel.Video, "Pestana": liveTabParam(q)}})
+}
+
+// liveTabs son las pestañas de En vivo. Lista cerrada: la primera (Ahora) no
+// viaja en la URL y nada de afuera se refleja.
+var liveTabs = []struct{ Key, Label string }{
+	{"", "Ahora"}, {"momentos", "Momentos y audiencia"}, {"temas", "De qué se habla"}, {"supers", "Super Chats"},
+}
+
+// liveTabParam es la pestaña pedida; "" es Ahora (también lo que no está en la lista).
+func liveTabParam(q url.Values) string {
+	for _, t := range liveTabs[1:] {
+		if t.Key == q.Get("pestana") {
+			return t.Key
+		}
+	}
+	return ""
+}
+
+// liveTabBar arma las pestañas del análisis: cada una vuelve a pedir la
+// sección del canal (o del vivo suelto) con lo demás igual, y deja la
+// pantalla en la URL.
+func liveTabBar(canal, video, tab string, hours int, open, motives string) TabBar {
+	b := TabBar{Aria: "Qué ver del vivo", Target: "#vivo"}
+	for _, t := range liveTabs {
+		part := url.Values{"video": {video}, "horas": {strconv.Itoa(hours)}}
+		page := url.Values{}
+		if canal != "" {
+			part.Set("canal", canal)
+			page.Set("canal", canal)
+		} else {
+			page.Set("vivo", video)
+		}
+		for k, v := range map[string]string{"abrir": open, "motivos": motives, "pestana": t.Key} {
+			if v != "" {
+				part.Set(k, v)
+			}
+		}
+		if t.Key != "" {
+			page.Set("pestana", t.Key)
+		}
+		b.Tabs = append(b.Tabs, TabLink{ID: "tab-" + cmp.Or(t.Key, "ahora"), Label: t.Label, Page: "/?" + page.Encode(), Partial: "/parcial/vivo?" + part.Encode(), On: t.Key == tab})
+	}
+	return b
 }
 
 type Tile struct {
@@ -404,21 +448,22 @@ func (s *Server) liveSection(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	chanOf, _ := s.dayLives(snap, time.Now())
 	sel, _ := pickChannel(snap, q.Get("canal"), q.Get("video"), chanOf)
-	s.render(w, "vivo", map[string]any{"Canal": sel.Canal, "Video": sel.Video})
+	hours, open, motives, tab := keepView(q)
+	s.render(w, "vivo", map[string]any{"Canal": sel.Canal, "Video": sel.Video, "Horas": hours, "Abrir": open, "Motivos": motives, "Pestana": tab})
 }
 
 // quotaPaused dice si se llegó al tope de cuota: el worker no revisa videos ni busca vivos.
 func (s *Server) quotaPaused(snap Snapshot) bool { return s.budget > 0 && snap.Units >= s.budget }
 
-// keepView son las "horas", lo plegado que está abierto y la ventana de los
-// motivos del análisis, que manda el chat (con hx-include), para no perderlos
-// cuando se recarga la sección. Un "ver" de antes (en-vivo-unificado) se
-// ignora: el alcance sale de si hay vivo.
-func keepView(q url.Values) (hours, open, motives string) {
+// keepView son las "horas", lo plegado que está abierto, la ventana de los
+// motivos y la pestaña del análisis, que manda el chat (con hx-include), para
+// no perderlos cuando se recarga la sección. Un "ver" de antes
+// (en-vivo-unificado) se ignora: el alcance sale de si hay vivo.
+func keepView(q url.Values) (hours, open, motives, tab string) {
 	if h := q.Get("horas"); h == "24" || h == strconv.Itoa(chartHours) {
 		hours = h
 	}
-	return hours, foldValue(foldParam(q)), motiveParam(q)
+	return hours, foldValue(foldParam(q)), motiveParam(q), liveTabParam(q)
 }
 
 // motiveWindows son las ventanas de "Por qué hay mensajes negativos" y "Qué
@@ -637,8 +682,8 @@ func (s *Server) liveChat(w http.ResponseWriter, r *http.Request) {
 		// canal: pickChannel se queda con el pedido mientras exista.
 		w.Header().Set("HX-Retarget", "#vivo")
 		w.Header().Set("HX-Reswap", "outerHTML")
-		hours, open, motives := keepView(q)
-		s.render(w, "vivo", map[string]any{"Canal": sel.Canal, "Video": sel.Video, "Horas": hours, "Abrir": open, "Motivos": motives})
+		hours, open, motives, tab := keepView(q)
+		s.render(w, "vivo", map[string]any{"Canal": sel.Canal, "Video": sel.Video, "Horas": hours, "Abrir": open, "Motivos": motives, "Pestana": tab})
 		return
 	}
 	// El feed es del canal: los vivos de hoy, así al cambiar de vivo no se
@@ -681,6 +726,7 @@ type ChannelCard struct {
 	Watching                        int64
 	Waiting, Banner, How, StripAria string
 	Strip                           []StripBlock
+	Tab                             string // la pestaña de En vivo, para los botones de canal
 }
 
 // liveChannel es la tarjeta Canal (cada 5 s). No recarga la sección: el que
@@ -691,7 +737,9 @@ func (s *Server) liveChannel(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	chanOf, _ := s.dayLives(snap, now)
 	sel, btns := pickChannel(snap, q.Get("canal"), q.Get("video"), chanOf)
-	s.render(w, "vivo-canal", s.channelCard(snap, sel, btns, now))
+	card := s.channelCard(snap, sel, btns, now)
+	card.Tab = liveTabParam(q)
+	s.render(w, "vivo-canal", card)
 }
 
 // channelCard arma la tarjeta Canal: qué está al aire (o qué se espera), la
@@ -883,9 +931,10 @@ func (s *Server) liveAnalysis(w http.ResponseWriter, r *http.Request) {
 		hours = 24
 	}
 	open := foldParam(q)
+	tab := liveTabParam(q)
 	for _, c := range snap.Channels {
 		if c.ID == q.Get("canal") && c.ID != "" {
-			s.channelAnalysis(w, snap, c, q.Get("video"), hours, open, motiveParam(q), localRequest(r), slotPick{q.Get("franja"), q.Get("sent"), q.Get("pfranja")})
+			s.channelAnalysis(w, snap, c, q.Get("video"), hours, open, motiveParam(q), tab, localRequest(r), slotPick{q.Get("franja"), q.Get("sent"), q.Get("pfranja")})
 			return
 		}
 	}
@@ -900,17 +949,21 @@ func (s *Server) liveAnalysis(w http.ResponseWriter, r *http.Request) {
 	// El wrapper se reemplaza entero en cada refresco para que conserve la
 	// ventana del gráfico elegida (va en su hx-get).
 	if label == "" {
-		s.render(w, "vivo-analisis", map[string]any{"Video": id, "Hours": hours, "Abrir": foldValue(open)})
+		s.render(w, "vivo-analisis", map[string]any{"Video": id, "Hours": hours, "Abrir": foldValue(open), "Pestana": tab})
 		return
 	}
 	now := s.clock()
 	msgs := sinceFor(snap.Msgs, id, now.Add(-24*time.Hour))
 	viewers := s.st.Viewers(id, now.Add(-24*time.Hour))
 	fold := foldState{Open: open, Query: url.Values{"video": {id}, "horas": {strconv.Itoa(hours)}}}
+	if tab != "" {
+		fold.Query.Set("pestana", tab)
+	}
 	x := liveExtra{hourAgo: viewersAgo(viewers, now), since: now.Add(-24 * time.Hour), pfranja: q.Get("pfranja")}
 	x.likes = liveLikes(map[string][]LikeSample{id: s.st.Likes(id, now.AddDate(0, 0, -regularDays))}, &video, nil, dayStart(now), now)
 	data := analysisData(msgs, viewers, []string{id}, partInput{msgs, viewers, []string{id}}, snap.Videos, video.Concurrent, nil, now, hours, scopeLast24, fold, x)
 	data["Video"], data["Label"], data["Span"], data["Abrir"] = id, label, label+" · últimas 24 h", foldValue(open)
+	data["Pestana"], data["Tabs"] = tab, liveTabBar("", id, tab, hours, foldValue(open), "")
 	data["PFranja"] = data["Part"].(map[string]any)["PFranja"]
 	// El análisis con Claude es por canal: un vivo suelto no lo tiene.
 	data["Claude"] = claudeView(claudeInput{Configured: s.analyst != nil, Status: snap.Claude, Now: now})
@@ -1072,10 +1125,14 @@ type liveExtra struct {
 // actual con el programa actual, desde el inicio del tramo menos 5 min) o
 // "Todo el día del canal" (sus vivos desde las 00:00 locales). Nunca entran
 // mensajes de otro canal.
-func (s *Server) channelAnalysis(w http.ResponseWriter, snap Snapshot, ch ChannelStatus, want string, hours int, open map[string]bool, motives string, local bool, pick slotPick) {
+func (s *Server) channelAnalysis(w http.ResponseWriter, snap Snapshot, ch ChannelStatus, want string, hours int, open map[string]bool, motives, tab string, local bool, pick slotPick) {
 	now := s.clock()
 	ls := s.channelScope(snap, ch, want, now)
 	fold := foldState{Open: open, Query: analysisQuery(ch.ID, ls.video, hours, motives)}
+	// Todos los links del análisis (pliegues, franjas, ventanas) se quedan en la pestaña.
+	if tab != "" {
+		fold.Query.Set("pestana", tab)
+	}
 	// La franja elegida en "Cómo fue cambiando" viaja como "abrir": solo si
 	// es una franja del gráfico, y la pestaña de una lista cerrada.
 	sel := pick.valid(sentChartFrom(ls, now), now)
@@ -1110,6 +1167,7 @@ func (s *Server) channelAnalysis(w http.ResponseWriter, snap Snapshot, ch Channe
 		data["DayOf"] = map[string]string{"Personas que escribieron": miles(ls.dayPeople) + " en el día"}
 	}
 	data["Abrir"], data["Motivos"] = foldValue(open), motives
+	data["Pestana"], data["Tabs"] = tab, liveTabBar(ch.ID, ls.video, tab, hours, foldValue(open), motives)
 	data["PFranja"] = data["Part"].(map[string]any)["PFranja"]
 	if sel.ok {
 		data["Franja"], data["SentTab"] = fold.Query.Get("franja"), sel.tab
@@ -1728,6 +1786,10 @@ func (s *Server) claudeAnalyze(w http.ResponseWriter, r *http.Request) {
 			hours = 24
 		}
 		in.Fold = foldState{Open: foldParam(r.PostForm), Query: analysisQuery(ch.ID, video, hours, motiveParam(r.PostForm))}
+		// La tarjeta está en la pestaña De qué se habla: sus flechas se quedan ahí.
+		if tab := liveTabParam(r.PostForm); tab != "" {
+			in.Fold.Query.Set("pestana", tab)
+		}
 		// Los temas van en "De qué se habla", como en el refresco del análisis.
 		c := claudeView(in)
 		talkClaude(&c)

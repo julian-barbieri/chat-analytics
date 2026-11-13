@@ -24,27 +24,20 @@
   </div>
   {{if .Rows}}<div class="tablewrap">
   <table>
-    <thead><tr><th scope="col">Programa</th><th scope="col">Canal</th><th scope="col">Horario</th><th scope="col" class="n">Mensajes</th><th scope="col" class="n">Personas</th><th scope="col" class="n">Preguntas</th><th scope="col" class="n">Super Chats</th><th scope="col" class="n" title="Lo que subió el contador de likes del vivo durante el programa">Likes</th><th scope="col" class="n" title="Likes cada 1.000 espectadores promedio">Likes c/1.000 esp.</th><th scope="col">Resumen</th></tr></thead>
+    <thead><tr><th scope="col">Programa</th>{{if $.AllChannels}}<th scope="col">Canal</th>{{end}}<th scope="col">Horario</th><th scope="col" class="n">Mensajes</th><th scope="col" class="n">Personas</th><th scope="col" class="n">Preguntas</th><th scope="col" class="n" title="Lo que subió el contador de likes del vivo durante el programa">Likes</th><th scope="col">Resumen</th></tr></thead>
     <tbody>{{range .Rows}}<tr{{if eq .Key $.Pick}} class="sel"{{end}}>
       <td>{{with .Swatch}}<span class="sw {{.}}" aria-hidden="true"></span> {{end}}<a href="{{($.Q.WithTramo .Key).Page}}" hx-get="{{($.Q.WithTramo .Key).Partial}}" hx-target="#programas" hx-swap="outerHTML" hx-push-url="{{($.Q.WithTramo .Key).Page}}"><strong>{{if .Seg.Program}}{{.Seg.Program}}{{else}}sin programa{{end}}</strong></a>{{if .OnAir}} <span class="live">AL AIRE</span>{{end}}</td>
-      <td>{{if .Channel.Name}}{{.Channel.Name}}{{else}}{{.Channel.ID}}{{end}}</td>
+      {{if $.AllChannels}}<td>{{if .Channel.Name}}{{.Channel.Name}}{{else}}{{.Channel.ID}}{{end}}</td>{{end}}
       <td>{{if $.Multi}}{{.Date}} {{end}}{{.Hours}}{{if .Cuts}} <span class="muted">{{.Cuts}} {{if eq .Cuts 1}}corte{{else}}cortes{{end}}</span>{{end}}</td>
       <td class="n">{{miles .Msgs}}</td>
       <td class="n">{{miles .People}}</td>
       <td class="n" title="{{if .QByClaude}}por Claude{{else}}por reglas{{end}}">{{miles .Questions}}</td>
-      <td class="n">{{miles .Supers}}</td>
       <td class="n">{{if .HasLikes}}{{miles .Likes}}{{else}}—{{end}}</td>
-      <td class="n">{{if .HasLikes}}{{.LikesPer1000}}{{else}}—{{end}}</td>
       <td>{{if .Analysis}}{{if .Analysis.Error}}<span class="muted">con error</span>{{else}}<span class="ia">Claude</span>{{end}}{{else}}<span class="muted">{{if .OnAir}}al cerrar{{else}}sin resumen{{end}}</span>{{end}}</td>
     </tr>{{end}}</tbody>
   </table>
   </div>
-  <p class="muted">Preguntas por Claude en los programas con tandas; en los demás, por reglas. El resumen de Claude se hace solo cuando termina cada programa. YouTube da un solo contador de likes por vivo: los de cada programa son lo que subió durante su horario («—» si todavía no hay dos muestras).</p>
-  {{with .LikesChart}}<div class="cchart">
-    <h3 class="sub">Likes del vivo cada 30 minutos</h3>
-    {{template "cchart" .}}
-    <p class="muted">Cada barra tiene el color del programa que estaba al aire: el mismo que el cuadradito junto a su nombre en la tabla (pasá el mouse por una barra para ver cuál).</p>
-  </div>{{end}}
+  <p class="muted">Preguntas por Claude en los programas con tandas; en los demás, por reglas. El resumen de Claude se hace solo cuando termina cada programa.</p>
   {{else}}<p class="muted">{{.Empty}}{{if .Since}} {{.Since}}{{end}}</p>{{end}}
 </section>
 {{with .Detail}}{{template "programa-detalle" .}}{{end}}
@@ -64,6 +57,10 @@
       {{if .Href}}<a class="btn btn-s" href="{{.Href}}" target="_blank" rel="noopener" title="{{.Hint}}">Abrir en YouTube</a>{{else}}<span class="muted">{{.Hint}}</span>{{end}}
     </div>
   </div>
+  {{with .Nums}}<div class="tiles pnums">{{range .}}<div class="tile inner"><div class="l">{{.Label}}</div><div class="v">{{.Value}}</div>{{with .Note}}<div class="muted">{{.}}</div>{{end}}</div>{{end}}</div>{{end}}
+  {{template "tabs" .Tabs}}
+  {{if eq .Tab ""}}<div class="tcols">
+  <div class="tmain">
   {{with .Part}}<div class="inner">
     <h3>Participación durante el programa</h3>
     {{with .Summary}}<p class="psum">{{.}}</p>{{end}}
@@ -91,14 +88,8 @@
       {{template "motivos" .Pos}}
     </div>
   </div>{{end}}
-  <div class="detail-grid">
-    {{template "talk" .Talk}}
-    <div class="inner">
-      <h3>Categorías y preguntas {{if .CatsClaude}}<span class="ia">Claude</span>{{else}}<span class="chip">por reglas</span>{{end}}</h3>
-      {{template "cgauge" .Gauge}}
-      {{if .CatsClaude}}<p class="muted">Por Claude, con las tandas; el spam, por reglas{{if .CatsPending}}. {{.CatsPending}} todavía sin etiquetar (por reglas){{end}}. El CSV sigue por reglas.</p>
-      {{else}}<p class="muted">Por reglas simples; el detalle fino hacelo con Claude sobre el CSV.</p>{{end}}
-    </div>
+  </div>
+  <div class="tside">
     <div class="inner">
       <h3>Sentimiento del programa {{if .Claude}}<span class="ia">Claude</span>{{end}}</h3>
       {{if and .Claude (or .Claude.Sent .Claude.Tone)}}{{template "claude-sent" .Claude}}
@@ -109,8 +100,6 @@
       {{if eq .SlotIn "sent"}}{{template "prog-franja" .Slot}}{{else}}<p class="muted">Tocá una franja para ver sus mensajes.</p>{{end}}
       {{else if .Sent}}<p class="muted">Todavía no hay mensajes analizados por Claude en este programa.</p>{{end}}
     </div>
-  </div>
-  {{with .History}}{{template "historia" .}}{{end}}
   <div id="supers" class="inner supers">
       <h3>Super Chats del programa</h3>
       {{if .Supers}}<table>
@@ -120,7 +109,26 @@
       {{if .SuperMsgs}}<ul class="qlist chatl">{{range .SuperMsgs}}{{template "chat-line" .}}{{end}}</ul>{{end}}
       <p class="muted">{{.SupersNote}}</p>
   </div>
-  {{template "prog-chat" .Chat}}
+  </div>
+  </div>
+  {{else if eq .Tab "conversacion"}}<div class="grid2 tstart">
+    <div class="inner">
+      <h3>Categorías y preguntas {{if .CatsClaude}}<span class="ia">Claude</span>{{else}}<span class="chip">por reglas</span>{{end}}</h3>
+      {{template "cgauge" .Gauge}}
+      {{if .CatsClaude}}<p class="muted">Por Claude, con las tandas; el spam, por reglas{{if .CatsPending}}. {{.CatsPending}} todavía sin etiquetar (por reglas){{end}}. El CSV sigue por reglas.</p>
+      {{else}}<p class="muted">Por reglas simples; el detalle fino hacelo con Claude sobre el CSV.</p>{{end}}
+    </div>
+    {{template "talk" .Talk}}
+  </div>
+  {{else if eq .Tab "audiencia"}}
+  {{if not (or .History .LikesChart)}}<p class="muted">Acá no hay nada para mostrar: la comparación con las últimas 4 semanas necesita un programa con nombre, y los likes cada 30 minutos salen con un solo canal y un solo día.</p>{{end}}
+  {{with .History}}{{template "historia" .}}{{end}}
+  {{with .LikesChart}}<div class="inner cchart">
+    <h3>Likes del vivo cada 30 minutos</h3>
+    {{template "cchart" .}}
+    <p class="muted">Cada barra tiene el color del programa que estaba al aire: el mismo que el cuadradito junto a su nombre en la tabla (pasá el mouse por una barra para ver cuál). YouTube da un solo contador de likes por vivo: los de cada programa son lo que subió durante su horario («—» si todavía no hay dos muestras).</p>
+  </div>{{end}}
+  {{else}}{{template "prog-chat" .Chat}}{{end}}
 {{else}}<p class="muted">Ese programa ya no está guardado.</p>{{end}}
 </section>
 {{end}}
@@ -186,8 +194,7 @@ reglas. */}}
 propio: htmx manda el formulario al enviar o al cambiar un select) y los
 mensajes en orden de hora con sus tags. */}}
 {{define "prog-chat"}}<div id="chat-programa" class="inner">
-  <details class="plegable pchat"{{if .Fold.Open}} open{{end}}>
-    <summary id="pf-chat" hx-get="{{.Fold.Href}}" hx-sync="#programas:replace" hx-target="#programas" hx-swap="outerHTML"><strong>Chat del programa ({{plural .N "mensaje" "mensajes"}})</strong></summary>
+    <h3>Chat del programa ({{plural .N "mensaje" "mensajes"}})</h3>
     {{with .View}}
     <form id="f-chat" class="chatf" action="/programas" method="get" hx-get="/parcial/programas" hx-target="#programas" hx-swap="outerHTML" hx-sync="#programas:replace" role="search" aria-label="Buscar en el chat">
       {{range $.Hidden}}<input type="hidden" name="{{.Name}}" value="{{.Value}}">{{end}}
@@ -198,12 +205,11 @@ mensajes en orden de hora con sus tags. */}}
       <button type="submit" class="btn btn-s">Buscar</button>
       {{if $.Filtered}}<button type="button" class="btn btn-s" hx-get="{{$.Clear}}" hx-sync="#programas:replace" hx-target="#programas" hx-swap="outerHTML">Limpiar</button>{{end}}
     </form>
-    <p class="muted">{{miles .Matched}} de {{plural .Total "mensaje" "mensajes"}} · en orden de hora. Mientras el chat está abierto la pantalla no se actualiza sola: buscá de nuevo para ver lo nuevo.</p>
+    <p class="muted">{{miles .Matched}} de {{plural .Total "mensaje" "mensajes"}} · en orden de hora. En esta pestaña la pantalla no se actualiza sola: buscá de nuevo para ver lo nuevo.</p>
     <ul class="qlist chatl">{{range .Rows}}{{template "chat-line" .}}{{else}}<li class="muted">Ningún mensaje con esos filtros.</li>{{end}}</ul>
     {{if $.MoreHref}}<button type="button" class="btn btn-s" hx-get="{{$.MoreHref}}" hx-sync="#programas:replace" hx-target="#programas" hx-swap="outerHTML">Ver más mensajes</button>{{end}}
     {{with $.Capped}}<p class="muted">{{.}}</p>{{end}}
     {{end}}
-  </details>
 </div>{{end}}
 
 {{/* Un mensaje del chat del programa con sus tags; en los Super Chats, con

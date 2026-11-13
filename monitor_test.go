@@ -650,14 +650,17 @@ func TestDashboardWithoutRemovedSections(t *testing.T) {
 		{"/", nil, []string{"Últimos mensajes", "/parcial/feed", `name="fuente"`, "/parcial/extra"}},
 		// Palabras y autores pasaron al bloque "Todo el monitor" del análisis (CA1.18).
 		// Filtros y Temas (por reglas) se quitaron después (CA1.1 de canales-editables-claude-vivo).
-		{"/parcial/vivo/analisis?video=v1", []string{"Momentos con más participación",
-			"De qué se habla", "Palabras más repetidas", "Quiénes más escriben"},
+		// El análisis se mira en las cuatro pestañas juntas (pestanas-programas-en-vivo).
+		{"/parcial/vivo/analisis?video=v1", []string{"Momentos con más participación", "Quiénes más escriben", `id="palabras"`, "Palabras más repetidas"},
 			[]string{"Spam e insultos repetidos", "4. Filtros", "5. Momentos", "Chat por programa", "Videos recientes",
 				"Filtros para YouTube Studio", "Temas (por reglas)"}},
 	}
 	for _, c := range cases {
 		w := get(c.path)
 		body := w.Body.String()
+		if strings.HasPrefix(c.path, "/parcial/vivo/analisis") {
+			body = liveAllTabs(h, c.path)
+		}
 		for _, s := range c.want {
 			if w.Code != 200 || !strings.Contains(body, s) {
 				t.Errorf("%s (%d): falta %q", c.path, w.Code, s)
@@ -2318,7 +2321,7 @@ func TestParticipationViewersView(t *testing.T) {
 	h := (&Server{st: st, budget: 9000}).Routes()
 	get := func(url string) string {
 		w := httptest.NewRecorder()
-		h.ServeHTTP(w, httptest.NewRequest("GET", url, nil))
+		h.ServeHTTP(w, httptest.NewRequest("GET", url+"&pestana=momentos", nil))
 		return section5(t, w.Body.String())
 	}
 	const panel = `class="oyentes"`
@@ -2443,7 +2446,7 @@ func TestLiveParticipationView(t *testing.T) {
 	h := (&Server{st: st, budget: 9000}).Routes()
 	get := func(url string) string {
 		w := httptest.NewRecorder()
-		h.ServeHTTP(w, httptest.NewRequest("GET", url, nil))
+		h.ServeHTTP(w, httptest.NewRequest("GET", url+"&pestana=momentos", nil))
 		return section5(t, w.Body.String())
 	}
 	const (
@@ -2807,7 +2810,7 @@ func TestLiveParticipationViewEdges(t *testing.T) {
 		}
 	}
 
-	body := section5(t, get("/parcial/vivo/analisis?video=x1"))
+	body := section5(t, get("/parcial/vivo/analisis?pestana=momentos&video=x1"))
 	common("x1", body)
 	for _, want := range []string{
 		"&lt;script&gt;alert(1)&lt;/script&gt;</span>",          // programa en la tabla
@@ -2826,7 +2829,7 @@ func TestLiveParticipationViewEdges(t *testing.T) {
 		t.Errorf("x1: un vivo en curso no lleva t= (YouTube lo ignora)")
 	}
 
-	body = section5(t, get("/parcial/vivo/analisis?video=x2"))
+	body = section5(t, get("/parcial/vivo/analisis?pestana=momentos&video=x2"))
 	common("x2", body)
 	if !strings.Contains(body, "Solo 4 de 5: el resto de las franjas") || strings.Count(body, `<li class="mom">`) != 4 {
 		t.Errorf("x2: E2 con 4 momentos")
@@ -2847,7 +2850,7 @@ func TestLiveParticipationViewEdges(t *testing.T) {
 		}
 	}
 
-	body = section5(t, get("/parcial/vivo/analisis?video=x3"))
+	body = section5(t, get("/parcial/vivo/analisis?pestana=momentos&video=x3"))
 	common("x3", body)
 	for _, want := range []string{"Ninguna franja con dato de espectadores tuvo al menos 3 personas escribiendo.",
 		"todavía sin franjas con dato de espectadores y al menos 3 personas"} {
@@ -3016,9 +3019,9 @@ func TestParticipationWindowView(t *testing.T) {
 	}
 
 	for _, q := range []string{"", "&horas=6", "&horas=12", "&horas=x"} {
-		body := get("/parcial/vivo/analisis?video=w1" + q)
-		for _, want := range []string{`<div id="vivo-analisis" hx-get="/parcial/vivo/analisis?video=w1&horas=6" hx-trigger="every 30s" hx-swap="outerHTML">`,
-			pressed(6, true), pressed(24, false), `hx-get="/parcial/vivo/analisis?video=w1&horas=24" hx-target="#vivo-analisis" hx-swap="outerHTML"`} {
+		body := get("/parcial/vivo/analisis?video=w1&pestana=momentos" + q)
+		for _, want := range []string{`<div id="vivo-analisis" hx-get="/parcial/vivo/analisis?video=w1&pestana=momentos&horas=6" hx-trigger="every 30s" hx-swap="outerHTML">`,
+			pressed(6, true), pressed(24, false), `hx-get="/parcial/vivo/analisis?video=w1&pestana=momentos&horas=24" hx-target="#vivo-analisis" hx-swap="outerHTML"`} {
 			if !strings.Contains(body, want) {
 				t.Errorf("%q: falta %q", q, want)
 			}
@@ -3031,8 +3034,8 @@ func TestParticipationWindowView(t *testing.T) {
 		}
 	}
 
-	body := get("/parcial/vivo/analisis?video=w1&horas=24")
-	for _, want := range []string{`hx-get="/parcial/vivo/analisis?video=w1&horas=24" hx-trigger="every 30s"`, pressed(24, true), pressed(6, false)} {
+	body := get("/parcial/vivo/analisis?video=w1&pestana=momentos&horas=24")
+	for _, want := range []string{`hx-get="/parcial/vivo/analisis?video=w1&pestana=momentos&horas=24" hx-trigger="every 30s"`, pressed(24, true), pressed(6, false)} {
 		if !strings.Contains(body, want) {
 			t.Errorf("24 h: falta %q", want)
 		}
@@ -3384,7 +3387,7 @@ func TestLiveAnalysisSuper(t *testing.T) {
 		Message{ID: "p5", Source: "chat", VideoID: "v1", Author: "Fede", Text: "viejo", At: now.Add(-25 * time.Hour), Program: "LA MAÑANA",
 			Super: SuperChat, AmountMicros: 9000000, Currency: "BRL", AmountText: "R$ 9,00"},
 	)
-	body := getBody(h, "/parcial/vivo/analisis?video=v1")
+	body := getBody(h, "/parcial/vivo/analisis?video=v1&pestana=supers")
 	for _, want := range []string{
 		"<h2>Super Chats y Super Stickers</h2>",
 		"<th>Moneda</th><th class=\"n\">Cantidad</th><th class=\"n\">Total</th>",
@@ -3410,7 +3413,7 @@ func TestLiveAnalysisSuper(t *testing.T) {
 	}
 
 	empty := getBody(superStore(t, Message{ID: "c1", Source: "chat", VideoID: "v1", Author: "Ana", Text: "hola", At: now}),
-		"/parcial/vivo/analisis?video=v1")
+		"/parcial/vivo/analisis?video=v1&pestana=supers")
 	if !strings.Contains(empty, "<h2>Super Chats y Super Stickers</h2>") ||
 		!strings.Contains(empty, "Sin Super Chats ni Super Stickers en las últimas 24 h.") || strings.Contains(empty, "<th>Moneda</th>") {
 		t.Errorf("sin pagos:\n%s", empty)
@@ -4208,7 +4211,7 @@ func TestLiveAnalysisByChannel(t *testing.T) {
 		{"canal=UCB&video=b2&ver=programa", []string{
 			"Análisis de LA TARDE (programa en curso)", "Radio B · 3 mensajes · 6 en el día", "¿Repiten la entrevista de la tarde?", "¿Qué pasó con la tarde tan temprano?",
 			"<td>ARS</td>", `hx-get="/parcial/vivo/analisis?canal=UCB&video=b2&horas=6" hx-trigger="every 30s"`,
-			`hx-get="/parcial/vivo/analisis?canal=UCB&video=b2&horas=24"`,
+			`hx-get="/parcial/vivo/analisis?canal=UCB&video=b2&pestana=momentos&horas=24"`,
 		}, []string{"programa de la mañana", "invitado del mediodía", "Radio A?", "de ayer", "EUR", `id="ver-programa"`, `id="ver-dia"`, "ver="}},
 		{"canal=UCB&video=b2", []string{"Análisis de LA TARDE (programa en curso)", "Radio B · 3 mensajes"}, []string{"invitado del mediodía"}},
 		{"canal=UCB&video=b2&ver=dia&horas=24", []string{
@@ -4219,7 +4222,7 @@ func TestLiveAnalysisByChannel(t *testing.T) {
 		}, []string{"Radio A?", "de ayer", "invitado del mediodía", `name="ver"`}},
 	}
 	for _, c := range cases {
-		body := getBody(h, "/parcial/vivo/analisis?"+c.query)
+		body := liveAllTabs(h, "/parcial/vivo/analisis?"+c.query)
 		for _, w := range c.want {
 			if !strings.Contains(body, w) {
 				t.Errorf("%s: falta %q", c.query, w)
@@ -4237,7 +4240,7 @@ func TestLiveAnalysisByChannel(t *testing.T) {
 	}
 	// Sin vivo: lo de hoy del canal, con los dos vivos del día.
 	st.SetVideos("Radio A", []Video{a1})
-	day := getBody(h, "/parcial/vivo/analisis?canal=UCB&video=&horas=24")
+	day := liveAllTabs(h, "/parcial/vivo/analisis?canal=UCB&video=&horas=24")
 	for _, w := range []string{"Análisis de hoy", "Radio B · 6 mensajes", "¿Cuándo vuelve el programa de la mañana?", "¿Quién era el invitado del mediodía?",
 		"¿Repiten la entrevista de la tarde?", "<td>ARS</td>", "<td>EUR</td>"} {
 		if !strings.Contains(day, w) {
@@ -4611,12 +4614,13 @@ func TestClaudeCardOff(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			body := getBody(c.h, c.path)
+			body := liveAllTabs(c.h, c.path)
 			last := -1
-			// El orden de En vivo (CA1.7), con la tarjeta de Claude apagada en su lugar.
+			// El orden de En vivo por pestañas (pestanas-programas-en-vivo), con
+			// la tarjeta de Claude apagada en su lugar (De qué se habla).
 			for _, want := range []string{
-				`id="claude-card"`, `id="alertas"`, "Momentos con más participación", "Preguntas para producción", "Categorías",
-				"De qué se habla", "Super Chats y Super Stickers",
+				`id="alertas"`, "Preguntas para producción", "Momentos con más participación", `id="claude-card"`, `id="categorias"`,
+				`id="palabras"`, "Super Chats y Super Stickers",
 			} {
 				i := strings.Index(body, want)
 				if i < 0 {
@@ -4904,7 +4908,7 @@ func TestClaudeErrorsHideKey(t *testing.T) {
 			if c.name == "refusal" && (len(as) == 0 || as[0].StopReason != "refusal" || as[0].RefusalCategory != "cyber" || as[0].CostMicros == 0) {
 				t.Errorf("refusal guardado = %+v", as)
 			}
-			card := getBody(h, "/parcial/vivo/analisis?canal=UC1&video=v1")
+			card := liveAllTabs(h, "/parcial/vivo/analisis?canal=UC1&video=v1")
 			for where, text := range map[string]string{"log": logs.String(), "estado": fmt.Sprintf("%+v", s), "análisis": fmt.Sprintf("%+v", as), "tarjeta": card} {
 				if strings.Contains(text, testClaudeKey) {
 					t.Errorf("la clave aparece en %s", where)
@@ -5419,7 +5423,7 @@ func TestAnalystBudget(t *testing.T) {
 			}
 			want := "Se llegó al tope de gasto de Claude de hoy (US$ " + usd(c.budget) + "): se retoma mañana"
 			srv := &Server{st: st, budget: 9000, analyst: NewAnalyst(), now: func() time.Time { return now }}
-			if body := getBody(srv.Routes(), "/parcial/vivo/analisis?canal=UC1&video=v1&ver=programa"); !strings.Contains(body, want) {
+			if body := getBody(srv.Routes(), "/parcial/vivo/analisis?canal=UC1&video=v1&ver=programa&pestana=temas"); !strings.Contains(body, want) {
 				t.Errorf("falta %q:\n%s", want, body)
 			}
 		})
@@ -5773,7 +5777,6 @@ func TestClaudeCard(t *testing.T) {
 		{"sin análisis, desde la PC", setup{analyst: true, status: on, loopback: true}, "ver=programa", []string{
 			"Resumen de Claude del programa en curso", "Todavía no hay análisis de este programa: se hace solo cuando termina",
 			`hx-post="/claude/analizar"`, "Analizar ahora (≈ US$ 0,", "Gastado hoy en Claude: US$ 0,00 de 2,00", `aria-describedby="claude-gasto"`,
-			"Para agruparlas, Claude tiene que estar analizando este canal en tandas (ver Canales)",
 		}, []string{"está apagado", "Sin borradores: para que Claude"}},
 		{"sin análisis, desde otra PC", setup{analyst: true, status: on}, "ver=programa", []string{
 			"Para pedir un análisis, abrí el dashboard en la PC del monitor",
@@ -5838,7 +5841,7 @@ func TestClaudeCard(t *testing.T) {
 			for _, a := range c.s.add {
 				st.AddAnalysis(a)
 			}
-			r := httptest.NewRequest("GET", "/parcial/vivo/analisis?canal=UC1&video=v1&"+c.path, nil)
+			r := httptest.NewRequest("GET", "/parcial/vivo/analisis?canal=UC1&video=v1&pestana=temas&"+c.path, nil)
 			if c.s.loopback {
 				r.RemoteAddr, r.Host = "127.0.0.1:5000", "localhost:8080"
 			}
@@ -5874,7 +5877,7 @@ func TestClaudeCard(t *testing.T) {
 	st, _ := analystServer(t, now)
 	st.SetVideos("Radio Test", []Video{{ID: "s1", Title: "OTRA RADIO en VIVO | ALGO", Channel: "Otra", LiveStatus: "live"}})
 	st.SetClaudeStatus(on)
-	body := getBody((&Server{st: st, budget: 9000, analyst: NewAnalyst(), now: func() time.Time { return now }}).Routes(), "/parcial/vivo/analisis?video=s1")
+	body := getBody((&Server{st: st, budget: 9000, analyst: NewAnalyst(), now: func() time.Time { return now }}).Routes(), "/parcial/vivo/analisis?video=s1&pestana=temas")
 	if !strings.Contains(body, "El análisis con Claude es por canal") || strings.Contains(body, "hx-post") {
 		t.Errorf("vivo suelto:\n%s", body)
 	}
@@ -6305,9 +6308,11 @@ func TestLiveScreenOrder(t *testing.T) {
 		if ver == "dia" {
 			st.SetVideos("Radio B", nil)
 		}
-		body := getBody(h, "/parcial/vivo/analisis?canal=UCB&video=b2")
-		inOrder(ver, body, []string{`class="atitle"`, `class="tiles"`, `id="claude-card"`, `id="alertas"`,
-			`id="sentimiento"`, `id="momentos"`, `id="preguntas"`, `id="categorias"`, `id="monitor"`, `<div id="vivo-abajo" hx-swap-oob="true">`, `id="supers"`})
+		// Las pestañas en orden (pestanas-programas-en-vivo): Ahora, Momentos y
+		// audiencia, De qué se habla y Super Chats.
+		body := liveAllTabs(h, "/parcial/vivo/analisis?canal=UCB&video=b2")
+		inOrder(ver, body, []string{`class="atitle"`, `class="tiles"`, `<nav class="tabs"`, `id="alertas"`,
+			`id="sentimiento"`, `id="preguntas"`, `id="momentos"`, `id="participan"`, `id="claude-card"`, `id="categorias"`, `id="palabras"`, `id="supers"`})
 		if regexp.MustCompile(`<h[23][^>]*>\s*[0-9]+\.\s`).MatchString(body) {
 			t.Errorf("%s: hay títulos numerados", ver)
 		}
@@ -6345,7 +6350,7 @@ func TestLiveRemovedSections(t *testing.T) {
 		"/parcial/vivo/analisis?canal=UCB&video=b2",
 	} {
 		t.Run(path, func(t *testing.T) {
-			body := getBody(h, path)
+			body := liveAllTabs(h, path)
 			for _, not := range []string{"Filtros para YouTube Studio", `id="filtros"`, "Palabras bloqueadas", "Temas (por reglas)"} {
 				if strings.Contains(body, not) {
 					t.Errorf("sigue apareciendo %q", not)
@@ -6354,13 +6359,14 @@ func TestLiveRemovedSections(t *testing.T) {
 			if !strings.Contains(body, `id="categorias"`) {
 				t.Errorf("falta la tarjeta Categorías del alcance")
 			}
-			i := strings.Index(body, `id="monitor"`)
-			if i < 0 {
-				t.Fatalf("falta el bloque Todo el monitor:\n%s", body)
-			}
-			monitor := body[i:]
-			if j := strings.Index(monitor, "</section>\n</div>"); j >= 0 {
-				monitor = monitor[:j] // las dos tarjetas: De qué se habla y Quiénes participan
+			// De qué se habla y Quiénes participan (ahora en pestañas distintas).
+			var monitor string
+			for _, id := range []string{`id="palabras"`, `id="participan"`} {
+				i := strings.Index(body, id)
+				if i < 0 {
+					t.Fatalf("falta %s:\n%s", id, body)
+				}
+				monitor += body[i : i+strings.Index(body[i:], "</section>")]
 			}
 			for _, not := range []string{"<h3>Categorías</h3>", "Por reglas simples; el detalle fino"} {
 				if strings.Contains(monitor, not) {
@@ -6435,7 +6441,7 @@ func TestLiveFoldState(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			path := "/parcial/vivo/analisis?" + url.Values{"canal": {"UC1"}, "video": {"v1"}, "ver": {c.ver}, "horas": {"24"}, "abrir": {c.abrir}}.Encode()
-			body := getBody(h, path)
+			body := liveAllTabs(h, path)
 			if strings.Contains(body, "alert(1)") || strings.Contains(body, "script%3e") || strings.Contains(body, "nada") {
 				t.Errorf("refleja un valor fuera de la lista")
 			}
@@ -6499,7 +6505,7 @@ func TestLiveFoldState(t *testing.T) {
 
 	// "Analizar ahora" manda con hx-include las horas y lo abierto: la tarjeta
 	// que responde arma las flechas con el mismo análisis.
-	r := httptest.NewRequest("GET", "/parcial/vivo/analisis?canal=UC1&video=v1&ver=programa", nil)
+	r := httptest.NewRequest("GET", "/parcial/vivo/analisis?canal=UC1&video=v1&ver=programa&pestana=temas", nil)
 	r.RemoteAddr, r.Host = "127.0.0.1:5000", "localhost:8080"
 	w = httptest.NewRecorder()
 	h.ServeHTTP(w, r)
@@ -6507,14 +6513,14 @@ func TestLiveFoldState(t *testing.T) {
 		t.Errorf("el botón no manda los .vq")
 	}
 	w = httptest.NewRecorder()
-	h.ServeHTTP(w, postClaude("canal=UC1&video=v1&ver=programa&horas=24&abrir=quejas", nil))
+	h.ServeHTTP(w, postClaude("canal=UC1&video=v1&ver=programa&horas=24&abrir=quejas&pestana=temas", nil))
 	found := reFold.FindAllStringSubmatch(w.Body.String(), -1)
 	if w.Code != 200 || len(found) != 2 {
 		t.Fatalf("POST: %d, %d plegables:\n%s", w.Code, len(found), w.Body.String())
 	}
 	for _, m := range found {
 		q := abrirOf(t, m[2])
-		if open := m[1] != ""; open != (m[3] == "Quejas") || q.Get("horas") != "24" {
+		if open := m[1] != ""; open != (m[3] == "Quejas") || q.Get("horas") != "24" || q.Get("pestana") != "temas" {
 			t.Errorf("POST, %s: abierto %v, flecha %q", m[3], open, m[2])
 		}
 	}
@@ -6926,7 +6932,7 @@ func TestProgramDetail(t *testing.T) {
 				st.AddAnalysis(a)
 			}
 			st.Add([]Message{{ID: "inj", Source: "chat", VideoID: "v2", Program: "POCO", Author: "<b>Inyector</b>", Text: "<script>hola", At: day.Add(6*time.Hour + 30*time.Second)}})
-			body := getBody(srv.Routes(), c.path)
+			body := programAllTabs(srv.Routes(), c.path)
 			for _, s := range c.want {
 				if !strings.Contains(body, s) {
 					t.Errorf("falta %q", s)
@@ -7412,17 +7418,18 @@ func TestProgramDetailNoFolds(t *testing.T) {
 			Complaints: []ClaudeGroup{{Text: "se corta el audio", Msgs: 1, People: 1, Examples: []string{"pago"}}}}})
 	h := srv.Routes()
 	for _, path := range []string{
-		"/parcial/programas/detalle?tramo=" + url.QueryEscape(key),
-		"/programas?canal=UC1&tramo=" + url.QueryEscape(key),
+		"/parcial/programas/detalle?pestana=conversacion&tramo=" + url.QueryEscape(key),
+		"/programas?canal=UC1&pestana=conversacion&tramo=" + url.QueryEscape(key),
 	} {
 		body := getBody(h, path)
 		if !strings.Contains(body, "¿Hay cortes?") {
 			t.Errorf("%s: faltan las preguntas del análisis", path)
 		}
 		// Desde programas-chat-y-detalles se despliegan los ítems de más de un
-		// mensaje y el chat: con un mensaje cada uno, solo queda el chat, cerrado.
-		if n := strings.Count(body, "<details"); n != 1 || !strings.Contains(body, `<details class="plegable pchat">`) {
-			t.Errorf("%s: %d <details>, quiero solo el del chat, cerrado", path, n)
+		// mensaje; el chat tiene su pestaña (pestanas-programas-en-vivo): con un
+		// mensaje cada uno, no queda nada plegado.
+		if n := strings.Count(body, "<details"); n != 0 {
+			t.Errorf("%s: %d <details>, quiero ninguno", path, n)
 		}
 		if strings.Contains(body, `id="pf-cq`) {
 			t.Errorf("%s: una pregunta de 1 mensaje no se despliega", path)
@@ -7454,7 +7461,7 @@ func TestFoldParam(t *testing.T) {
 			if got := foldValue(foldParam(c.q)); got != c.want {
 				t.Errorf("foldValue = %q, quiero %q", got, c.want)
 			}
-			if _, got, _ := keepView(c.q); got != c.want {
+			if _, got, _, _ := keepView(c.q); got != c.want {
 				t.Errorf("keepView abrir = %q, quiero %q", got, c.want)
 			}
 		})
@@ -10082,13 +10089,16 @@ func TestMonitorProgramScope(t *testing.T) {
 		if ver == "dia" {
 			st.SetVideos("Radio B", nil)
 		}
-		body := getBody(h, "/parcial/vivo/analisis?canal=UCB&video=b2")
-		i := strings.Index(body, `id="monitor"`)
-		if i < 0 {
-			t.Fatalf("%s: falta el bloque", ver)
+		// De qué se habla y Quiénes participan, cada una en su pestaña.
+		body := liveAllTabs(h, "/parcial/vivo/analisis?canal=UCB&video=b2")
+		var block string
+		for _, id := range []string{`id="palabras"`, `id="participan"`} {
+			i := strings.Index(body, id)
+			if i < 0 {
+				t.Fatalf("%s: falta %s", ver, id)
+			}
+			block += body[i : i+strings.Index(body[i:], "</section>")]
 		}
-		block := body[i:]
-		block = block[:strings.Index(block, "</section>\n</div>")] // las dos tarjetas
 		if !strings.Contains(block, title) || strings.Contains(block, "Todo el monitor") || strings.Contains(block, "Ajeno") {
 			t.Errorf("%s:\n%s", ver, block)
 		}
@@ -10132,7 +10142,7 @@ func TestParticipationProgramsStrip(t *testing.T) {
 		st.AddViewers(m, []Video{{ID: id, ChannelID: "UCB", Channel: "Radio B", LiveStatus: "live", Concurrent: 300}})
 	}
 	h := (&Server{st: st, budget: 9000, now: func() time.Time { return now }}).Routes()
-	body := section5(t, getBody(h, "/parcial/vivo/analisis?canal=UCB&video=b2"))
+	body := section5(t, getBody(h, "/parcial/vivo/analisis?canal=UCB&video=b2&pestana=momentos"))
 	for _, w := range []string{`class="sprogs"`, ">LA TARDE</span>", ">LA MAÑANA</span>", `class="sprogl"`} {
 		if !strings.Contains(body, w) {
 			t.Errorf("falta %q", w)
@@ -10230,8 +10240,10 @@ func TestLiveOrder(t *testing.T) {
 	now := noonLocal(t)
 	srv, _ := answersServer(t, now)
 	h := srv.Routes()
-	body := getBody(h, "/parcial/vivo/analisis?canal=UCB&video=b2&ver=programa")
-	ids := []string{`id="claude-card"`, `id="alertas"`, `id="momentos"`, `id="preguntas"`, `id="categorias"`, `id="monitor"`, `<div id="vivo-abajo"`, `id="supers"`}
+	// Por pestañas (pestanas-programas-en-vivo): Ahora, Momentos y audiencia,
+	// De qué se habla y Super Chats.
+	body := liveAllTabs(h, "/parcial/vivo/analisis?canal=UCB&video=b2&ver=programa")
+	ids := []string{`id="alertas"`, `id="preguntas"`, `id="momentos"`, `id="participan"`, `id="claude-card"`, `id="categorias"`, `id="palabras"`, `id="supers"`}
 	last := -1
 	for _, id := range ids {
 		i := strings.Index(body, id)
@@ -10718,9 +10730,11 @@ func TestProgramDetailSections(t *testing.T) {
 	day := dayStart(now)
 	_, srv := programServer(t, now, false)
 	keyMan := segmentKey("UC1", Segment{VideoID: "v1", Program: "LA MAÑANA", Start: day.Add(8 * time.Hour)})
-	body := getBody(srv.Routes(), "/parcial/programas/detalle?tramo="+url.QueryEscape(keyMan))
+	// Super Chats en Resumen; la historia en Audiencia y fidelización
+	// (pestanas-programas-en-vivo).
+	body := programAllTabs(srv.Routes(), "/parcial/programas/detalle?tramo="+url.QueryEscape(keyMan))
 	last := -1
-	for _, id := range []string{`id="fidelizacion"`, `id="emisiones"`, `id="franjas"`, `id="mapa"`, `id="supers"`} {
+	for _, id := range []string{`id="supers"`, `id="fidelizacion"`, `id="emisiones"`, `id="franjas"`, `id="mapa"`} {
 		i := strings.Index(body, id)
 		if i < 0 || i < last {
 			t.Errorf("%s en %d (el anterior en %d)", id, i, last)
@@ -10817,7 +10831,7 @@ func TestMomentsWholeChannel(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			body := getBody(srv.Routes(), "/parcial/vivo/analisis?canal=UCB&video=b2&"+c.q)
+			body := getBody(srv.Routes(), "/parcial/vivo/analisis?canal=UCB&video=b2&pestana=momentos&"+c.q)
 			for _, w := range c.want {
 				if !strings.Contains(body, w) {
 					t.Errorf("falta %q", w)
@@ -10832,7 +10846,7 @@ func TestMomentsWholeChannel(t *testing.T) {
 	}
 	// Las demás tarjetas siguen con el programa en curso: el mensaje de
 	// LA MAÑANA sale una sola vez, como ejemplo de su momento.
-	if body := getBody(srv.Routes(), "/parcial/vivo/analisis?canal=UCB&video=b2&ver=programa"); strings.Count(body, "mensaje b1 0") != 1 ||
+	if body := liveAllTabs(srv.Routes(), "/parcial/vivo/analisis?canal=UCB&video=b2&ver=programa"); strings.Count(body, "mensaje b1 0") != 1 ||
 		!strings.Contains(body, `<h2 id="categorias-h">Categorías</h2><span class="muted">1 mensaje`) {
 		t.Errorf("un mensaje de otro programa entró en las tarjetas del programa en curso")
 	}
@@ -10956,7 +10970,7 @@ func TestMomentFold(t *testing.T) {
 	st.Add(chatRun("b1", "b1", "LA MAÑANA", at, 10*time.Second, 8))
 	st.AddViewers(at, []Video{{ID: "b1", LiveStatus: "live", Concurrent: 100}})
 	srv := &Server{st: st, budget: 9000, now: func() time.Time { return now }}
-	base := "/parcial/vivo/analisis?canal=UCB&video=b2"
+	base := "/parcial/vivo/analisis?canal=UCB&video=b2&pestana=momentos"
 	closed := getBody(srv.Routes(), base)
 	if !strings.Contains(closed, `<details class="plegable mom"><summary id="plegar-mom1"`) || !strings.Contains(closed, "abrir=mom1") {
 		t.Fatalf("el momento no arranca plegado con su flecha")
@@ -11035,7 +11049,7 @@ func TestClaudeTopicsFold(t *testing.T) {
 			{Text: "viejo", Msgs: 9, People: 1, Examples: []string{"tt1", "tt2", "tt3"}},
 		}}})
 	h := (&Server{st: st, budget: 9000, analyst: NewAnalyst(), now: func() time.Time { return now }}).Routes()
-	base := "/parcial/vivo/analisis?canal=UC1&video=v1&ver=programa"
+	base := "/parcial/vivo/analisis?canal=UC1&video=v1&ver=programa&pestana=temas"
 	closed := getBody(h, base)
 	for _, w := range []string{`<details class="plegable"><summary id="plegar-tema1"`, `id="plegar-tema2"`, "abrir=tema1", "tránsito · 25 mensajes · 1 persona"} {
 		if !strings.Contains(closed, w) {
@@ -11102,7 +11116,7 @@ func TestCategoriesFold(t *testing.T) {
 		labels = append(labels, MessageLabel{ID: m.ID, VideoID: "b2", At: m.At, Program: "LA TARDE", Sentiment: "positivo", Cat: CatElogio})
 	}
 	st.AddBatch(ClaudeBatch{At: now, ChannelID: "UCB", From: cur[0].At, To: now, Labels: labels})
-	base := "/parcial/vivo/analisis?canal=UCB&video=b2&ver=programa"
+	base := "/parcial/vivo/analisis?canal=UCB&video=b2&ver=programa&pestana=temas"
 	h := (&Server{st: st, budget: 9000, now: func() time.Time { return now }, analyst: NewAnalyst()}).Routes()
 	card := func(body string) string {
 		i := strings.Index(body, `<section id="categorias"`)
@@ -11921,7 +11935,7 @@ func claudeProgramServer(t *testing.T, now time.Time) (*Store, *Server, string) 
 func TestProgramDetailClaudeQuestions(t *testing.T) {
 	now := noonToday()
 	_, srv, key := claudeProgramServer(t, now)
-	body := getBody(srv.Routes(), "/parcial/programas/detalle?tramo="+url.QueryEscape(key))
+	body := getBody(srv.Routes(), "/parcial/programas/detalle?pestana=conversacion&tramo="+url.QueryEscape(key))
 	// Desde rankings-segmentos-preguntas, en el detalle de Pregunta de "Categorías y preguntas".
 	det := card(body, `id="cat-detalle"`)
 	if det == "" {
@@ -11937,7 +11951,7 @@ func TestProgramDetailClaudeQuestions(t *testing.T) {
 	}
 	// Sin Claude: por reglas, como antes.
 	_, off := programServer(t, now, false)
-	body = getBody(off.Routes(), "/parcial/programas/detalle?tramo="+url.QueryEscape(key))
+	body = getBody(off.Routes(), "/parcial/programas/detalle?pestana=conversacion&tramo="+url.QueryEscape(key))
 	if !strings.Contains(card(body, `id="cat-detalle"`), "Preguntas por reglas") {
 		t.Error("sin Claude: faltan las preguntas por reglas")
 	}
@@ -11948,7 +11962,7 @@ func TestProgramDetailClaudeQuestions(t *testing.T) {
 func TestProgramDetailClaudeCats(t *testing.T) {
 	now := noonToday()
 	_, srv, key := claudeProgramServer(t, now)
-	body := getBody(srv.Routes(), "/parcial/programas/detalle?tramo="+url.QueryEscape(key))
+	body := getBody(srv.Routes(), "/parcial/programas/detalle?pestana=conversacion&tramo="+url.QueryEscape(key))
 	for _, w := range []string{`<h3>Categorías y preguntas <span class="ia">Claude</span></h3>`, `<span class="gl">Preguntas</span>`, `<span class="gl">Elogios</span>`, `class="cgauge`} {
 		if !strings.Contains(body, w) {
 			t.Errorf("falta %q", w)
@@ -11960,7 +11974,7 @@ func TestProgramDetailClaudeCats(t *testing.T) {
 		t.Error("con Claude y etiquetas, sin resumen: falta la aclaración de los temas")
 	}
 	_, off := programServer(t, now, false)
-	body = getBody(off.Routes(), "/parcial/programas/detalle?tramo="+url.QueryEscape(key))
+	body = getBody(off.Routes(), "/parcial/programas/detalle?pestana=conversacion&tramo="+url.QueryEscape(key))
 	if !strings.Contains(body, `Temas de conversación <span class="chip">por reglas</span>`) {
 		t.Error("sin Claude: faltan los temas por reglas")
 	}
@@ -12273,7 +12287,11 @@ func TestProgramChatParams(t *testing.T) {
 	}{
 		{"vacío", "", programsQuery{}},
 		{"válidos", "abrir=chat,tema2&abrir=qg3&buscar=+hola+&cat=pregunta&senti=sin&tema=tema1&pag=3&franja=1700000100&sent=neu&desde=sent",
-			programsQuery{Abrir: "chat,tema2,qg3", Buscar: "hola", Cat: CatPregunta, Senti: "sin", Tema: "tema1", Pag: 3, Franja: 1700000100, Sent: "neu", Desde: "sent"}},
+			// abrir=chat de antes abre la pestaña Chat (pestanas-programas-en-vivo).
+			programsQuery{Abrir: "tema2,qg3", Buscar: "hola", Cat: CatPregunta, Senti: "sin", Tema: "tema1", Pag: 3, Franja: 1700000100, Sent: "neu", Desde: "sent", Pestana: "chat"}},
+		{"pestaña", "pestana=audiencia", programsQuery{Pestana: "audiencia"}},
+		{"pestaña inválida", "pestana=%3Cb%3E", programsQuery{}},
+		{"pestaña gana a abrir=chat", "pestana=conversacion&abrir=chat", programsQuery{Pestana: "conversacion"}},
 		{"inválidos", "abrir=xyz,<b>&cat=<b>&senti=feliz&tema=tema9&pag=-1&franja=abc&sent=x&desde=y",
 			programsQuery{}},
 		{"página enorme", "pag=99999", programsQuery{Pag: maxChatPag}},
@@ -12288,12 +12306,13 @@ func TestProgramChatParams(t *testing.T) {
 		}
 	}
 	// values() devuelve lo mismo que se leyó, y WithTramo a otro programa lo olvida.
-	q := programsQuery{Dia: "hoy", Tramo: "k", Abrir: "chat", Buscar: "hola", Cat: CatQueja, Franja: 5, Desde: "part"}
+	q := programsQuery{Dia: "hoy", Tramo: "k", Abrir: "chat", Buscar: "hola", Cat: CatQueja, Franja: 5, Desde: "part", Pestana: "audiencia"}
 	v := q.values()
-	if v.Get("abrir") != "chat" || v.Get("buscar") != "hola" || v.Get("cat") != CatQueja || v.Get("franja") != "5" || v.Get("desde") != "part" {
+	if v.Get("pestana") != "audiencia" || v.Get("abrir") != "chat" || v.Get("buscar") != "hola" || v.Get("cat") != CatQueja || v.Get("franja") != "5" || v.Get("desde") != "part" {
 		t.Errorf("values: %v", v)
 	}
-	if o := q.WithTramo("otro"); o.Abrir != "" || o.Buscar != "" || o.Franja != 0 || o.Dia != "hoy" {
+	// La pestaña sí queda: se compara lo mismo entre programas (pestanas-programas-en-vivo).
+	if o := q.WithTramo("otro"); o.Abrir != "" || o.Buscar != "" || o.Franja != 0 || o.Dia != "hoy" || o.Pestana != "audiencia" {
 		t.Errorf("WithTramo a otro programa: %+v", o)
 	}
 	if s := q.WithTramo("k"); s != q {
@@ -12308,22 +12327,21 @@ func TestProgramsChatSection(t *testing.T) {
 	_, srv, key := claudeProgramServer(t, now)
 	h := srv.Routes()
 	base := "/parcial/programas?dia=hoy&tramo=" + url.QueryEscape(key)
+	// Desde pestanas-programas-en-vivo el chat tiene su pestaña: en Resumen
+	// solo está el link, y la pantalla se refresca.
 	closed := getBody(h, base)
-	for _, w := range []string{`<details class="plegable pchat">`, `id="pf-chat"`, "Chat del programa (26 mensajes)", "abrir=chat", `hx-trigger="every 60s"`} {
+	for _, w := range []string{">Chat del programa</a>", "pestana=chat", `hx-trigger="every 60s"`} {
 		if !strings.Contains(closed, w) {
-			t.Errorf("cerrado: falta %q", w)
+			t.Errorf("resumen: falta %q", w)
 		}
 	}
-	if strings.Contains(closed, `id="f-chat"`) || strings.Contains(closed, "mensaje man 7<") {
-		t.Error("cerrado: no se arma la lista")
+	if strings.Contains(closed, `id="chat-programa"`) || strings.Contains(closed, `id="f-chat"`) || strings.Contains(closed, "mensaje man 7<") {
+		t.Error("resumen: no se arma la lista")
 	}
-	if i, j := strings.Index(closed, `id="supers"`), strings.Index(closed, `id="pf-chat"`); i < 0 || j < i {
-		t.Error("el chat va al final del detalle")
-	}
-	open := getBody(h, base+"&abrir=chat")
+	open := getBody(h, base+"&pestana=chat")
 	for _, w := range []string{
-		`<details class="plegable pchat" open>`, `id="f-chat"`, `name="buscar"`, `name="cat"`, `name="senti"`,
-		`<input type="hidden" name="abrir" value="chat">`, `<input type="hidden" name="tramo" value="` + key + `"`,
+		"Chat del programa (26 mensajes)", `id="f-chat"`, `name="buscar"`, `name="cat"`, `name="senti"`,
+		`<input type="hidden" name="pestana" value="chat">`, `<input type="hidden" name="tramo" value="` + key + `"`,
 		"26 de 26 mensajes", "mensaje man 7", "autor-man-1", ">Pregunta<", ">Elogio<", "Positivo", "¿A qué hora pasan el pronóstico?",
 		"Actualizado a las",
 	} {
@@ -12340,7 +12358,7 @@ func TestProgramsChatSection(t *testing.T) {
 		{"&senti=sin", "1 de 26 mensajes"},
 		{"&cat=xx%3Cb%3E", "26 de 26 mensajes"},
 	} {
-		body := getBody(h, base+"&abrir=chat"+c.q)
+		body := getBody(h, base+"&pestana=chat"+c.q)
 		if !strings.Contains(body, c.want) {
 			t.Errorf("%s: falta %q", c.q, c.want)
 		}
@@ -12348,7 +12366,7 @@ func TestProgramsChatSection(t *testing.T) {
 			t.Errorf("%s: se reflejó un valor inválido", c.q)
 		}
 	}
-	if body := getBody(h, base+"&abrir=chat&buscar=%3Cscript%3E"); strings.Contains(body, "<script>") || !strings.Contains(body, `value="&lt;script&gt;"`) {
+	if body := getBody(h, base+"&pestana=chat&buscar=%3Cscript%3E"); strings.Contains(body, "<script>") || !strings.Contains(body, `value="&lt;script&gt;"`) {
 		t.Error("el texto buscado va escapado")
 	}
 }
@@ -12431,7 +12449,8 @@ func TestProgramFolds(t *testing.T) {
 	st, srv, key := claudeProgramServer(t, now)
 	st.AddAnalysis(analysis(key))
 	h := srv.Routes()
-	base := "/parcial/programas?dia=hoy&tramo=" + url.QueryEscape(key)
+	// Temas y preguntas están en la pestaña Conversación (pestanas-programas-en-vivo).
+	base := "/parcial/programas?dia=hoy&pestana=conversacion&tramo=" + url.QueryEscape(key)
 	closed := getBody(h, base)
 	for _, w := range []string{`id="pf-tema1"`, "abrir=tema1", `id="pf-qg1"`, "abrir=qg1", "Fútbol · 1"} {
 		if !strings.Contains(closed, w) {
@@ -12462,7 +12481,7 @@ func TestProgramFolds(t *testing.T) {
 		t.Error("preguntas del resumen: abierta, con sus mensajes")
 	}
 	// El chat filtra por los temas del resumen y los muestra como tag.
-	if body := getBody(h, base+"&abrir=chat&tema=tema1"); !strings.Contains(body, `name="tema"`) || !strings.Contains(body, "3 de 26 mensajes") || !strings.Contains(body, `<span class="badge tema">El clima</span>`) {
+	if body := getBody(h, "/parcial/programas?dia=hoy&pestana=chat&tema=tema1&tramo="+url.QueryEscape(key)); !strings.Contains(body, `name="tema"`) || !strings.Contains(body, "3 de 26 mensajes") || !strings.Contains(body, `<span class="badge tema">El clima</span>`) {
 		t.Error("chat: el filtro y el tag de tema")
 	}
 }
@@ -12478,11 +12497,11 @@ func TestProgramReviewFixes(t *testing.T) {
 		for i := range maxChatPag*chatPageSize + 50 {
 			many = append(many, Message{ID: fmt.Sprint(i), Source: "chat", Text: "hola", At: day.Add(time.Duration(i) * time.Second)})
 		}
-		last := programChatSection(many, nil, nil, nil, programsQuery{Tramo: "k", Abrir: "chat", Pag: maxChatPag})
+		last := programChatSection(many, nil, nil, nil, programsQuery{Tramo: "k", Pestana: "chat", Pag: maxChatPag})
 		if last.MoreHref != "" || !strings.Contains(last.Capped, "Se muestran los primeros 10.000") {
 			t.Errorf("en la última página: más %q, aviso %q", last.MoreHref, last.Capped)
 		}
-		prev := programChatSection(many, nil, nil, nil, programsQuery{Tramo: "k", Abrir: "chat", Pag: maxChatPag - 1})
+		prev := programChatSection(many, nil, nil, nil, programsQuery{Tramo: "k", Pestana: "chat", Pag: maxChatPag - 1})
 		if !strings.Contains(prev.MoreHref, fmt.Sprintf("pag=%d", maxChatPag)) || prev.Capped != "" {
 			t.Errorf("en la anteúltima: más %q, aviso %q", prev.MoreHref, prev.Capped)
 		}
@@ -12505,9 +12524,9 @@ func TestProgramReviewFixes(t *testing.T) {
 		}
 	})
 	t.Run("Comparar con sin tramo conserva lo abierto", func(t *testing.T) {
-		body := getBody(h, "/parcial/programas?dia=hoy&abrir=chat")
-		if !strings.Contains(body, `class="seg" hx-get="/parcial/programas?abrir=chat&amp;dia=hoy&amp;tramo=`) {
-			t.Error("los botones de Comparar con perdieron abrir=chat")
+		body := getBody(h, "/parcial/programas?dia=hoy&abrir=tema1")
+		if !strings.Contains(body, `class="seg" hx-get="/parcial/programas?abrir=tema1&amp;dia=hoy&amp;tramo=`) {
+			t.Error("los botones de Comparar con perdieron abrir=tema1")
 		}
 	})
 	t.Run("filtros sin select", func(t *testing.T) {
@@ -12567,7 +12586,8 @@ func TestProgramSupers(t *testing.T) {
 			t.Fatal("falta #supers")
 		}
 		card := body[i:]
-		return card[:strings.Index(card, `<div id="chat-programa"`)]
+		// Hasta su nota: desde pestanas-programas-en-vivo el chat ya no va abajo.
+		return card[:strings.Index(card, superNote)]
 	}
 	// El pago que ya trae el servidor de prueba no tiene AmountText: sin " · ".
 	if c := supers(); !strings.Contains(c, "<strong>Pago</strong>") || !strings.Contains(c, `<span class="badge super">Super Chat</span>`) {
@@ -12610,7 +12630,7 @@ func TestProgramQuestionsMore(t *testing.T) {
 	st.AddBatch(ClaudeBatch{At: man(26), ChannelID: "UC1", From: man(0), To: man(24), Labels: ls, NewGroups: gs})
 	key := segmentKey("UC1", Segment{VideoID: "v1", Program: "LA MAÑANA", Start: day.Add(8 * time.Hour)})
 	h := srv.Routes()
-	base := "/parcial/programas?dia=hoy&tramo=" + url.QueryEscape(key)
+	base := "/parcial/programas?dia=hoy&pestana=conversacion&tramo=" + url.QueryEscape(key)
 
 	card := func(body string) (top, rest string) {
 		i := strings.Index(body, `id="cat-detalle"`)
@@ -12875,7 +12895,7 @@ func TestExecutiveLive(t *testing.T) {
 			t.Errorf("tarjeta Canal: falta %q", w)
 		}
 	}
-	body := getBody(h, "/parcial/vivo/analisis?canal=UCB&video=b2&ver=programa")
+	body := liveAllTabs(h, "/parcial/vivo/analisis?canal=UCB&video=b2&ver=programa")
 	inOrder := func(what string, parts []string) {
 		last := -1
 		for _, p := range parts {
@@ -12892,8 +12912,10 @@ func TestExecutiveLive(t *testing.T) {
 	}
 	inOrder("frase y números", []string{`<p class="frase">`, "Lo que más se repite: «dolar».", `class="tiles"`,
 		">Mirando ahora<", ">Participación<", ">Likes del vivo<", ">Mensajes por minuto<", ">Personas que escribieron<", ">Preguntas<", ">Super Chats<"})
-	inOrder("tarjetas", []string{`id="monitor"`, `id="palabras"`, "De qué se habla", `class="words"`, `id="participan"`, "Quiénes participan",
-		"habituales", "Quiénes más escriben", `id="likes"`, `id="supers"`, `tile sbig"`, "Por programa"})
+	// Por pestañas (pestanas-programas-en-vivo): Momentos y audiencia, De qué
+	// se habla y Super Chats.
+	inOrder("tarjetas", []string{`id="participan"`, "Quiénes participan", "habituales", "Quiénes más escriben", `id="likes"`,
+		`id="palabras"`, `class="words"`, `id="supers"`, `tile sbig"`, "Por programa"})
 	for _, w := range []string{`<div class="v">140</div>`, "&#43;40 en la última media hora", `tile up"`, `<span class="ktag">habitual</span>`} {
 		if !strings.Contains(body, w) {
 			t.Errorf("falta %q", w)
@@ -13110,7 +13132,7 @@ func TestCatGaugeScreens(t *testing.T) {
 		{ID: "q1", Source: "chat", VideoID: "b2", Program: "LA TARDE", Author: "Caro", Text: "¿a qué hora vuelve?", At: now.Add(-3 * time.Minute)},
 	})
 	h := (&Server{st: st, budget: 9000, now: func() time.Time { return now }}).Routes()
-	base := "/parcial/vivo/analisis?canal=UCB&video=b2&ver=programa"
+	base := "/parcial/vivo/analisis?canal=UCB&video=b2&ver=programa&pestana=temas"
 	body := getBody(h, base)
 	for _, w := range []string{`class="cgauge`, `id="cat-detalle"`, "abrir=cat-", `hx-target="#vivo-analisis"`, "Sacar «Otros»"} {
 		if !strings.Contains(body, w) {
@@ -13123,7 +13145,7 @@ func TestCatGaugeScreens(t *testing.T) {
 	}
 
 	_, srv, key := claudeProgramServer(t, noonToday())
-	body = getBody(srv.Routes(), "/parcial/programas/detalle?tramo="+url.QueryEscape(key))
+	body = getBody(srv.Routes(), "/parcial/programas/detalle?pestana=conversacion&tramo="+url.QueryEscape(key))
 	for _, w := range []string{`class="cgauge`, `id="cat-detalle"`, "abrir=cat-", `hx-target="#programas"`} {
 		if !strings.Contains(body, w) {
 			t.Errorf("Programas: falta %q", w)
@@ -13153,5 +13175,271 @@ func TestCatGaugeScreens(t *testing.T) {
 	}
 	if got := commentsQuery(url.Values{"sector": {"<script>"}}); got.Sector != "" {
 		t.Errorf("sector fuera de la lista: %q", got.Sector)
+	}
+}
+
+// inOrderIn revisa que body tenga cada parte, en ese orden.
+func inOrderIn(t *testing.T, name, body string, parts ...string) {
+	t.Helper()
+	last := -1
+	for _, p := range parts {
+		i := strings.Index(body, p)
+		if i < 0 {
+			t.Errorf("%s: falta %q", name, p)
+			continue
+		}
+		if i < last {
+			t.Errorf("%s: %q fuera de orden", name, p)
+		}
+		last = i
+	}
+}
+
+func notIn(t *testing.T, name, body string, parts ...string) {
+	t.Helper()
+	for _, p := range parts {
+		if strings.Contains(body, p) {
+			t.Errorf("%s: no debería tener %q", name, p)
+		}
+	}
+}
+
+// TestProgramsTabs (spec pestanas-programas-en-vivo, CA1–CA5): los números
+// del programa arriba, las pestañas del detalle y la lista más corta.
+func TestProgramsTabs(t *testing.T) {
+	now := noonToday()
+	day := dayStart(now)
+	_, srv := programServer(t, now, false)
+	h := srv.Routes()
+	keyMan := segmentKey("UC1", Segment{VideoID: "v1", Program: "LA MAÑANA", Start: day.Add(8 * time.Hour)})
+	keyPoco := segmentKey("UC1", Segment{VideoID: "v2", Program: "POCO", Start: day.Add(6 * time.Hour)})
+	base := "/programas?canal=UC1&tramo=" + url.QueryEscape(keyMan)
+
+	// CA1, CA2 y CA4: sin pestana va Resumen.
+	body := getBody(h, base)
+	inOrderIn(t, "resumen", body,
+		`id="detalle"`, `<div class="tiles pnums">`,
+		`<div class="l">Mensajes</div><div class="v">26</div>`, `<div class="l">Personas</div><div class="v">4</div>`,
+		`<div class="l">Preguntas</div>`, `<div class="l">Super Chats</div>`, `<div class="l">Likes</div>`, `<div class="l">Likes c/1.000 esp.</div>`,
+		`<nav class="tabs" aria-label="Partes del programa">`, `<a id="tab-resumen" class="tab"`, `aria-current="page">Resumen</a>`,
+		">Conversación</a>", ">Audiencia y fidelización</a>", `<a id="tab-chat" class="tab"`, ">Chat del programa</a>",
+		"Participación durante el programa", "Resumen del chat", "Sentimiento del programa", "Super Chats del programa")
+	notIn(t, "resumen", body, "Categorías y preguntas", `id="palabras"`, "Fidelización del chat", "Emisión por emisión",
+		`id="chat-programa"`, "Likes del vivo cada 30 minutos", `<th scope="col">Canal</th>`,
+		`<th scope="col" class="n">Super Chats</th>`, `Likes c/1.000 esp.</th>`, "YouTube da un solo contador")
+	if !strings.Contains(body, `hx-trigger="every 60s"`) {
+		t.Error("resumen: sin el refresco de 60 s")
+	}
+
+	tabs := []struct {
+		key       string
+		want, not []string
+	}{
+		{"conversacion", []string{`aria-current="page">Conversación</a>`, "Categorías y preguntas", `id="palabras"`},
+			[]string{"Participación durante el programa", "Fidelización del chat", `id="chat-programa"`, `id="supers"`}},
+		{"audiencia", []string{`aria-current="page">Audiencia y fidelización</a>`, "Fidelización del chat", "Emisión por emisión",
+			"Franjas fuertes y débiles", "Likes del vivo cada 30 minutos"},
+			[]string{"Participación durante el programa", `id="palabras"`, `id="chat-programa"`}},
+		{"chat", []string{`aria-current="page">Chat del programa</a>`, `id="chat-programa"`, "Chat del programa (26 mensajes)",
+			`id="f-chat"`, `<input type="hidden" name="pestana" value="chat">`},
+			[]string{"Participación durante el programa", "Fidelización del chat", `hx-trigger="every 60s"`}},
+	}
+	for _, c := range tabs {
+		body := getBody(h, base+"&pestana="+c.key)
+		inOrderIn(t, c.key, body, c.want...)
+		notIn(t, c.key, body, c.not...)
+		// CA3: la pestaña viaja en el refresco (salvo en Chat, que no se
+		// refresca) y en el link de otro programa de la tabla (WithTramo).
+		q := "/parcial/programas?canal=UC1&amp;dia=hoy&amp;pestana=" + c.key + "&amp;tramo="
+		if c.key != "chat" && !strings.Contains(body, `hx-get="`+q+attrQuery(keyMan)+`" hx-trigger="every 60s"`) {
+			t.Errorf("%s: el refresco perdió la pestaña", c.key)
+		}
+		if !strings.Contains(body, `hx-get="`+q+attrQuery(keyPoco)+`"`) {
+			t.Errorf("%s: el link de otro programa perdió la pestaña", c.key)
+		}
+		// Y en los links del detalle: las categorías del semicírculo.
+		if c.key == "conversacion" && !regexp.MustCompile(`hx-get="[^"]*abrir=cat-[^"]*pestana=conversacion`).MatchString(body) {
+			t.Error("conversacion: el semicírculo perdió la pestaña")
+		}
+	}
+
+	// CA3: un valor fuera de la lista es Resumen y no se refleja; abrir=chat
+	// de antes abre la pestaña Chat.
+	body = getBody(h, base+"&pestana=xss%3Cb%3E")
+	if !strings.Contains(body, `aria-current="page">Resumen</a>`) || strings.Contains(body, "xss") {
+		t.Error("pestana inválida: tendría que ser Resumen sin reflejarla")
+	}
+	if body := getBody(h, base+"&abrir=chat"); !strings.Contains(body, `id="f-chat"`) {
+		t.Error("abrir=chat: tendría que abrir la pestaña Chat")
+	}
+
+	// CA4: la columna Canal solo con todos los canales.
+	if body := getBody(h, "/programas"); !strings.Contains(body, `<th scope="col">Canal</th>`) {
+		t.Error("todos los canales: falta la columna Canal")
+	}
+
+	// CA5: la historia se arma solo en Audiencia.
+	for tab, want := range map[string]bool{"": false, "conversacion": false, "audiencia": true} {
+		d := srv.programsData(url.Values{"canal": {"UC1"}, "tramo": {keyMan}, "pestana": {tab}})["Detail"].(ProgramDetail)
+		if (d.History != nil) != want {
+			t.Errorf("pestana %q: History armada = %v", tab, d.History != nil)
+		}
+		// Participación (con las 4 semanas para comparar) solo en Resumen.
+		if (d.Part != nil) != (tab == "") {
+			t.Errorf("pestana %q: Participación armada = %v", tab, d.Part != nil)
+		}
+	}
+}
+
+// TestLiveTabs (spec pestanas-programas-en-vivo, CA6–CA9): las pestañas de En
+// vivo, lo que muestra cada una y que la pestaña no se pierda.
+func TestLiveTabs(t *testing.T) {
+	st, err := OpenStore(t.TempDir() + "/datos.jsonl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	st.SetChannels([]ChannelStatus{{ID: "UC1", Name: "Radio Test", Live: true}, {ID: "UC2", Name: "Otra Radio", Live: true}})
+	st.SetVideos("Radio Test", []Video{
+		{ID: "v1", Title: "🔴RADIO TEST en VIVO | LA MAÑANA", ChannelID: "UC1", Channel: "Radio Test", LiveStatus: "live"},
+		{ID: "v2", Title: "🔴 [EN VIVO] LA TARDE | OTRA RADIO", ChannelID: "UC2", Channel: "Otra Radio", LiveStatus: "live"},
+		{ID: "v3", Title: "Vivo terminado", ChannelID: "UC1", Channel: "Radio Test", LiveStatus: "none"},
+	})
+	st.Add([]Message{
+		{ID: "a", Source: "chat", VideoID: "v1", Author: "Ana", Text: "¿a qué hora pasan el resumen deportivo?", At: time.Now()},
+		{ID: "b", Source: "chat", VideoID: "v1", Author: "Beto", Text: "buenísimo el programa", At: time.Now()},
+	})
+	h := (&Server{st: st, budget: 9000}).Routes()
+
+	// CA6 y CA9: la página arranca en Ahora, con el chat; en otra pestaña el
+	// chat sigue en la página y refrescándose.
+	page := getBody(h, "/?canal=UC1")
+	inOrderIn(t, "página", page, `id="vivo" class="vivo t-ahora"`, `id="vivo-analisis"`, `id="chat"`, `every 2s`)
+	page = getBody(h, "/?canal=UC1&pestana=momentos")
+	inOrderIn(t, "página momentos", page, `id="vivo" class="vivo t-momentos"`, `/parcial/vivo/canal?canal=UC1&video=v1&pestana=momentos`,
+		`&pestana=momentos`, `id="chat"`, `every 2s`)
+
+	// CA6 y CA7: cada pestaña del análisis, con los números siempre arriba.
+	all := []string{`id="momentos"`, `id="participan"`, `id="claude-card"`, `id="categorias"`, `id="palabras"`, `id="preguntas"`, `id="supers"`}
+	tabs := []struct {
+		key, label string
+		want       []string
+	}{
+		{"", "Ahora", []string{`id="preguntas"`}},
+		{"momentos", "Momentos y audiencia", []string{`id="momentos"`, `id="participan"`}},
+		{"temas", "De qué se habla", []string{`id="claude-card"`, `id="categorias"`, `id="palabras"`}},
+		{"supers", "Super Chats", []string{`id="supers"`}},
+	}
+	for _, c := range tabs {
+		path := "/parcial/vivo/analisis?canal=UC1&video=v1"
+		if c.key != "" {
+			path += "&pestana=" + c.key
+		}
+		body := getBody(h, path)
+		inOrderIn(t, c.label, body, append([]string{`<div class="tiles">`, `<nav class="tabs" aria-label="Qué ver del vivo">`, `<a id="tab-ahora" class="tab"`,
+			`aria-current="page">` + c.label + `</a>`}, c.want...)...)
+		var not []string
+		for _, s := range all {
+			if !slices.Contains(c.want, s) {
+				not = append(not, s)
+			}
+		}
+		notIn(t, c.label, body, not...)
+		if c.key != "" {
+			// CA8: en el refresco, en el input .vq que manda el chat y en el link de la pestaña.
+			inOrderIn(t, c.label, body, `&pestana=`+c.key+`&horas=`, `<input type="hidden" class="vq" name="pestana" value="`+c.key+`">`)
+			if !strings.Contains(body, `hx-push-url="/?canal=UC1&amp;pestana=`+c.key+`"`) {
+				t.Errorf("%s: el link de la pestaña no cambia la URL", c.label)
+			}
+		}
+	}
+
+	// CA8: un valor fuera de la lista es Ahora y no se refleja.
+	body := getBody(h, "/parcial/vivo/analisis?canal=UC1&video=v1&pestana=xss%3Cb%3E")
+	if !strings.Contains(body, `aria-current="page">Ahora</a>`) || strings.Contains(body, "xss") {
+		t.Error("pestana inválida: tendría que ser Ahora sin reflejarla")
+	}
+	if body := getBody(h, "/?canal=UC1&pestana=xss%3Cb%3E"); !strings.Contains(body, `class="vivo t-ahora"`) || strings.Contains(body, "xss") {
+		t.Error("página con pestana inválida")
+	}
+	// CA8: la recarga por cambio de vivo y la sección del canal la conservan.
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, httptest.NewRequest("GET", "/parcial/vivo/chat?video=v3&pestana=temas", nil))
+	if w.Header().Get("HX-Retarget") != "#vivo" || !strings.Contains(w.Body.String(), `class="vivo t-temas"`) {
+		t.Errorf("recarga por cambio de vivo sin la pestaña:\n%s", w.Body.String())
+	}
+	if body := getBody(h, "/parcial/vivo?canal=UC2&pestana=supers"); !strings.Contains(body, `class="vivo t-supers"`) || !strings.Contains(body, "&pestana=supers") {
+		t.Errorf("sección del canal sin la pestaña:\n%s", body)
+	}
+	// CA8: los botones de canal la llevan.
+	card := getBody(h, "/parcial/vivo/canal?canal=UC2&video=v2&pestana=temas")
+	for _, w := range []string{`hx-get="/parcial/vivo?canal=UC1&pestana=temas"`, `hx-push-url="/?canal=UC1&pestana=temas"`} {
+		if !strings.Contains(card, w) {
+			t.Errorf("tarjeta Canal: falta %q", w)
+		}
+	}
+}
+
+// liveAllTabs junta el análisis de En vivo de las cuatro pestañas, para los
+// tests que buscan tarjetas de varias pestañas a la vez (spec
+// pestanas-programas-en-vivo).
+func liveAllTabs(h http.Handler, path string) string {
+	var b strings.Builder
+	for _, t := range liveTabs {
+		p := path
+		if t.Key != "" {
+			p += "&pestana=" + t.Key
+		}
+		b.WriteString(getBody(h, p))
+	}
+	return b.String()
+}
+
+// programAllTabs junta el detalle de Programas de las cuatro pestañas, para
+// los tests que buscan secciones de varias pestañas a la vez.
+func programAllTabs(h http.Handler, path string) string {
+	var b strings.Builder
+	for _, t := range programTabs {
+		p := path
+		if t.Key != "" {
+			p += "&pestana=" + t.Key
+		}
+		b.WriteString(getBody(h, p))
+	}
+	return b.String()
+}
+
+// TestLiveTabLinks (spec pestanas-programas-en-vivo, CA8; revisión 1): los
+// links del análisis (momentos, barras de Momentos, categorías) se quedan en
+// su pestaña, con canal y con un vivo suelto.
+func TestLiveTabLinks(t *testing.T) {
+	now := noonLocal(t)
+	st := liveStore(t, now)
+	at := now.Add(-90 * time.Minute).Truncate(slotStep).Add(time.Minute)
+	st.Add(chatRun("b1", "b1", "LA MAÑANA", at, 10*time.Second, 8))
+	st.AddViewers(at, []Video{{ID: "b1", LiveStatus: "live", Concurrent: 100}})
+	h := (&Server{st: st, budget: 9000, now: func() time.Time { return now }}).Routes()
+	hrefs := func(body, re string) []string {
+		var out []string
+		for _, m := range regexp.MustCompile(re).FindAllStringSubmatch(body, -1) {
+			out = append(out, m[1])
+		}
+		return out
+	}
+	cases := []struct{ name, path, tab, re string }{
+		{"momento", "/parcial/vivo/analisis?canal=UCB&video=b2", "momentos", `id="plegar-mom1" hx-get="([^"]*)"`},
+		{"barra de Momentos", "/parcial/vivo/analisis?canal=UCB&video=b2", "momentos", `hx-get="([^"]*pfranja=[^"]*)"`},
+		{"categoría", "/parcial/vivo/analisis?canal=UCB&video=b2", "temas", `hx-get="([^"]*abrir=cat-[^"]*)"`},
+		{"barra de un vivo suelto", "/parcial/vivo/analisis?video=b2", "momentos", `hx-get="([^"]*pfranja=[^"]*)"`},
+	}
+	for _, c := range cases {
+		got := hrefs(getBody(h, c.path+"&pestana="+c.tab), c.re)
+		if len(got) == 0 {
+			t.Errorf("%s: no encontré el link", c.name)
+		}
+		for _, href := range got {
+			if !strings.Contains(href, "pestana="+c.tab) {
+				t.Errorf("%s: el link %q perdió la pestaña", c.name, href)
+			}
+		}
 	}
 }

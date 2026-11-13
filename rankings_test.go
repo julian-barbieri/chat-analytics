@@ -109,7 +109,7 @@ func TestProgramQuestionsInCats(t *testing.T) {
 	now := noonToday()
 	day := dayStart(now)
 	_, srv, key := claudeProgramServer(t, now)
-	path := "/parcial/programas/detalle?tramo=" + url.QueryEscape(key)
+	path := "/parcial/programas/detalle?pestana=conversacion&tramo=" + url.QueryEscape(key)
 	body := getBody(srv.Routes(), path)
 	if !strings.Contains(body, `<h3>Categorías y preguntas <span class="ia">Claude</span></h3>`) || strings.Contains(body, "<h3>Preguntas") {
 		t.Errorf("con tandas: falta «Categorías y preguntas» o sobra la tarjeta Preguntas")
