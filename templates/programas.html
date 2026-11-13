@@ -147,6 +147,12 @@
     {{else}}<p class="muted">Sin Super Chats ni Super Stickers en este programa.</p>{{end}}
     <p class="muted">{{.SupersNote}}</p>
   </section>
+  {{else if eq .Tab "recomendaciones"}}<section id="recomendaciones" class="inner recs" aria-labelledby="recs-h">
+    {{/* Por ahora solo el lugar (pestana-recomendaciones): no se manda nada a Claude. */}}
+    <h3 id="recs-h">Recomendaciones con IA <span class="ia">Próximamente</span></h3>
+    <p>Acá van a aparecer recomendaciones para este programa, armadas con IA a partir de su chat: qué temas sumar, qué preguntas conviene responder al aire y en qué momentos se engancha más la audiencia.</p>
+    <p class="muted">Todavía no está disponible: por ahora no se manda nada a Claude desde esta pestaña.</p>
+  </section>
   {{else}}{{template "prog-chat" .Chat}}{{end}}
 {{else}}<p class="muted">Ese programa ya no está guardado.</p>{{end}}
 </section>

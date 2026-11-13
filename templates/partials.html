@@ -463,4 +463,4 @@ cada grupo se despliega con sus preguntas. */}}
 
 {{/* Barra de pestañas de Programas y En vivo: cada una es un link común que
      htmx pide como parcial y deja en la URL (sin JS propio). */}}
-{{define "tabs"}}<nav class="tabs" aria-label="{{.Aria}}">{{range .Tabs}}<a id="{{.ID}}" class="tab" href="{{.Page}}" hx-get="{{.Partial}}" hx-target="{{$.Target}}" hx-swap="outerHTML" hx-push-url="{{.Page}}"{{with $.Sync}} hx-sync="{{.}}"{{end}}{{if .On}} aria-current="page"{{end}}>{{.Label}}</a>{{end}}</nav>{{end}}
+{{define "tabs"}}<nav class="tabs" aria-label="{{.Aria}}">{{range .Tabs}}<a id="{{.ID}}" class="tab" href="{{.Page}}" hx-get="{{.Partial}}" hx-target="{{$.Target}}" hx-swap="outerHTML" hx-push-url="{{.Page}}"{{with $.Sync}} hx-sync="{{.}}"{{end}}{{if .On}} aria-current="page"{{end}}>{{if eq .Icon "robot"}}<svg class="ico ico-robot" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="8" width="14" height="11" rx="2.5"></rect><path d="M12 8V5M3 12.5v3M21 12.5v3M9.5 16h5"></path><circle cx="12" cy="4" r="1"></circle><circle cx="9.5" cy="12.5" r="1"></circle><circle cx="14.5" cy="12.5" r="1"></circle></svg>{{end}}{{.Label}}</a>{{end}}</nav>{{end}}
