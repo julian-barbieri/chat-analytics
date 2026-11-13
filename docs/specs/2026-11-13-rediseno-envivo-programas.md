@@ -1,10 +1,10 @@
 # Spec: rediseño de En vivo y Programas
 
-- **Estado:** borrador
+- **Estado:** aprobada
 - **Tipo:** mejora
 - **Rama:** `feat/rediseno-envivo-programas`
 - **Origen:** pedido del usuario con capturas; diseño aprobado en https://claude.ai/artifact/3MuSJa3AXYKoAWHDeZa3Xx (5 pantallas)
-- **Aprobada por / fecha:** —
+- **Aprobada por / fecha:** Julian Barbieri, 2026-11-13
 
 ## Contexto
 
