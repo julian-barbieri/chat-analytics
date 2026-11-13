@@ -209,7 +209,7 @@ func TestTalkCardLive(t *testing.T) {
 	}
 	st.Add(msgs)
 	h := (&Server{st: st, budget: 9000, analyst: NewAnalyst(), now: func() time.Time { return now }}).Routes()
-	base := "/parcial/vivo/analisis?canal=UC1&video=v1&ver=programa"
+	base := "/parcial/vivo/analisis?canal=UC1&video=v1&ver=programa&pestana=temas"
 	body := card(getBody(h, base), `id="palabras"`)
 	for _, w := range []string{"De qué se habla", `Temas de conversación <span class="chip">por reglas</span>`, ">blue sube<", "Palabras más repetidas del programa en curso",
 		`<span>dolar <span class="muted">12</span>`, "cuando termina el programa o con «Analizar ahora»",
@@ -243,7 +243,7 @@ func TestTalkCardLive(t *testing.T) {
 	}
 	// Sin vivo (todo el día): por reglas.
 	st.SetVideos("Radio Test", nil)
-	if c := card(getBody(h, "/parcial/vivo/analisis?canal=UC1&video=v1"), `id="palabras"`); !strings.Contains(c, `<span class="chip">por reglas</span>`) {
+	if c := card(getBody(h, "/parcial/vivo/analisis?canal=UC1&video=v1&pestana=temas"), `id="palabras"`); !strings.Contains(c, `<span class="chip">por reglas</span>`) {
 		t.Errorf("todo el día: los temas van por reglas:\n%s", c)
 	}
 }
@@ -254,7 +254,7 @@ func TestTalkCardProgram(t *testing.T) {
 	now := noonToday()
 	_, srv := programServer(t, now, false)
 	key := segmentKey("UC1", Segment{VideoID: "v1", Program: "LA MAÑANA", Start: dayStart(now).Add(8 * time.Hour)})
-	body := card(getBody(srv.Routes(), "/parcial/programas/detalle?tramo="+url.QueryEscape(key)), `id="palabras"`)
+	body := card(getBody(srv.Routes(), "/parcial/programas/detalle?pestana=conversacion&tramo="+url.QueryEscape(key)), `id="palabras"`)
 	for _, w := range []string{"De qué se habla", `Temas de conversación <span class="chip">por reglas</span>`, "Palabras más repetidas", `class="words"`} {
 		if !strings.Contains(body, w) {
 			t.Errorf("falta %q en:\n%s", w, body)

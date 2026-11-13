@@ -45,7 +45,7 @@ func TestCatGaugeNoAnchor(t *testing.T) {
 		{ID: "e1", Source: "chat", VideoID: "b2", Program: "LA TARDE", Author: "Beto", Text: "excelente programa", At: now.Add(-2 * time.Minute)},
 		{ID: "q1", Source: "chat", VideoID: "b2", Program: "LA TARDE", Author: "Caro", Text: "¿a qué hora vuelve?", At: now.Add(-3 * time.Minute)},
 	})
-	body := getBody((&Server{st: st, budget: 9000, now: func() time.Time { return now }}).Routes(), "/parcial/vivo/analisis?canal=UCB&video=b2&ver=programa")
+	body := getBody((&Server{st: st, budget: 9000, now: func() time.Time { return now }}).Routes(), "/parcial/vivo/analisis?canal=UCB&video=b2&ver=programa&pestana=temas")
 	i := strings.Index(body, `class="cgauge`)
 	if i < 0 {
 		t.Fatal("falta el semicírculo")
@@ -71,7 +71,7 @@ func TestLiveSlotDetail(t *testing.T) {
 	st.Add(chatRun("b1", "b1", "LA MAÑANA", at, 10*time.Second, 8))
 	st.AddViewers(at, []Video{{ID: "b1", LiveStatus: "live", Concurrent: 100}})
 	srv := &Server{st: st, budget: 9000, now: func() time.Time { return now }}
-	base := "/parcial/vivo/analisis?canal=UCB&video=b2"
+	base := "/parcial/vivo/analisis?canal=UCB&video=b2&pestana=momentos"
 	slot := strconv.FormatInt(at.Truncate(slotStep).Unix(), 10)
 	body := getBody(srv.Routes(), base)
 	if !strings.Contains(body, "pfranja="+slot) || !strings.Contains(body, `class="pbar`) {
@@ -110,14 +110,14 @@ func TestProgramDetailGauge(t *testing.T) {
 	now := noonToday()
 	day := dayStart(now)
 	key := segmentKey("UC1", Segment{VideoID: "v1", Program: "LA MAÑANA", Start: day.Add(8 * time.Hour)})
-	path := "/parcial/programas/detalle?tramo=" + url.QueryEscape(key)
+	path := "/parcial/programas/detalle?pestana=conversacion&tramo=" + url.QueryEscape(key)
 	_, off := programServer(t, now, false)
 	body := getBody(off.Routes(), path)
 	if !strings.Contains(body, `<h3>Categorías y preguntas <span class="chip">por reglas</span></h3>`) || !strings.Contains(body, `class="cgauge`) {
 		t.Error("sin Claude: falta Categorías por reglas")
 	}
 	st, srv, key := claudeProgramServer(t, now)
-	body = getBody(srv.Routes(), "/parcial/programas/detalle?tramo="+url.QueryEscape(key))
+	body = getBody(srv.Routes(), "/parcial/programas/detalle?pestana=conversacion&tramo="+url.QueryEscape(key))
 	if !strings.Contains(body, `<h3>Categorías y preguntas <span class="ia">Claude</span></h3>`) || !strings.Contains(body, `class="cgauge`) {
 		t.Error("con Claude: falta Categorías por Claude")
 	}
@@ -126,7 +126,7 @@ func TestProgramDetailGauge(t *testing.T) {
 	st.AddAnalysis(ClaudeAnalysis{At: day.Add(11 * time.Hour), ChannelID: "UC1", Key: segmentKey("UC1", sg), VideoID: "v1", Program: "LA MAÑANA",
 		Model: defaultClaudeModel, From: day.Add(8 * time.Hour), To: day.Add(10 * time.Hour), Sent: 25, Total: 25,
 		Result: ClaudeResult{Summary: "Resumen", Topics: []ClaudeGroup{{Text: "El clima", Msgs: 3, People: 2}}}})
-	body = getBody(srv.Routes(), "/parcial/programas/detalle?tramo="+url.QueryEscape(key))
+	body = getBody(srv.Routes(), "/parcial/programas/detalle?pestana=conversacion&tramo="+url.QueryEscape(key))
 	for _, w := range []string{`<h3>Categorías y preguntas <span class="ia">Claude</span></h3>`, `class="cgauge`, `Temas de conversación <span class="ia">Claude</span>`, "El clima"} {
 		if !strings.Contains(body, w) {
 			t.Errorf("con resumen: falta %q", w)

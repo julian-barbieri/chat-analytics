@@ -1,6 +1,7 @@
 package main
 
 import (
+	"cmp"
 	"encoding/csv"
 	"fmt"
 	"net/http"
@@ -385,6 +386,8 @@ type programsQuery struct {
 	Abrir, Sent, Desde, Buscar, Cat, Senti, Tema string
 	Franja                                       int64
 	Pag                                          int
+	// Pestana es la pestaña del detalle (programTabs); "" es Resumen.
+	Pestana string
 }
 
 func (q programsQuery) values() url.Values {
@@ -398,7 +401,7 @@ func (q programsQuery) values() url.Values {
 	if q.Comparar != "" && q.Comparar != cmpNone {
 		v.Set("comparar", q.Comparar)
 	}
-	for k, val := range map[string]string{"abrir": q.Abrir, "buscar": q.Buscar, "cat": q.Cat, "senti": q.Senti, "tema": q.Tema, "sent": q.Sent, "desde": q.Desde} {
+	for k, val := range map[string]string{"pestana": q.Pestana, "abrir": q.Abrir, "buscar": q.Buscar, "cat": q.Cat, "senti": q.Senti, "tema": q.Tema, "sent": q.Sent, "desde": q.Desde} {
 		if val != "" {
 			v.Set(k, val)
 		}
@@ -417,12 +420,62 @@ func (q programsQuery) Page() string    { return "/programas?" + q.values().Enco
 func (q programsQuery) Partial() string { return "/parcial/programas?" + q.values().Encode() }
 
 // WithTramo es la misma pantalla con otro programa elegido: lo desplegado,
-// la franja y los filtros del chat son del programa anterior y se olvidan.
+// la franja y los filtros del chat son del programa anterior y se olvidan; la
+// pestaña queda, para comparar lo mismo entre programas.
 func (q programsQuery) WithTramo(key string) programsQuery {
 	if key == q.Tramo {
 		return q
 	}
-	return programsQuery{Dia: q.Dia, Canal: q.Canal, Tramo: key, Comparar: q.Comparar}
+	return programsQuery{Dia: q.Dia, Canal: q.Canal, Tramo: key, Comparar: q.Comparar, Pestana: q.Pestana}
+}
+
+// programTabs son las pestañas del detalle de Programas. Lista cerrada: la
+// primera (Resumen) no viaja en la URL y nada de afuera se refleja.
+var programTabs = []struct{ Key, Label string }{
+	{"", "Resumen"}, {"conversacion", "Conversación"}, {"audiencia", "Audiencia y fidelización"}, {"chat", "Chat del programa"},
+}
+
+// TabLink es una pestaña: un link común (Page) que htmx pide como parcial.
+// ID deja el foco en la pestaña tocada cuando htmx reemplaza la pantalla.
+type TabLink struct {
+	ID, Label, Page, Partial string
+	On                       bool
+}
+
+// TabBar es la barra de pestañas de Programas o de En vivo.
+type TabBar struct {
+	Aria, Target, Sync string
+	Tabs               []TabLink
+}
+
+// programTabBar arma las pestañas del detalle: cada una es el mismo pedido
+// con otra pestana, así no se pierde lo demás (franja, filtros, comparar).
+func programTabBar(q programsQuery) TabBar {
+	b := TabBar{Aria: "Partes del programa", Target: "#programas", Sync: "#programas:replace"}
+	for _, t := range programTabs {
+		tq := q
+		tq.Pestana = t.Key
+		b.Tabs = append(b.Tabs, TabLink{ID: "tab-" + cmp.Or(t.Key, "resumen"), Label: t.Label, Page: tq.Page(), Partial: tq.Partial(), On: t.Key == q.Pestana})
+	}
+	return b
+}
+
+// programNums son los números del programa elegido, arriba de las pestañas:
+// los de su fila de la tabla, que ya no los repite.
+func programNums(r ProgramRow) []Tile {
+	q := "por reglas"
+	if r.QByClaude {
+		q = "por Claude"
+	}
+	likes, per := "—", "—"
+	if r.HasLikes {
+		likes, per = miles(int(r.Likes)), r.LikesPer1000
+	}
+	return []Tile{
+		{Label: "Mensajes", Value: miles(r.Msgs)}, {Label: "Personas", Value: miles(r.People)},
+		{Label: "Preguntas", Value: miles(r.Questions), Note: q}, {Label: "Super Chats", Value: miles(r.Supers)},
+		{Label: "Likes", Value: likes}, {Label: "Likes c/1.000 esp.", Value: per},
+	}
 }
 
 // WithComparar es la misma pantalla con otro modo de "Comparar con".
@@ -550,13 +603,17 @@ func (s *Server) programsData(v url.Values) map[string]any {
 		pick = defaultProgram(rows)
 	}
 	data := map[string]any{
-		"Q": q, "Channels": opts, "Rows": rows, "Multi": len(days) > 1, "Refresh": q.Dia == "hoy" && !q.isOpen("chat"),
-		"Title": programsTitle(q.Dia, days), "Updated": now, "Pick": "",
+		"Q": q, "Channels": opts, "Rows": rows, "Multi": len(days) > 1, "Refresh": q.Dia == "hoy" && q.Pestana != "chat",
+		"AllChannels": q.Canal == "",
+		"Title":       programsTitle(q.Dia, days), "Updated": now, "Pick": "",
 		"Days": []ChannelOption{{"hoy", "Hoy", q.Dia == "hoy"}, {"ayer", "Ayer", q.Dia == "ayer"}, {"7d", "Últimos 7 días", q.Dia == "7d"}, {"30d", "Últimos 30 días", q.Dia == "30d"}},
 	}
-	// El gráfico de likes del día: con un solo canal y un solo día.
+	// El gráfico de likes del día: con un solo canal y un solo día. Va en la
+	// pestaña Audiencia del detalle; la tabla repite el color de cada programa.
+	var likesChart *CommentChart
 	if len(chans) == 1 && len(days) == 1 && len(rows) > 0 {
-		data["LikesChart"] = likesDayChart(rows, likes, days[0], now)
+		c := likesDayChart(rows, likes, days[0], now)
+		likesChart = &c
 		for i := range rows {
 			rows[i].Swatch = swatch(i)
 		}
@@ -577,7 +634,12 @@ func (s *Server) programsData(v url.Values) map[string]any {
 			data["Q"] = q
 		}
 		data["Pick"] = rows[pick].Key
-		data["Detail"] = s.programDetail(rows[pick].ProgramSeg, programMessages(msgs, rows[pick].ProgramSeg, titles), rows[pick].Analysis, snap, now, q)
+		d := s.programDetail(rows[pick].ProgramSeg, programMessages(msgs, rows[pick].ProgramSeg, titles), rows[pick].Analysis, snap, now, q)
+		d.Nums = programNums(rows[pick])
+		if q.Pestana == "audiencia" {
+			d.LikesChart = likesChart
+		}
+		data["Detail"] = d
 	}
 	return data
 }
@@ -645,11 +707,18 @@ type ProgramDetail struct {
 	// History compara el programa con sus emisiones de las últimas 4 semanas;
 	// nil en un tramo sin programa.
 	History *ProgramHistory
-	// Chat es "Chat del programa", al final; Slot, los mensajes de la franja
+	// Chat es "Chat del programa", en su pestaña; Slot, los mensajes de la franja
 	// elegida, abajo de Participación (SlotIn "part") o de Sentimiento ("sent").
 	Chat   ProgramChat
 	Slot   *SlotDetail
 	SlotIn string
+	// Pestañas (programTabs): la elegida, la barra, los números de arriba
+	// (de la fila de la tabla; sin fila, no hay) y el gráfico de likes del día
+	// (solo en Audiencia, con un canal y un día).
+	Tab        string
+	Tabs       TabBar
+	Nums       []Tile
+	LikesChart *CommentChart
 }
 
 // ProgramHistory son las secciones de Programas que comparan emisiones.
@@ -693,7 +762,7 @@ func (s *Server) programDetail(ps ProgramSeg, msgs []Message, a *ClaudeAnalysis,
 	if q.Dia != "" {
 		csvQ.Set("dia", q.Dia)
 	}
-	d := ProgramDetail{Found: true, Title: programLabel(sg.Program), CSV: "/export.csv?" + csvQ.Encode()}
+	d := ProgramDetail{Found: true, Title: programLabel(sg.Program), CSV: "/export.csv?" + csvQ.Encode(), Tab: q.Pestana, Tabs: programTabBar(q)}
 	at := func(t time.Time) string {
 		if dayStart(t).Equal(dayStart(now)) {
 			return t.Local().Format("15:04")
@@ -744,20 +813,26 @@ func (s *Server) programDetail(ps ProgramSeg, msgs []Message, a *ClaudeAnalysis,
 		d.Supers = append(d.Supers, SuperRow{Currency: currencyLabel(c.Currency), Total: money(c.Micros), N: c.N})
 	}
 	d.SupersNote = superNote
+	// Las emisiones de 4 semanas son para Participación (Resumen) y la
+	// historia (Audiencia): en Conversación y Chat no se leen.
 	var ems []Emission
 	var from time.Time
-	if sg.Program != "" {
+	if sg.Program != "" && (q.Pestana == "" || q.Pestana == "audiencia") {
 		ems, from = s.programHistoryEms(ps, snap, now)
 	}
-	// Las franjas van antes que los botones: sin % no hay con qué comparar.
-	slots, typical, byPct, pad := s.programSlots(ps, msgs, ems, now)
-	if len(slots) > 0 {
-		cmp, opts, why := compareSetup(ems, sg.Start, q, byPct)
-		d.Part = programParticipation(slots, typical, byPct, pad, snap.Videos, cmp)
-		if sg.Program != "" {
-			d.Part["Compare"], d.Part["CmpWhy"], d.Part["Summary"] = opts, why, EmissionSummary(ems, sg.Start)
-			if cmp != nil {
-				d.Part["CmpNote"] = cmp.note
+	var slots []Slot
+	if q.Pestana == "" {
+		// Las franjas van antes que los botones: sin % no hay con qué comparar.
+		sl, typical, byPct, pad := s.programSlots(ps, msgs, ems, now)
+		slots = sl
+		if len(slots) > 0 {
+			cmp, opts, why := compareSetup(ems, sg.Start, q, byPct)
+			d.Part = programParticipation(slots, typical, byPct, pad, snap.Videos, cmp)
+			if sg.Program != "" {
+				d.Part["Compare"], d.Part["CmpWhy"], d.Part["Summary"] = opts, why, EmissionSummary(ems, sg.Start)
+				if cmp != nil {
+					d.Part["CmpNote"] = cmp.note
+				}
 			}
 		}
 	}
@@ -787,7 +862,8 @@ func (s *Server) programDetail(ps ProgramSeg, msgs []Message, a *ClaudeAnalysis,
 	}
 	d.Chat = programChatSection(msgs, labels, groups, topics, q)
 	d.SuperMsgs = programSupers(msgs, labels, groups, topics)
-	if sg.Program != "" {
+	// Las 4 semanas de fidelización e historial solo se arman en su pestaña.
+	if sg.Program != "" && q.Pestana == "audiencia" {
 		d.History = s.programHistory(ps, ems, from, now)
 	}
 	return d

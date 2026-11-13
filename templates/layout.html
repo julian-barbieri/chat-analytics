@@ -220,6 +220,27 @@ td.n, th.n { text-align: right; font-variant-numeric: tabular-nums; }
 tr.sel td { background: var(--ia-bg); }
 .vivo { display: flex; flex-direction: column; gap: 16px; }
 #vivo-analisis, #vivo-abajo { display: flex; flex-direction: column; gap: 16px; }
+/* Pestañas de En vivo. Los 7 números van en una fila desde ~1.280 px. En
+   Ahora, el análisis no cuenta como caja (display: contents) y la sección es
+   una grilla: el chat a la izquierda, fijo al bajar, y Sentimiento y
+   Preguntas a la derecha. En las otras pestañas el chat sigue en la página
+   (detecta el cambio de vivo) pero oculto. */
+#vivo-analisis .tiles { grid-template-columns: repeat(auto-fit, minmax(128px, 1fr)); }
+#vivo-analisis .tiles .tile .v { font-size: 26px; }
+#vivo:not(.t-ahora) #chat { display: none; }
+#vivo.t-ahora { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); align-items: start; }
+#vivo.t-ahora #vivo-analisis { display: contents; }
+#vivo.t-ahora > *, #vivo.t-ahora #vivo-analisis > * { grid-column: 1 / -1; min-width: 0; }
+#vivo.t-ahora #chat { grid-column: 1; grid-row: span 2; order: 1; position: sticky; top: 16px; }
+#vivo.t-ahora #chat .vfeed { max-height: calc(100vh - 200px); }
+#vivo.t-ahora #sentimiento, #vivo.t-ahora #preguntas { grid-column: 2; order: 2; }
+#vivo.t-ahora #vivo-abajo { display: none; }
+@media (max-width: 900px) {
+  #vivo.t-ahora { grid-template-columns: minmax(0, 1fr); }
+  #vivo.t-ahora #chat, #vivo.t-ahora #sentimiento, #vivo.t-ahora #preguntas { grid-column: 1; }
+  #vivo.t-ahora #chat { grid-row: auto; position: static; }
+  #vivo.t-ahora #chat .vfeed { max-height: 420px; }
+}
 .vbtns { display: flex; flex-wrap: wrap; gap: 8px; }
 .vbtn { font: inherit; font-size: 14px; font-weight: 600; min-height: 44px; padding: 0 16px; border-radius: 99px; cursor: pointer;
   border: 1px solid var(--border); background: var(--surface-0); color: var(--text-secondary); }
@@ -256,6 +277,25 @@ tr.sel td { background: var(--ia-bg); }
    el "scroll anchoring" del navegador toma de ancla el botón que se va y
    salta al final de la página. */
 #programas { overflow-anchor: none; }
+/* Pestañas de Programas y En vivo: links con el subrayado de la elegida. */
+.tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--border); overflow-x: auto; overflow-y: hidden; }
+.tab { display: inline-flex; align-items: center; min-height: 44px; padding: 0 16px; border-bottom: 3px solid transparent; margin-bottom: -1px;
+  color: var(--text-secondary); font-size: 15px; font-weight: 600; text-decoration: none; white-space: nowrap; }
+.tab:hover { color: var(--text-primary); }
+.tab[aria-current="page"] { color: var(--link); border-bottom-color: var(--series-1); }
+/* Detalle de Programas: los números arriba y, en Resumen, lo principal a la
+   izquierda y Sentimiento y Super Chats a la derecha. */
+#detalle { display: flex; flex-direction: column; gap: 14px; }
+#detalle .chead { margin-bottom: 0; }
+.pnums { grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; }
+.pnums .tile { padding: 12px 14px; }
+.pnums .tile .v { font-size: 24px; }
+.tcols { display: flex; flex-wrap: wrap; gap: 14px; align-items: flex-start; }
+.tmain { flex: 2 1 520px; min-width: 0; display: flex; flex-direction: column; gap: 14px; }
+.tside { flex: 1 1 300px; min-width: 0; display: flex; flex-direction: column; gap: 14px; }
+.tstart { align-items: start; }
+/* En la columna principal los dos motivos entran lado a lado. */
+.tmain .grid2 { grid-template-columns: repeat(auto-fit, minmax(min(260px, 100%), 1fr)); gap: 14px; }
 /* Línea de oyentes dentro del SVG de las barras, con su propia escala (el
    máximo va a la derecha de .pmax). No toma el mouse: el tooltip lo da la franja. */
 .oyentes { fill: none; stroke: var(--text-primary); stroke-width: 2; stroke-linejoin: round; pointer-events: none; }

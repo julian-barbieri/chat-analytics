@@ -20,7 +20,7 @@ func TestLiveScopeAuto(t *testing.T) {
 	st.SetClaudeStatus(ClaudeStatus{On: true, Model: defaultClaudeModel, Tope: 2_000_000})
 	h := srv.Routes()
 	for _, path := range []string{"/parcial/vivo/analisis?canal=UCB&video=b2&ver=dia", "/parcial/vivo/analisis?canal=UCB&video=b2&ver=programa", "/parcial/vivo/analisis?canal=UCB&video=b2"} {
-		body := getBody(h, path)
+		body := liveAllTabs(h, path)
 		for _, w := range []string{"(programa en curso)", "Resumen de Claude del programa en curso"} {
 			if !strings.Contains(body, w) {
 				t.Errorf("%s: falta %q", path, w)
