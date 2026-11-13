@@ -1,12 +1,12 @@
 # Spec: recomendaciones por rol y parte diario
 
-- **Estado:** borrador
+- **Estado:** aprobada
 - **Tipo:** mejora
 - **Rama:** `feat/recomendaciones-por-rol`
 - **Origen:** pedido del usuario: generar automáticamente recomendaciones a partir del chat
   en vivo de cada programa, para distintos empleados. Eligió las propuestas A (ficha por
   programa con filtro por rol) y C (parte diario y semanal por rol).
-- **Aprobada por / fecha:** —
+- **Aprobada por / fecha:** Julian Barbieri, 2026-11-13
 
 ## Contexto
 
